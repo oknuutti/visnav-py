@@ -9,16 +9,16 @@ Needs:
 At least on Windows, to get necessary Python packages it's easiest to use [Anaconda](https://www.continuum.io/downloads)
 
 After installing Anaconda, run from command prompt:
-`conda install -c menpo opencv3=3.1.0`
-`conda install -c moble quaternion`
+* `conda install -c menpo opencv3=3.1.0`
+* `conda install -c moble quaternion`
 
 Download data files from my [Google Drive folder](https://drive.google.com/drive/folders/0ByfhOdRO_959X05jTWczWGxLUkk?usp=sharing)
 into `data/` folder
 
-To run standalone GUI mode in Windows:
+To run standalone GUI mode in Windows:<br/>
 `"C:\Program Files\Anaconda3\python" src\visnav.py`
 
-To run a Monte Carlo batch, open batch1.py in an editor to see what you are going to run, then:
+To run a Monte Carlo batch, open batch1.py in an editor to see what you are going to run, then:<br/>
 `"C:\Program Files\Anaconda3\python" src\batch1.py`
 
 You also might want to look at `src/settings.py`.
