@@ -6,7 +6,11 @@ import quaternion
 from astropy.coordinates import SkyCoord
 
 
-def angle_between_vectors(v1, v2):
+def surf_normal(x1, x2, x3):
+    a, b, c = tuple(map(np.array, (x1, x2, x3)))
+    return normalize_v(np.cross(b-a, c-a))
+
+def angle_between_v(v1, v2):
     # Notice: only returns angles between 0 and 180 deg
     
     try:
@@ -21,6 +25,18 @@ def angle_between_vectors(v1, v2):
         raise Exception('Bad vectors:\n\tv1: %s\n\tv2: %s'%(v1, v2)) from e
     
     return math.acos(np.clip(cos_angle, -1, 1))
+
+
+def angle_between_q(q1, q2):
+    # from  https://chrischoy.github.io/research/measuring-rotation/
+    qd = q1.conj()*q2
+    return 2*math.atan(qd.w/np.linalg.norm(qd.vec))
+
+
+def angle_between_ypr(ypr1, ypr2):
+    q1 = spherical_to_q(*ypr1)
+    q2 = spherical_to_q(*ypr2)
+    return angle_between_q(q1, q2)
 
 
 def q_to_unitbase(q):
@@ -92,11 +108,11 @@ def solar_elongation(ast_v, sc_q):
     sco_x, sco_y, sco_z = q_to_unitbase(sc_q)
     
     # angle between camera axis and the sun, 0: right ahead, pi: behind
-    elong = angle_between_vectors(-ast_v, sco_x)
+    elong = angle_between_v(-ast_v, sco_x)
 
     # direction the sun is at when looking along camera axis
     nvec = np.cross(sco_x, ast_v)
-    direc = angle_between_vectors(nvec, sco_z)
+    direc = angle_between_v(nvec, sco_z)
 
     # decide if direction needs to be negative or not
     if np.cross(nvec, sco_z).dot(sco_x) < 0:

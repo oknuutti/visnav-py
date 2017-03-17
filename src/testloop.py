@@ -1,6 +1,7 @@
 from settings import *
 
 import math
+from math import degrees as deg
 import os
 import threading
 import socket
@@ -15,7 +16,7 @@ import quaternion
 from astropy.coordinates import spherical_to_cartesian
 
 from tools import (spherical_to_q, q_times_v, q_to_unitbase, normalize_v,
-                   wrap_rads, solar_elongation)
+                   wrap_rads, solar_elongation, angle_between_ypr)
 from algorithm import CentroidAlgo, PositioningException
 
 VISIT_OUTFILE_PREFIX = "visitout"
@@ -46,24 +47,28 @@ class TestLoop():
         imgdir = os.path.join(LOG_DIR, logbody)
         os.mkdir(imgdir)
         
+        fval_logfile = LOG_DIR + logbody + '-fvals.log'
         logfile = LOG_DIR + logbody + '.log'
         with open(logfile, 'w') as file:
             file.write('\t'.join((
                 'iter', 'date', 'execution time',
-                'time', 'sc pos x', 'sc pos y', 'sc pos z',
-                'sc lat', 'sc lon', 'sc rot', 'ax lat', 'ax lon',
-                'sol elong', 'light dir', 'imgfile',
-                'meas time', 'meas sc lat', 'meas sc lon', 'meas sc rot',
-                'est sc pos x', 'est sc pos y', 'est sc pos z',
-                'err sc pos x', 'err sc pos y', 'err sc pos z',
-                'abs error', 'rel error'
+                'time', 'ast lat', 'ast lon', 'ast rot',
+                'sc lat', 'sc lon', 'sc rot', 
+                'sol elong', 'light dir', 'x sc pos', 'y sc pos', 'z sc pos',
+                'imgfile', 'optfun val',
+                'time dev', 'ast lat dev', 'ast lon dev', 'ast rot dev',
+                'sc lat dev', 'sc lon dev', 'sc rot dev', 'total dev angle',
+                'x est sc pos', 'y est sc pos', 'z est sc pos',
+                'x err sc pos', 'y err sc pos', 'z err sc pos',
+                'abs error', 'rel error',
             ))+'\n')
 
         ex_times, errs, rerrs, li = [], [], [], 0
         for i in range(times):
             self._maybe_exit()
             
-            etime, params, measure, pos, err = self._mainloop(imgdir, **kwargs)
+            etime, params, noise, pos, fvals, err = \
+                    self._mainloop(imgdir, **kwargs)
 
             # print out progress
             if math.floor(100*i/times) > li:
@@ -74,7 +79,7 @@ class TestLoop():
             if not math.isnan(err[0]):
                 errd = math.sqrt(sum(map(lambda x: x**2, err)))
                 errs.append(errd)
-                rerrs.append(errd/abs(params[3])) # divided by distance
+                rerrs.append(errd/abs(params[-3])) # divided by distance
             else:
                 errd = float('nan')
 
@@ -84,11 +89,17 @@ class TestLoop():
             with open(logfile, 'a') as file:
                 file.write('\t'.join(map(str, (
                     i, dt.now().strftime("%Y-%m-%d %H:%M:%S"), etime,
-                    *params, *measure, *pos, *err, errd, errd/abs(params[3])
+                    *params, *noise, *pos, *err, errd, errd/abs(params[3])
                 )))+'\n')
-
+                
+            # log opt fun values in other file
+            with open(fval_logfile, 'a') as file:
+                file.write('\t'.join(map(str, fvals or []))+'\n')
+            
         try:
-            qtles = ', '.join('%.2f'%(100*np.nanpercentile(rerrs, q),) for q in (2,10,25,50,75,90,98))
+            qtles = ', '.join(
+                    '%.2f' % (100*np.nanpercentile(rerrs, q),)
+                    for q in (50, 68, 95, 99.7))
         except Exception as e:
             print('Error calculating quantiles: %s'%e)
             qtles = 'error'
@@ -166,7 +177,7 @@ class TestLoop():
             elong, direc = solar_elongation(as_v, sco_q)
 
             # limit elongation to always be more than 15deg
-            if math.degrees(elong) > 15:
+            if deg(elong) > 15:
                 break
             
         
@@ -226,38 +237,54 @@ class TestLoop():
 
         # set datetime, spacecraft & asteroid orientation
         sm.time.value = meas_time
-        sm.x_rot.value = math.degrees(meas_sco_lat)
-        sm.y_rot.value = math.degrees(meas_sco_lon)
-        sm.z_rot.value = math.degrees(meas_sco_rot)
+        sm.x_rot.value = deg(meas_sco_lat)
+        sm.y_rot.value = deg(meas_sco_lon)
+        sm.z_rot.value = deg(meas_sco_rot)
         sm.asteroid.axis_latitude = ax_lat
         sm.asteroid.axis_longitude = ax_lon
         sm.real_sc_pos = [sc_x, sc_y, sc_z]
 
         # load image & run optimization algo(s)
         ok = self._run_algo(imgfile, **kwargs)
+        
+        # save function values from optimization
+        fvals = self.window.optim.optfun_values \
+                if ok and kwargs.get('method', False) \
+                else None
+        final_fval = fvals[-1] if fvals else None
+
         self._maybe_exit()
 
         if False:
             # DEBUG ONLY: for plotting in own software for comparison
             sm.time.value = time
-            sm.x_rot.value = math.degrees(sco_lat)
-            sm.y_rot.value = math.degrees(sco_lon)
-            sm.z_rot.value = math.degrees(sco_rot)
+            sm.x_rot.value = deg(sco_lat)
+            sm.y_rot.value = deg(sco_lon)
+            sm.z_rot.value = deg(sco_rot)
             sm.asteroid.axis_latitude = ax_lat_true
             sm.asteroid.axis_longitude = ax_lon_true
             sm.set_spacecraft_pos((sc_x, sc_y, sc_z))
 
         # assemble return values
         etime = (dt.now() - start_time).total_seconds()
-        params = (time, sc_x, sc_y, sc_z, sco_lat, sco_lon, sco_rot, ax_lat,
-                ax_lon, math.degrees(elong), math.degrees(direc), imgfile)
-        measure = (meas_time, meas_sco_lat, meas_sco_lon, meas_sco_rot)
+        params = (time, deg(ax_lat_true), deg(ax_lon_true),
+                deg(sm.asteroid.rotation_theta(time)),
+                deg(sco_lat), deg(sco_lon), deg(sco_rot),
+                deg(elong), deg(direc), sc_x, sc_y, sc_z, imgfile, final_fval)
+        
+        time_noise = meas_time - time
+        ast_rot_noise = 2*math.pi * time_noise/sm.asteroid.rotation_period
+        noise = (ax_lat-ax_lat_true, ax_lon-ax_lon_true, ast_rot_noise,
+                meas_sco_lat-sco_lat, meas_sco_lon-sco_lon, meas_sco_rot-sco_rot)
+        dev_angle = angle_between_ypr(noise[0:3], noise[3:6])
+        noise = (time_noise,) + tuple(map(deg, noise + (dev_angle,)))
+        
         pos = (sm.x_off.value, sm.y_off.value, sm.z_off.value)
-        err = (sm.x_off.value - sc_x, sm.y_off.value - sc_y, sm.z_off.value - sc_z)
+        err = (sm.x_off.value-sc_x, sm.y_off.value-sc_y, sm.z_off.value-sc_z)
         if not ok:
             err = pos = float('nan')*np.ones(3)
 
-        return etime, params, measure, pos, err
+        return etime, params, noise, pos, fvals, err
     
     
     def _run_algo(self, imgfile_, **kwargs):
@@ -265,7 +292,7 @@ class TestLoop():
         def run_this_from_qt_thread(glWidget, imgfile, **kwargs):
             glWidget.loadTargetImage(imgfile, CAMERA_HEIGHT)
             try:
-                CentroidAlgo.update_sc_pos(glWidget.systemModel, glWidget.image)
+                CentroidAlgo.update_sc_pos(glWidget.systemModel, glWidget.thr_image)
                 ok = True
             except PositioningException as e:
                 if not e.args or e.args[0] != 'No asteroid found':
@@ -273,8 +300,8 @@ class TestLoop():
                 print('|', end='', flush=True)
                 ok = False
 
-            if kwargs.get('method', False) and ok:
-                glWidget.parent().optim.findstate(**kwargs)
+            if ok and kwargs.get('method', False):
+                glWidget.parent().optim.findstate(glWidget.image, **kwargs)
 
             imgfile = imgfile[0:-4]+'r'+'.png'
             glWidget.saveViewToFile(imgfile)

@@ -6,6 +6,8 @@ from scipy import optimize, stats
 import numpy as np
 import cv2
 
+from PyQt5.QtCore import QCoreApplication
+
 from settings import *
 import tools
 
@@ -109,13 +111,8 @@ class CentroidAlgo():
         angle = r/CAMERA_HEIGHT * math.radians(CAMERA_FIELD_OF_VIEW)
         z_off = R/1000 / math.tan(angle) # in km
         
-        cx = (cx - CAMERA_WIDTH/2)
-        angle = cx/CAMERA_HEIGHT * math.radians(CAMERA_FIELD_OF_VIEW)
-        x_off = z_off * math.tan(angle)
-        
-        cy = (cy - CAMERA_HEIGHT/2)
-        angle = cy/CAMERA_HEIGHT * math.radians(CAMERA_FIELD_OF_VIEW)
-        y_off = z_off * math.tan(angle)
+        x_off, y_off = CentroidAlgo.calc_xy(
+                cx-CAMERA_WIDTH/2, cy-CAMERA_HEIGHT/2, z_off)
         
         sc_v = (x_off, y_off, -z_off)
         
@@ -127,6 +124,17 @@ class CentroidAlgo():
             raise PositioningException('Position resulted in a NAN: %s'(sc_v,))
         
         system_model.set_spacecraft_pos(sc_v)
+        
+    
+    @staticmethod 
+    def calc_xy(cx, cy, z_off):
+        h_angle = cx/CAMERA_HEIGHT * math.radians(CAMERA_FIELD_OF_VIEW)
+        x_off = z_off * math.tan(h_angle)
+        
+        v_angle = cy/CAMERA_HEIGHT * math.radians(CAMERA_FIELD_OF_VIEW)
+        y_off = z_off * math.tan(v_angle)
+        
+        return x_off, y_off
         
     
     @staticmethod
@@ -178,8 +186,8 @@ class CentroidAlgo():
         if not BATCH_MODE or DEBUG:
             # width & height estimate,
             # could be used for size? stars == danger?
-            w = 2 * hr_app * (1+abs(xc))
-            h = 2 * vr_app * (1+abs(yc))
+            w = 2 * hr_app * (1+abs(mv_coef*math.cos(direction)))
+            h = 2 * vr_app * (1+abs(mv_coef*math.sin(direction)))
             print(('centroid: [%.0f, %.0f, %.0f], '
                   +'correction: [%.0f, %.0f, %.1f], '
                   +'w & h: %.0f x %.0f') % (
@@ -193,28 +201,43 @@ class CentroidAlgo():
         return round(cx+dx), round(cy+dy), pixels*size_adj
 
 
-class CoveredPixelsAlgo():
-    def __init__(self, system_model, render_model_with_target):
+class PhaseCorrelationAlgo():
+    def __init__(self, system_model, glWidget):
         self.system_model = system_model
-        self.render_model_with_target = render_model_with_target
+        self.glWidget = glWidget
         self.min_options = None
         self.errval0 = None
         self.errval1 = None
         self.errval  = None
         self.iter_count = 0
         self.start_time = None
+        self.optfun_values = []
+        
+        self._target_image = None
+        self._hannw = None
     
     def optfun(self, *args):
         if any(map(math.isnan, args)):
             raise PositioningException('Position resulted in a NAN: %s'(sc_v,))
         
+        # disable update events fired when parameters are changed
+        #self.system_model.param_change_events(False)
+        
         for (n, p), v in zip(self.system_model.get_params(), args):
             p.nvalue = v
             
         self.iter_count += 1
-        return self.errfun()
+        err = self.errfun()
 
-    def errfun(self, overlay=None):
+        # log result
+        self.optfun_values.append(err)
+        
+        # enable events again
+        #self.system_model.param_change_events(True)
+        #QCoreApplication.processEvents()
+        return err
+
+    def errfun(self, render_result=None):
         # value that bounds the input parameters, kind of weak priors
         # for a bayasian thing
         # TODO: actual priors based on centroid algo
@@ -223,38 +246,36 @@ class CoveredPixelsAlgo():
 #            + (m.x_off.nvalue)**2
 #            + (m.y_off.nvalue)**2
 #            + (m.z_off.nvalue)**2
-            + ((m.x_off.nvalue - m.x_off.def_val)**2 if not m.x_off.valid else 0)
-            + ((m.y_off.nvalue - m.y_off.def_val)**2 if not m.y_off.valid else 0)
+#            + ((m.x_off.nvalue - m.x_off.def_val)**2 if not m.x_off.valid else 0)
+#            + ((m.y_off.nvalue - m.y_off.def_val)**2 if not m.y_off.valid else 0)
             + ((m.z_off.nvalue - m.z_off.def_val)**2 if not m.z_off.valid else 0)
 #            + 10 * (m.time.nvalue)**2
 #            ((m.x_rot.nvalue)**2 if m.x_rot.valid else 0) +
 #            ((m.y_rot.nvalue)**2 if m.y_rot.valid else 0) +
 #            ((m.z_rot.nvalue)**2 if m.z_rot.valid else 0)
         )
-
-        if overlay is None:
-            overlay = self.render_model_with_target(self)
         
-        # TODO: do this somehow to subpixel accuracy
-        self.q = cv2.calcHist([overlay],[0],None,[256],[0,256])
-
-        # was 0.02 => resulted in wrong minimum,
-        # i.e. more missed pixels & less unnecessarily covered ones,
-        # e.g. 181) extlit:23, intdark:7920, while target
-        #  had 189) extlit:1,  intdark:9312
-        nonlit_penalty = 0.005 # TODO: high penalty if high sol elong and v.v.
+        if render_result is None:
+            render_result = self.glWidget.render()
+            QCoreApplication.processEvents()
+#        cv2.imshow('render_result', render_result)
+#        cv2.imshow('target_image', self._img)
+#        cv2.waitKey()
         
-        # 128 external lit pixel (also 127?!)
-        # 153 internal dark pixel
-        # 204 internal lit pixel
-        self.errval1 = self.q[127] + self.q[128] + nonlit_penalty*self.q[153]
+        (cx, cy), pwr = cv2.phaseCorrelate(
+                np.float32(render_result), self._target_image, self._hannw)
+        
+        m.x_off.value, m.y_off.value = \
+                CentroidAlgo.calc_xy(cx, -cy, -m.z_off.value)
+        
+        self.errval1 = -pwr
         self.errval = self.errval0 + self.errval1
 
         if not BATCH_MODE or DEBUG:
             print((
-                'E[%.0f] | xtlit:%d | indrk:%d | %.2f | %.2f | %.2f > '+
+                'E[%.3f] | (%.2f, %.2f) | %.2f | %.2f | %.2f > '+
                     '%.2f | %.2f | %.2f | %.2f < %s')%(
-                    self.errval1, self.q[128]+self.q[127], self.q[153],
+                    self.errval1, -cx, -cy,
                     m.x_rot.nvalue, m.y_rot.nvalue, m.z_rot.nvalue,
                     m.x_off.nvalue, m.y_off.nvalue, m.z_off.nvalue, m.time.nvalue,
                     '%s'%self.iter_count if self.iter_count>0 else '-'
@@ -262,11 +283,21 @@ class CoveredPixelsAlgo():
             )
 
         return self.errval
-    
-    
-    def findstate(self, method='simplex', **kwargs):
+
+    def findstate(self, image, method='simplex', **kwargs):
+        self._img = image
+        self._target_image = np.float32(image)
+        self.optfun_values = []
+        
+        #hwsize = kwargs.get('hwin_size', 4)
+        #tmp = cv2.createHanningWindow((hwsize, hwsize), cv2.CV_32F)
+        #sd = int((CAMERA_HEIGHT - hwsize)/2)
+        #self._hannw = cv2.copyMakeBorder(tmp,
+        #        sd, sd, sd, sd, cv2.BORDER_CONSTANT, 0)
+        self._hannw = None
         self.start_time = datetime.now()
-        init_vals = np.array(list(p.nvalue for n, p in self.system_model.get_params()))
+        init_vals = np.array(list(p.nvalue for n, p in
+                                        self.system_model.get_params()))
         
         if method=='simplex':
             options={'maxiter':100, 'xtol':2e-2, 'ftol':5e-2}
@@ -313,15 +344,22 @@ class CoveredPixelsAlgo():
                                         init_vals, **options)
             x = res.x
         elif method=='brute':
-            max_iter = kwargs.get('min_options', {}).pop('max_iter', 12000)
+            min_opts = dict(kwargs.get('min_options', {}))
+            max_iter = min_opts.pop('max_iter', 1000)
             init = list((-0.5, 0.5) for n, p in self.system_model.get_params())
             options = {'Ns':math.floor(math.pow(max_iter, 1/len(init))),
                        'finish':None}
-            options.update(kwargs.get('min_options', {}))
-            x = res = optimize.brute(lambda x: self.optfun(*x), init, **options)
+            options.update(min_opts)
+            optfun = self.optfun if len(init)==1 else lambda x: self.optfun(*x)
+            x = res = optimize.brute(optfun, init, **options)
+            if len(init)==1:
+                x = (x,)
             
         if not BATCH_MODE or DEBUG:
             print('%s'%res)
             print('seconds: %s'%(datetime.now()-self.start_time))
         self.iter_count = -1;
-        self.optfun(*x)    
+        self.optfun(*x)
+#        self.glWidget.parent().update()
+#        self.glWidget.repaint()
+#        QCoreApplication.processEvents()

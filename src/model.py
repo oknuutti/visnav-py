@@ -18,6 +18,7 @@ class Parameter():
         self._value = self.def_val
         self.is_gl_z = is_gl_z
         self.change_callback = None
+        self.fire_change_events = True
     
     @property
     def range(self):
@@ -29,10 +30,12 @@ class Parameter():
         if self._min_val != min_val or self._max_val != max_val:
             self._min_val = min_val
             self._max_val = max_val
-            try:
-                self.change_callback(self._value, self._min_val, self._max_val)
-            except TypeError:
-                pass    
+            if self.fire_change_events:
+                try:
+                    self.change_callback(self._value, self._min_val, self._max_val)
+                except TypeError:
+                    pass
+
     @property
     def scale(self):
         return abs(self._max_val - self._min_val)
@@ -55,25 +58,26 @@ class Parameter():
     def value(self, value):
         if self._value != value:
             self._value = value
-            try:
-                self.change_callback(value)
-            except TypeError:
-                pass
+            if self.fire_change_events:
+                try:
+                    self.change_callback(value)
+                except TypeError:
+                    pass
     
     @property
     def nvalue(self):
         if self.is_gl_z:
             scale = abs(1/self._min_val - 1/self._max_val)
-            offset = (1/self._min_val - 1/self._max_val)/2
-            return (-1/(self._value or 1e-6))/scale - offset
+            offset = (1/self._min_val + 1/self._max_val)/2
+            return (-1/(self._value or 1e-6) + offset)/scale
         return (self._value - self.def_val)/self.scale
     
     @nvalue.setter
     def nvalue(self, nvalue):
         if self.is_gl_z:
             scale = abs(1/self._min_val - 1/self._max_val)
-            offset = (1/self._min_val - 1/self._max_val)/2
-            self.value = -1/(((nvalue or 1e-6)+offset)*scale)
+            offset = (1/self._min_val + 1/self._max_val)/2
+            self.value = -1/((nvalue or 1e-6)*scale - offset)
         else:
             self.value = nvalue*self.scale + self.def_val
     
@@ -101,8 +105,8 @@ class SystemModel():
         
         # spacecraft position relative to asteroid, z towards spacecraft,
         #   x towards right when looking out from s/c camera, y up
-        self.x_off = Parameter(-4, 4)
-        self.y_off = Parameter(-4, 4)
+        self.x_off = Parameter(-4, 4, estimate=False)
+        self.y_off = Parameter(-4, 4, estimate=False)
         
         # whole view: 2.5km/tan(2.5deg) = 60km
         # can span ~50px: 2.5km/tan(2.5deg * 0.05) = 1150kmpr
@@ -145,6 +149,10 @@ class SystemModel():
                 and (all or getattr(self, n).estimate)
         )
         
+    def param_change_events(self, enabled):
+        for n, p in self.get_params(all=True):
+            p.fire_change_events = enabled
+        
     def set_spacecraft_pos(self, pos):
 #        half_range = abs(pos[2] / 170 * 50)
 #        self.z_off.range = (pos[2] - half_range, pos[2] + half_range)
@@ -164,6 +172,8 @@ class SystemModel():
         )))
     
     def sc_asteroid_rel_rot(self):
+        """ rotation of asteroid relative to spacecraft in opengl coords """
+        
         self.asteroid.axis_latitude = math.radians(self.ast_x_rot.value)
         self.asteroid.axis_longitude = math.radians(self.ast_y_rot.value)
         self.asteroid.rotation_pm = math.radians(self.ast_z_rot.value)
@@ -174,12 +184,18 @@ class SystemModel():
         # ast => eq => sc => opengl
         q_tot = ast_q.conj() * sc_q * SystemModel.q_sc2gl
         
-        if not BATCH_MODE or DEBUG:
+        if not BATCH_MODE and DEBUG:
             print('asteroid x-axis: %s'%tools.q_times_v(q_tot.conj(), np.array([1, 0, 0])))
         
         w, v = tools.q_to_angleaxis(q_tot.conj())
         return (math.degrees(w), *v)
     
+    def light_rel_dir(self):
+        """ direction of light relative to spacecraft in opengl coords """
+        ast_v = tools.normalize_v(self.asteroid.position(self.time.value))
+        sc_q = self.spacecraft_q()
+        return tools.q_times_v(SystemModel.q_sc2gl.conj() * sc_q.conj(), ast_v)
+        
     def solar_elongation(self):
         ast_v = self.asteroid.position(self.time.value)
         sc_q = self.spacecraft_q()
@@ -192,9 +208,11 @@ class SystemModel():
     def __repr__(self):
         return (
               'system state:\n\t%s\n'
+            + '\nsolar elongation: %s\n'
             + '\nasteroid rotation: %.2f\n'
         ) % (
             '\n\t'.join('%s = %s'%(n, p) for n, p in self.get_params(all=True)), 
+            tuple(map(math.degrees, self.solar_elongation())),
             math.degrees(self.asteroid.rotation_theta(self.time.value)),
         )
         

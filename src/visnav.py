@@ -1,10 +1,35 @@
 
 # TODO:
-# - tweak centroid algo
-# - full rendering correlation algo? with fft2 for x & y, opt for z, maybe time?
-# - integrate over different view angles, get mean correction params at certain elong & direction?
-# - landmark based
-# - conv nn
+#- nothing
+#   "test framework for vision based localization algorithms targeting an asteroid"
+#   + nothing to implement
+#   - scarce results
+#
+#- better projection (rendering, fft?)
+#   "mid-range vision based localization using phase correlation for a cubesat asteroid mission"
+#	+ fast to implement
+#	+ some science
+#
+#- landmark based (actual science)
+#   "vision based localization for a cubesat asteroid mission"
+#	+ all current methods use => good for comparision
+#	+ science & cv
+#	+ good accuracy
+#	- slow to implement
+#
+# - better centroid (gp-regression?)
+#   "cubesat-asteroid distance estimation from navcam image using gaussian process regression"
+#	+ can use previous knowledge
+#	+ fast to run
+#	+ fast to implement
+#	- bad accuracy
+#	- no science
+#
+#- nn based (wheee?!)
+#   "vision based localization using deep learning for a cubesat asteroid mission"
+#	+ new, hyped stuff
+#	+ science & cv
+#	- slow to implement
 #
 
 import sys
@@ -23,10 +48,10 @@ from PyQt5.QtWidgets import (QApplication, QHBoxLayout, QVBoxLayout,
 
 from settings import *
 from model import SystemModel
-from algorithm import ImageProc, CoveredPixelsAlgo, CentroidAlgo
+from algorithm import ImageProc, PhaseCorrelationAlgo, CentroidAlgo
 import obj_loader
 import lbl_loader
-
+import tools
 
 class MainThread(threading.Thread):
     def __init__(self, counter):
@@ -85,8 +110,7 @@ class Window(QWidget):
         topLayout.addWidget(self.sliders['time'])
 
         bottomLayout = QHBoxLayout()
-        self.optim = CoveredPixelsAlgo(self.systemModel,
-                lambda x: self.glWidget.render_model_with_target(x))
+        self.optim = PhaseCorrelationAlgo(self.systemModel, self.glWidget)
         
         self.buttons = dict(
             (m.lower(), self.optbutton(m, bottomLayout))
@@ -137,7 +161,7 @@ class Window(QWidget):
             cProfile.runctx('self.optim.findstate(method=m.lower())', 
                     globals(), ls, PROFILE_OUT_FILE)
         def handler():
-            self.optim.findstate(method=m.lower())
+            self.optim.findstate(self.glWidget.image, method=m.lower())
         
         btn.clicked.connect(profhandler if PROFILE else handler)
         layout.addWidget(btn)
@@ -165,6 +189,12 @@ class GLWidget(QOpenGLWidget):
         self.iter_count = 0
         self.image = None
 
+        self.debug_c = 0
+        self._paint_entered = False
+
+        self._render = True
+        self._algo_render = False
+        
         self._rawimage = None
         self._object = 0
         self._lastPos = QPoint()
@@ -201,14 +231,31 @@ class GLWidget(QOpenGLWidget):
 
         self.setClearColor(self._bgColor)
         self._object = self.loadObject()
-        self.gl.glShadeModel(self.gl.GL_FLAT)
+
         self.gl.glEnable(self.gl.GL_CULL_FACE)
-        
+
         # for transparent asteroid image on top of model
-        self.gl.glEnable(self.gl.GL_BLEND) 
         self.gl.glBlendFunc(
                 self.gl.GL_SRC_ALPHA, self.gl.GL_ONE_MINUS_SRC_ALPHA)
 
+        if self._render:
+            self._rendOpts()
+        else:
+            self._projOpts()
+        
+    def _projOpts(self):
+        # reset from potentially set rendering options
+        self.gl.glDisable(self.gl.GL_LIGHTING)
+        self.gl.glDisable(self.gl.GL_DEPTH_TEST);
+        self.gl.glShadeModel(self.gl.GL_FLAT)
+    
+    def _rendOpts(self):
+        # rendering options
+        self.gl.glEnable(self.gl.GL_LIGHTING)
+        self.gl.glEnable(self.gl.GL_DEPTH_TEST)
+        self.gl.glShadeModel(self.gl.GL_SMOOTH) # TODO: try with flat
+        self.gl.glEnable(self.gl.GL_LIGHT0)
+        
     def resizeGL(self, width, height):
         side = min(width, height)
         if side < 0:
@@ -218,7 +265,7 @@ class GLWidget(QOpenGLWidget):
             self.loadTargetImage(TARGET_IMAGE_FILE, side)
             self.loadTargetImageMeta(TARGET_IMAGE_META_FILE)
             if not USE_IMG_LABEL_FOR_SC_POS:
-                CentroidAlgo.update_sc_pos(self.systemModel, self.image)
+                CentroidAlgo.update_sc_pos(self.systemModel, self.thr_image)
         
         self.gl.glViewport((width-side) // 2, (height-side) // 2, side, side)
 
@@ -231,32 +278,42 @@ class GLWidget(QOpenGLWidget):
         self.gl.glMatrixMode(self.gl.GL_MODELVIEW)
 
     def paintGL(self):
+        if self._algo_render:
+            self.gl.glDisable(self.gl.GL_BLEND)
+        else:
+            self.gl.glEnable(self.gl.GL_BLEND)
+        
         self.gl.glClear(
                 self.gl.GL_COLOR_BUFFER_BIT | self.gl.GL_DEPTH_BUFFER_BIT)
-        
+
         self.gl.glLoadIdentity()
         m = self.systemModel
-        self.gl.glTranslated(m.x_off.value, m.y_off.value, m.z_off.value)
+        
+        # sunlight config
+        if self._render or self._algo_render:
+            light = m.light_rel_dir()
+            self.gl.glLightfv(self.gl.GL_LIGHT0, self.gl.GL_POSITION, tuple(-light)+(0,))
+            self.gl.glLightfv(self.gl.GL_LIGHT0, self.gl.GL_SPOT_DIRECTION, tuple(light))
+        
+        self.gl.glTranslated(
+                0 if self._algo_render else m.x_off.value,
+                0 if self._algo_render else m.y_off.value,
+                m.z_off.value)
         self.gl.glRotated(*m.sc_asteroid_rel_rot())
         self.gl.glCallList(self._object)
         
-        if self._rawimage is not None:
+        if not self._algo_render and self._rawimage is not None:
             self.gl.glLoadIdentity()
             self.setColor(self._imgColor)
-            self.gl.glRasterPos3f(self._frustum['left'], self._frustum['bottom'],
-                                 -self._persp['near'])
-            self.gl.glDrawPixels(self._image_w, self._image_h,
-                    self.gl.GL_RGBA, self.gl.GL_UNSIGNED_BYTE, self._rawimage)
+            self.gl.glRasterPos3f(self._frustum['left'],
+                                  self._frustum['bottom'], -self._persp['near'])
+            self.gl.glDrawPixels(self._image_w, self._image_h, self.gl.GL_RGBA,
+                                 self.gl.GL_UNSIGNED_BYTE, self._rawimage)
 
-        self.saveView('overlay')
-            
-        if self.parent().optim.iter_count <= 0:
-            self.parent().optim.errfun(self.overlay)
-
-        
-    def saveView(self, attr):
         self.gl.glFinish()
-        fbo = self.grabFramebuffer()
+        
+    def saveView(self):
+        fbo = self.grabFramebuffer() # calls paintGL
         buffer = QBuffer()
         buffer.open(QIODevice.ReadWrite)
         fbo.save(buffer, "PNG", quality=100)
@@ -269,14 +326,9 @@ class GLWidget(QOpenGLWidget):
         
         imdata = np.frombuffer(buffer.data(), dtype='int8')
         view = cv2.imdecode(imdata, cv2.IMREAD_GRAYSCALE)
-        setattr(self, attr, view)
+        return view
         
-        if attr == 'projection' and False:
-            cv2.imshow('projection', view)
-            
-    def saveViewTest(self, attr):
-        self.gl.glFinish()
-        
+    def saveViewTest(self):
         if False:
             # this takes around double the time than current way
             fbo = self.grabFramebuffer()
@@ -292,25 +344,20 @@ class GLWidget(QOpenGLWidget):
             for i in range(1,512*512*3,3):
                 view[arr[i]] += 1
         
-        setattr(self, attr, view)
+        return view
         
     def saveViewToFile(self, imgfile):
-        #self.repaint()
-        #QCoreApplication.processEvents()
-        self.paintGL()
-        cv2.imwrite(imgfile, self.overlay)
+        cv2.imwrite(imgfile, self.saveView())
  
-    def render_model_with_target(self, optim):
-        if False and optim.iter_count%1 == 0:
-            # doesnt seem to work when window minimized
-            self.repaint()
-            QCoreApplication.processEvents()
-        else:
-            # for some reason this takes double the time even
-            # though thought would be faster
-            self.paintGL()
-            QCoreApplication.processEvents()
-        return self.overlay
+    def render(self):
+        if not self._render:
+            self._rendOpts()
+        self._algo_render = True
+        rr = self.saveView()
+        self._algo_render = False
+        if not self._render:
+            self._projOpts()
+        return rr
     
     def mousePressEvent(self, event):
         self._lastPos = event.pos()
@@ -345,13 +392,8 @@ class GLWidget(QOpenGLWidget):
                                  interpolation=cv2.INTER_CUBIC)
         self._image_w = len(self.image[0])
         self._image_h = len(self.image)
-        
-        self.image, h, th = ImageProc.process_target_image(self.image)
-        
-        self._rawimage = np.flipud(self.image).tobytes()
-
-        #self.image = ascontiguousarray(tmp.transpose()).data
-        #self.image = [list(map(list,rows)) for rows in tmp]
+        self.thr_image, h, th = ImageProc.process_target_image(self.image)
+        self._rawimage = np.flipud(self.thr_image).tobytes()
 
     def loadTargetImageMeta(self, src):
         lbl_loader.load_image_meta(src, self.systemModel)
@@ -362,6 +404,9 @@ class GLWidget(QOpenGLWidget):
         self.gl.glNewList(genList, self.gl.GL_COMPILE)
         self.gl.glBegin(self.gl.GL_TRIANGLES) # GL_POLYGON?
         self.setColor(self._fgColor)
+        #self.gl.glEnable(self.gl.GL_COLOR_MATERIAL);
+        #self.gl.glMaterialfv(self.gl.GL_FRONT, self.gl.GL_SPECULAR, (0,0,0,1));
+        #self.gl.glMaterialfv(self.gl.GL_FRONT, self.gl.GL_SHININESS, (0,));
         
         model = obj_loader.OBJ(TARGET_MODEL_FILE)
         print('x[%s, %s] y[%s, %s] z[%s, %s]'%(
@@ -382,9 +427,10 @@ class GLWidget(QOpenGLWidget):
         return genList
 
     def triangle(self, x1, x2, x3):
-        self.gl.glVertex3d(x1[0], x1[1], x1[2])
-        self.gl.glVertex3d(x2[0], x2[1], x2[2])
-        self.gl.glVertex3d(x3[0], x3[1], x3[2])
+        self.gl.glNormal3f(*tools.surf_normal(x1, x2, x3))
+        self.gl.glVertex3f(x1[0], x1[1], x1[2])
+        self.gl.glVertex3f(x2[0], x2[1], x2[2])
+        self.gl.glVertex3f(x3[0], x3[1], x3[2])
 
     def setClearColor(self, c):
         self.gl.glClearColor(c.redF(), c.greenF(), c.blueF(), c.alphaF())
