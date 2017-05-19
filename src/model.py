@@ -108,9 +108,9 @@ class SystemModel():
         self.x_off = Parameter(-4, 4, estimate=False)
         self.y_off = Parameter(-4, 4, estimate=False)
         
-        # whole view: 2.5km/tan(2.5deg) = 60km
-        # can span ~50px: 2.5km/tan(2.5deg * 0.05) = 1150kmpr
-        self.z_off = Parameter(-1150, -60, def_val=-200, is_gl_z=True) # was 120, 220
+        # whole view: 1.65km/tan(2.5deg) = 38km
+        # can span ~30px: 1.65km/tan(2.5deg * 30/1024) = 1290km
+        self.z_off = Parameter(-MAX_DISTANCE, -MIN_DISTANCE, def_val=-200, is_gl_z=True) # was 120, 220
 
         # spacecraft orientation relative to stars
         self.x_rot = Parameter(-90, 90, estimate=False) # axis latitude
@@ -154,8 +154,6 @@ class SystemModel():
             p.fire_change_events = enabled
         
     def set_spacecraft_pos(self, pos):
-#        half_range = abs(pos[2] / 170 * 50)
-#        self.z_off.range = (pos[2] - half_range, pos[2] + half_range)
         self.z_off.value = pos[2]
 
         half_range = abs(pos[2] / 170 * 4)
@@ -187,8 +185,7 @@ class SystemModel():
         if not BATCH_MODE and DEBUG:
             print('asteroid x-axis: %s'%tools.q_times_v(q_tot.conj(), np.array([1, 0, 0])))
         
-        w, v = tools.q_to_angleaxis(q_tot.conj())
-        return (math.degrees(w), *v)
+        return q_tot.conj()
     
     def light_rel_dir(self):
         """ direction of light relative to spacecraft in opengl coords """

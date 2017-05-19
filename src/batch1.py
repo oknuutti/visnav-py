@@ -33,7 +33,7 @@ if __name__ == '__main__':
                 'method':'Nelder-Mead',
                 'options':{'maxiter':8, 'xtol':1e-3, 'ftol':1e-3}
         }})
-    elif True:
+    elif False:
         def finfun(f, x0, *args, **kwargs):
             res = optimize.minimize(f, x0,
 #                    method='Nelder-Mead',
@@ -42,9 +42,23 @@ if __name__ == '__main__':
                options={'maxiter':10, 'rhobeg': 0.01},
             )
             return res.x, res.fun, res.status
-        tl.run(1000, cleanup=False, method='brute', min_options={
-            'max_iter':50,
-            'finish':None, #finfun,
-        })
-        
+
+        tl.run(1000, cleanup=False, method='brute', centroid_init=True,
+                min_options={
+                    'max_iter':50,
+                    'finish':None, #finfun,
+                })
+    elif True:
+        tl.run(10, cleanup=False, method='two-step-brute', centroid_init=True,
+                min_options={
+                    'first':{
+                        'max_iter':50,
+                    },
+                    'second':{
+                        'margin':50,           # in original image pixels 
+                        'distance_margin':0.2, # distance search space centered around first round result
+                        'max_iter':20,
+                    },
+                })
+
     th1.app.quit()

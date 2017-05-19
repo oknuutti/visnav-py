@@ -4,11 +4,18 @@ import os
 SCRIPT_DIR = os.path.dirname(__file__)
 BASE_DIR = os.path.join(SCRIPT_DIR, '..')
 
-CAMERA_FIELD_OF_VIEW = 5    # in deg
-CAMERA_HEIGHT = 512         # really 1024, so will scale
-CAMERA_WIDTH = 512
-CAMERA_ASPECT_RATIO = CAMERA_WIDTH/CAMERA_HEIGHT
-MAX_DISTANCE = 1160 # in km
+CAMERA_X_FOV = 5            # in deg
+CAMERA_Y_FOV = 5            # in deg
+CAMERA_WIDTH = 1024         # in pixels
+CAMERA_HEIGHT = 1024        # in pixels
+VIEW_WIDTH = 512
+VIEW_HEIGHT = 512
+
+MAX_TEST_X_RES = 873        # 
+MAX_TEST_Y_RES = 873        # visit fails to generate higher images
+
+MIN_DISTANCE = 38           # in km
+MAX_DISTANCE = 1290         # in km
 
 # from http://imagearchives.esac.esa.int/index.php?/category/167/start-224
 #TARGET_IMAGE = 'ROS_CAM1_20150720T064939'  # 196.99

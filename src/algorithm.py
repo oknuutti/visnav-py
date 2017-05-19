@@ -17,22 +17,34 @@ class PositioningException(Exception):
 class ImageProc():
     latest_opt = None
     show_fit = None
+
+    @staticmethod
+    def add_noise_to_image(image, noise_img_file):
+        tmp = cv2.imread(noise_img_file, cv2.IMREAD_UNCHANGED)
+        noise_img = cv2.resize(tmp, None,
+                               fx=image.shape[0]/tmp.shape[0],
+                               fy=image.shape[1]/tmp.shape[1],
+                               interpolation=cv2.INTER_CUBIC)
+                               
+        return cv2.add(image, noise_img[:,:,3])
     
+    @staticmethod
+    def crop_and_zoom_image(full_image, x_off, y_off, width, height, scale):
+        return cv2.resize(full_image[x_off:(x_off+width), y_off:(y_off+height)],
+                        None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+        
     @staticmethod
     def process_target_image(image_src):
         hist = cv2.calcHist([image_src],[0],None,[256],[0,256])
         
-        if not BATCH_MODE:
+        if True or not BATCH_MODE:
             threshold_value = ImageProc.optimal_threshold(hist)
         else:
             threshold_value = 15 # imgs created by VISIT dont have background
         
         th, im = cv2.threshold(image_src, threshold_value, 255, 0)
-        
-        # black => 0 alpha & white => .5 alpha
-        alpha = np.zeros(im.shape, im.dtype)
-        alpha[im == 255] = 128
-        image_dst = cv2.merge((im, im, im, alpha))
+        image_dst = image_src.copy()
+        image_dst[im == 0] = 0;
         
         return image_dst, hist, threshold_value
     
@@ -73,8 +85,10 @@ class ImageProc():
         bg = reversed(fitfun1(out[0][:3], x))
         ast = list(reversed(fitfun2(out[0][3:], x)))
         threshold_value = 255-next((i for i, v in enumerate(bg) if v/ast[i]>0.33), 255-100)
+        
         if not BATCH_MODE or DEBUG:
-            print('threshold_value: %s'%threshold_value)
+            bg_ratio = out[0][:3][2] / out[0][3:][2]
+            print('threshold_value: %s; bg_ratio: %s'%(threshold_value, bg_ratio))
 
         # plot figure with histogram and estimated distributions
         if False:
@@ -108,7 +122,7 @@ class CentroidAlgo():
         # TODO: somehow improve on this, now seems very crude
         r = math.sqrt(size/math.pi)
         R = math.sqrt(system_model.asteroid.mean_cross_section/math.pi)
-        angle = r/CAMERA_HEIGHT * math.radians(CAMERA_FIELD_OF_VIEW)
+        angle = r/CAMERA_HEIGHT * math.radians(CAMERA_Y_FOV)
         z_off = R/1000 / math.tan(angle) # in km
         
         x_off, y_off = CentroidAlgo.calc_xy(
@@ -128,10 +142,10 @@ class CentroidAlgo():
     
     @staticmethod 
     def calc_xy(cx, cy, z_off):
-        h_angle = cx/CAMERA_HEIGHT * math.radians(CAMERA_FIELD_OF_VIEW)
+        h_angle = cx/CAMERA_WIDTH * math.radians(CAMERA_X_FOV)
         x_off = z_off * math.tan(h_angle)
         
-        v_angle = cy/CAMERA_HEIGHT * math.radians(CAMERA_FIELD_OF_VIEW)
+        v_angle = cy/CAMERA_HEIGHT * math.radians(CAMERA_Y_FOV)
         y_off = z_off * math.tan(v_angle)
         
         return x_off, y_off
@@ -139,8 +153,9 @@ class CentroidAlgo():
     
     @staticmethod
     def adjusted_centroid(img, solar_elongation=math.pi, direction=0):
-        iw, ih, cs = np.shape(img)
-        m = cv2.moments(img[:,:,1], binaryImage=True)
+        img = np.atleast_3d(img)
+        iw, ih, cs = img.shape
+        m = cv2.moments(img[:,:,0], binaryImage=True)
         if m['m00'] < 10:
             return iw/2, ih/2, 0
         
@@ -215,6 +230,7 @@ class PhaseCorrelationAlgo():
         
         self._target_image = None
         self._hannw = None
+        self._render_result = None
     
     def optfun(self, *args):
         if any(map(math.isnan, args)):
@@ -258,12 +274,17 @@ class PhaseCorrelationAlgo():
         if render_result is None:
             render_result = self.glWidget.render()
             QCoreApplication.processEvents()
+            
+        self._render_result = render_result
 #        cv2.imshow('render_result', render_result)
 #        cv2.imshow('target_image', self._img)
 #        cv2.waitKey()
         
         (cx, cy), pwr = cv2.phaseCorrelate(
                 np.float32(render_result), self._target_image, self._hannw)
+        
+        # if crop params set, compensate cx, cy
+        cx, cy = self._original_image_coords(cx, cy)
         
         m.x_off.value, m.y_off.value = \
                 CentroidAlgo.calc_xy(cx, -cy, -m.z_off.value)
@@ -283,10 +304,67 @@ class PhaseCorrelationAlgo():
             )
 
         return self.errval
+    
+    def _get_bounds(self, img, margin, max_width):
+        wg = self.glWidget
+        
+        # get x, y, w, h from img
+        x, y, w, h = cv2.boundingRect(img)
 
-    def findstate(self, image, method='simplex', **kwargs):
-        self._img = image
-        self._target_image = np.float32(image)
+        # translate to 1:1 scale, add margin
+        (x, y) = self._original_image_coords(x, y)
+        im_xoff = max(0, x - margin)
+        im_yoff = max(0, y - margin)
+        im_width = min(CAMERA_WIDTH, round(w/wg.im_scale) +2*margin)
+        im_height = min(CAMERA_HEIGHT, round(h/wg.im_scale) +2*margin)
+        
+        # correct for aspect ratio
+        if im_width/im_height > VIEW_WIDTH/VIEW_HEIGHT:
+            tmp = im_height
+            im_height = round(im_width*VIEW_HEIGHT/VIEW_WIDTH)
+            im_yoff -= round((im_height - tmp)/2)
+        elif im_width/im_height < VIEW_WIDTH/VIEW_HEIGHT:
+            tmp = im_width
+            im_width = round(im_height*VIEW_WIDTH/VIEW_HEIGHT)
+            im_xoff -= round((im_width - tmp)/2)
+            
+        # see if still need to down scale
+        im_scale = min(1, max_width/im_width)
+        
+        # adjust bounds to cover whole view
+        if im_scale == 1:
+            im_xoff -= round((VIEW_WIDTH - im_width)/2)
+            im_yoff -= round((VIEW_HEIGHT - im_height)/2)
+            im_width = VIEW_WIDTH
+            im_height = VIEW_HEIGHT
+        
+        return im_xoff, im_yoff, im_width, im_height, im_scale
+    
+    def _original_image_coords(self, cx, cy):
+        wg = self.glWidget
+        return tuple(round(c/wg.im_scale) + o for c, o in
+                    ((cx, wg.im_xoff), (cy, wg.im_yoff)))
+
+    def findstate(self, imgfile, method='simplex', **kwargs):
+        if self.glWidget.image_file != imgfile:
+            self.glWidget.loadTargetImage(imgfile)
+
+        self._target_image = np.float32(self.glWidget.image)
+        
+        # consider if useful at all
+        if kwargs.pop('centroid_init', False):
+            try:
+                CentroidAlgo.update_sc_pos(
+                        self.system_model, self.glWidget.image)
+                ok = True
+            except PositioningException as e:
+                if not e.args or e.args[0] != 'No asteroid found':
+                    print(str(e))
+                print('|', end='', flush=True)
+                ok = False
+            if not ok:
+                return False
+        
         self.optfun_values = []
         
         #hwsize = kwargs.get('hwin_size', 4)
@@ -294,10 +372,11 @@ class PhaseCorrelationAlgo():
         #sd = int((CAMERA_HEIGHT - hwsize)/2)
         #self._hannw = cv2.copyMakeBorder(tmp,
         #        sd, sd, sd, sd, cv2.BORDER_CONSTANT, 0)
+        
         self._hannw = None
         self.start_time = datetime.now()
         init_vals = np.array(list(p.nvalue for n, p in
-                                        self.system_model.get_params()))
+                                  self.system_model.get_params()))
         
         if method=='simplex':
             options={'maxiter':100, 'xtol':2e-2, 'ftol':5e-2}
@@ -352,14 +431,75 @@ class PhaseCorrelationAlgo():
             options.update(min_opts)
             optfun = self.optfun if len(init)==1 else lambda x: self.optfun(*x)
             x = res = optimize.brute(optfun, init, **options)
-            if len(init)==1:
-                x = (x,)
+            x = (x,) if len(init)==1 else x
+                
+        elif method=='two-step-brute':
+            min_opts = dict(kwargs.get('min_options', {}))
+            
+            ## PHASE I
+            ## >> 
+            first_opts = min_opts.pop('first')
+
+            im_scale = first_opts.pop('scale', 0.5)
+            self.glWidget.setImageZoomAndResolution(im_scale=im_scale)
+
+            max_iter = first_opts.pop('max_iter', 50)
+            init = list((-0.5, 0.5) for n, p in self.system_model.get_params())
+            optfun = self.optfun if len(init)==1 else lambda x: self.optfun(*x)            
+            options = {'Ns':math.floor(math.pow(max_iter, 1/len(init))),
+                       'finish':None}
+            options.update(first_opts)
+            x = res = optimize.brute(optfun, init, **options)
+            x = (x,) if len(init)==1 else x
+            self.iter_count = -1
+            self.optfun(*x) # set sc params to result values
+            ## <<
+            ## PHASE I
+            
+            ## PHASE II
+            ## >>
+            second_opts = min_opts.pop('second')
+            margin = second_opts.pop('margin', 50)
+            distance_margin = second_opts.pop('distance_margin', 0.2)
+            max_width = second_opts.pop('max_width', VIEW_WIDTH)
+            
+            # calculate min_dist and max_dist
+            min_dist = (-self.system_model.z_off.value) * (1-distance_margin)
+            max_dist = (-self.system_model.z_off.value) * (1+distance_margin)
+
+            # limit distance range
+            self.system_model.z_off.range = (-max_dist, -min_dist)
+            
+            # calculate im_xoff, im_xoff, im_width, im_height
+            x, y, w, h, sc = self._get_bounds(self._render_result, margin, max_width)
+            
+            # set cropping & zooming
+            self.glWidget.setImageZoomAndResolution(
+                                        im_xoff=x, im_yoff=y,
+                                        im_width=w, im_height=h, im_scale=sc)
+            self._target_image = np.float32(self.glWidget.image)
+            
+            # set optimization params
+            max_iter = second_opts.pop('max_iter', 18)
+            init = list((-0.5, 0.5) for n, p in self.system_model.get_params())
+            optfun = self.optfun if len(init)==1 else lambda x: self.optfun(*x)
+            options = {'Ns':math.floor(math.pow(max_iter, 1/len(init))),
+                       'finish':None}
+            options.update(second_opts)
+            
+            # optimize
+            x = res = optimize.brute(optfun, init, **options)
+            x = (x,) if len(init)==1 else x
             
         if not BATCH_MODE or DEBUG:
             print('%s'%res)
             print('seconds: %s'%(datetime.now()-self.start_time))
         self.iter_count = -1;
         self.optfun(*x)
-#        self.glWidget.parent().update()
-#        self.glWidget.repaint()
-#        QCoreApplication.processEvents()
+        
+        outfile = imgfile[0:-4]+'r'+'.png'
+        self.glWidget.saveViewToFile(outfile)
+        
+        if not BATCH_MODE and self.glWidget.im_def_scale != self.glWidget.im_scale:
+            self.glWidget.setImageZoomAndResolution(im_scale=self.glWidget.im_def_scale)
+        return True

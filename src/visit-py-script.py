@@ -22,11 +22,11 @@ def _render(params):
     s.fileName = params['out_file']
     s.outputDirectory = params['out_dir']
     s.format = s.PNG
+    s.resConstraint = s.NoConstraint
     s.width = params['out_width']
     s.height = params['out_height']
     s.quality = 100
     s.compression = s.None
-    s.resConstraint = s.NoConstraint
     SetSaveWindowAttributes(s)
     return SaveWindow()
 
@@ -40,7 +40,7 @@ def _receive(sock):
     
     return (b''.join(chunks)).decode('utf-8')
     
-RestoreSession("data/xlores-visit.session",0)
+RestoreSession("data/default-visit.session",0)
 ssock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 ssock.bind(('127.0.0.1', 8787))
 ssock.listen(1)
@@ -58,7 +58,7 @@ while True:
     msg = _receive(csock)
     if msg == 'quit':
         csock.close()
-        break    
+        break
     if len(msg)>0:
         params = json.loads(msg)
         for i in range(3):
@@ -71,7 +71,7 @@ while True:
                 ok = False
             if ok:
                 break
-            
+        
         csock.send(fname.encode('utf-8'))
     csock.close()
     since_reset += 1

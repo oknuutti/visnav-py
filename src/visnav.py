@@ -63,6 +63,7 @@ class MainThread(threading.Thread):
         self.window = None
         
     def run(self):
+        sys.tracebacklimit = 10
         self.app = QApplication(sys.argv)
         self.window = Window()
         self.window.show()
@@ -158,10 +159,10 @@ class Window(QWidget):
             import cProfile
             ls = locals()
             ls.update({'self':self, 'm':m})
-            cProfile.runctx('self.optim.findstate(method=m.lower())', 
+            cProfile.runctx('self.optim.findstate(TARGET_IMAGE_FILE, method=m.lower())', 
                     globals(), ls, PROFILE_OUT_FILE)
         def handler():
-            self.optim.findstate(self.glWidget.image, method=m.lower())
+            self.optim.findstate(TARGET_IMAGE_FILE, method=m.lower())
         
         btn.clicked.connect(profhandler if PROFILE else handler)
         layout.addWidget(btn)
@@ -188,40 +189,37 @@ class GLWidget(QOpenGLWidget):
         self.errval  = None
         self.iter_count = 0
         self.image = None
+        self.image_file = None
 
+        self.im_def_scale = min(VIEW_WIDTH/CAMERA_WIDTH, VIEW_HEIGHT/CAMERA_HEIGHT)
+        self.im_scale = self.im_def_scale
+        self.im_xoff = 0
+        self.im_yoff = 0
+        self.im_width = CAMERA_WIDTH
+        self.im_height = CAMERA_HEIGHT
+        
         self.debug_c = 0
         self._paint_entered = False
 
         self._render = True
         self._algo_render = False
         
-        self._rawimage = None
+        self._noise_image = os.path.join(SCRIPT_DIR, '../data/noise-fg.png')
+        
+        self._gl_image = None
         self._object = 0
         self._lastPos = QPoint()
         self._imgColor = QColor.fromRgbF(1, 1, 1, 0.4)
         self._fgColor = QColor.fromRgbF(0.6, 0.6, 0.6, 1)
         self._bgColor = QColor.fromCmykF(0.0, 0.0, 0.0, 1.0)
-        self._persp = {
-            'fov': CAMERA_FIELD_OF_VIEW,
-            'aspect': CAMERA_ASPECT_RATIO,
-            'near': 0.1,
-            'far': MAX_DISTANCE,
-        }
-        # calculate frustum based on fov, aspect & near
-        top = self._persp['near'] * math.tan(math.radians(self._persp['fov']/2))
-        right = top*self._persp['aspect']
-        self._frustum = {
-            'left':-right,
-            'right':right,
-            'bottom':-top,
-            'top':top, 
-        }
+        self._frustum_near = 0.1
+        self._frustum_far = MAX_DISTANCE
         
     def minimumSizeHint(self):
         return QSize(50, 50)
 
     def sizeHint(self):
-        return QSize(CAMERA_WIDTH, CAMERA_HEIGHT)
+        return QSize(VIEW_WIDTH, VIEW_HEIGHT)
 
     def initializeGL(self):
         f = QSurfaceFormat()
@@ -257,25 +255,83 @@ class GLWidget(QOpenGLWidget):
         self.gl.glEnable(self.gl.GL_LIGHT0)
         
     def resizeGL(self, width, height):
+        rel_scale = self.im_scale / self.im_def_scale
+        self.im_def_scale = min(width/CAMERA_WIDTH, height/CAMERA_HEIGHT)
+        self.im_scale = self.im_def_scale * rel_scale
         side = min(width, height)
-        if side < 0:
+        if self.im_scale < 0 or side < 0:
             return
 
         if not BATCH_MODE:
-            self.loadTargetImage(TARGET_IMAGE_FILE, side)
+            self.loadTargetImage(TARGET_IMAGE_FILE)
             self.loadTargetImageMeta(TARGET_IMAGE_META_FILE)
             if not USE_IMG_LABEL_FOR_SC_POS:
-                CentroidAlgo.update_sc_pos(self.systemModel, self.thr_image)
+                CentroidAlgo.update_sc_pos(self.systemModel, self.full_image)
         
         self.gl.glViewport((width-side) // 2, (height-side) // 2, side, side)
+        self.updateFrustum()
+        
 
+    def updateFrustum(self):
+        # calculate frustum based on fov, aspect & near
+        # NOTE: with wide angle camera, would need to take into account
+        #       im_xoff, im_yoff, im_width and im_height
+        x_fov = CAMERA_X_FOV * self.im_def_scale / self.im_scale
+        y_fov = CAMERA_Y_FOV * self.im_def_scale / self.im_scale
+
+        # calculate frustum based on fov, aspect & near
+        right = self._frustum_near * math.tan(math.radians(x_fov/2))
+        top = self._frustum_near * math.tan(math.radians(y_fov/2))
+        self._frustum = {
+            'left':-right,
+            'right':right,
+            'bottom':-top,
+            'top':top, 
+        }
+        
         self.gl.glMatrixMode(self.gl.GL_PROJECTION)
         self.gl.glLoadIdentity()
         self.gl.glFrustum(
                 self._frustum['left'], self._frustum['right'],
                 self._frustum['bottom'], self._frustum['top'],
-                self._persp['near'], self._persp['far'])
-        self.gl.glMatrixMode(self.gl.GL_MODELVIEW)
+                self._frustum_near, self._frustum_far)
+        self.gl.glMatrixMode(self.gl.GL_MODELVIEW)        
+
+    def renderParams(self):
+        m = self.systemModel
+        
+        # NOTE: with wide angle camera, would need to take into account
+        #       im_xoff, im_yoff, im_width and im_height
+        xc_off = (self.im_xoff+self.im_width/2 - CAMERA_WIDTH/2)
+        xc_angle = xc_off/CAMERA_WIDTH * CAMERA_X_FOV
+        
+        yc_off = (self.im_yoff+self.im_height/2 - CAMERA_HEIGHT/2)
+        yc_angle = yc_off/CAMERA_HEIGHT * CAMERA_Y_FOV
+        
+        # first rotate around x-axis, then y-axis,
+        # note that diff angle in image y direction corresponds to rotation
+        # around x-axis and vise versa
+        q_crop = tools.spherical_to_q(yc_angle, xc_angle, 0)
+        
+        x = m.x_off.value
+        y = m.y_off.value
+        z = m.z_off.value
+
+        # rotate offsets using q_crop
+        x, y, z = tools.q_times_v(q_crop.conj(), np.array([x, y, z]))
+        
+        # maybe put object in center of view
+        if self._algo_render:
+            x, y = 0, 0
+        
+        # get object rotation and turn it a bit based on cropping effect
+        q = m.sc_asteroid_rel_rot()
+        qfin = (q * q_crop.conj())
+        w, v = tools.q_to_angleaxis(qfin)
+        
+        # light direction, translation, rotation
+        return (m.light_rel_dir(), (x, y, z), (math.degrees(w), *v))
+        
 
     def paintGL(self):
         if self._algo_render:
@@ -287,28 +343,25 @@ class GLWidget(QOpenGLWidget):
                 self.gl.GL_COLOR_BUFFER_BIT | self.gl.GL_DEPTH_BUFFER_BIT)
 
         self.gl.glLoadIdentity()
-        m = self.systemModel
+
+        light, transl, rot = self.renderParams()
         
         # sunlight config
         if self._render or self._algo_render:
-            light = m.light_rel_dir()
             self.gl.glLightfv(self.gl.GL_LIGHT0, self.gl.GL_POSITION, tuple(-light)+(0,))
             self.gl.glLightfv(self.gl.GL_LIGHT0, self.gl.GL_SPOT_DIRECTION, tuple(light))
         
-        self.gl.glTranslated(
-                0 if self._algo_render else m.x_off.value,
-                0 if self._algo_render else m.y_off.value,
-                m.z_off.value)
-        self.gl.glRotated(*m.sc_asteroid_rel_rot())
+        self.gl.glTranslated(*transl)
+        self.gl.glRotated(*rot)
         self.gl.glCallList(self._object)
         
-        if not self._algo_render and self._rawimage is not None:
+        if not self._algo_render and self._gl_image is not None:
             self.gl.glLoadIdentity()
             self.setColor(self._imgColor)
             self.gl.glRasterPos3f(self._frustum['left'],
-                                  self._frustum['bottom'], -self._persp['near'])
+                                  self._frustum['bottom'], -self._frustum_near)
             self.gl.glDrawPixels(self._image_w, self._image_h, self.gl.GL_RGBA,
-                                 self.gl.GL_UNSIGNED_BYTE, self._rawimage)
+                                 self.gl.GL_UNSIGNED_BYTE, self._gl_image)
 
         self.gl.glFinish()
         
@@ -378,23 +431,49 @@ class GLWidget(QOpenGLWidget):
 
         self._lastPos = event.pos()
 
-    def loadTargetImage(self, src, side):
+    def setImageZoomAndResolution(self, im_xoff=0, im_yoff=0,
+                    im_width=CAMERA_WIDTH, im_height=CAMERA_HEIGHT, im_scale=1):
+        
+        self.im_xoff = im_xoff
+        self.im_yoff = im_yoff
+        self.im_width = im_width
+        self.im_height = im_height
+        self.im_scale = im_scale
+        self.updateFrustum()
+        
+        self.image = ImageProc.crop_and_zoom_image(self.full_image, im_xoff, im_yoff,
+                                                   im_width, im_height, im_scale)
+        self._image_w = self.image.shape[0]
+        self._image_h = self.image.shape[1]
+        
+        # form _gl_image that is used for rendering
+        # black => 0 alpha, non-black => white => .5 alpha
+        im = self.image.copy()
+        alpha = np.zeros(im.shape, im.dtype)
+        im[im > 0] = 255
+        alpha[im > 0] = 128
+        self._gl_image = np.flipud(cv2.merge((im, im, im, alpha))).tobytes()
+        
+    def loadTargetImage(self, src):
         tmp = cv2.imread(src, cv2.IMREAD_GRAYSCALE)
         if tmp is None:
             raise Exception('Cant load image from file %s'%(src,))
-        
-        self._orig_image_w = len(tmp[0])
-        self._orig_image_h = len(tmp)
-        
-        self.image = cv2.resize(tmp, None,
-                                 fx=side/self._orig_image_w,
-                                 fy=side/self._orig_image_h,
-                                 interpolation=cv2.INTER_CUBIC)
-        self._image_w = len(self.image[0])
-        self._image_h = len(self.image)
-        self.thr_image, h, th = ImageProc.process_target_image(self.image)
-        self._rawimage = np.flipud(self.thr_image).tobytes()
 
+        if tmp.shape != (CAMERA_WIDTH, CAMERA_HEIGHT):
+            # visit fails to generate 1024 high images
+            tmp = cv2.resize(tmp, None,
+                            fx=CAMERA_WIDTH/tmp.shape[0],
+                            fy=CAMERA_HEIGHT/tmp.shape[1],
+                            interpolation=cv2.INTER_CUBIC)
+
+        if BATCH_MODE and self._noise_image:
+            tmp = ImageProc.add_noise_to_image(tmp, self._noise_image)
+        
+        self.image_file = src
+        self.full_image, h, th = ImageProc.process_target_image(tmp)
+        
+        self.setImageZoomAndResolution(im_scale=self.im_def_scale)
+        
     def loadTargetImageMeta(self, src):
         lbl_loader.load_image_meta(src, self.systemModel)
         self.update()

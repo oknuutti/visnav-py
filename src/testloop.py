@@ -2,6 +2,7 @@ from settings import *
 
 import math
 from math import degrees as deg
+from math import radians as rad
 import os
 import threading
 import socket
@@ -27,6 +28,20 @@ class TestLoop():
         self.exit = False
         self._sock = None
         self._algorithm_finished = None
+        
+        # gaussian sd in seconds
+        self._noise_time = 30/2     # 95% within +-30s
+        
+        # uniform, max dev in deg
+        self._noise_ast_rot_axis = 10
+        
+        # s/c orientation noise, gaussian sd in deg
+        self._noise_sco_lat = 2/2   # 95% within 2 deg
+        self._noise_sco_lon = 2/2   # 95% within 2 deg
+        self._noise_sco_rot = 2/2   # 95% within 2 deg
+        
+        # minimum allowed elongation in deg
+        self._min_elong = 25
         
         def handle_close():
             self.exit = True
@@ -60,10 +75,10 @@ class TestLoop():
                 'sc lat dev', 'sc lon dev', 'sc rot dev', 'total dev angle',
                 'x est sc pos', 'y est sc pos', 'z est sc pos',
                 'x err sc pos', 'y err sc pos', 'z err sc pos',
-                'abs error', 'rel error',
+                'lat error', 'dist error',
             ))+'\n')
 
-        ex_times, errs, rerrs, li = [], [], [], 0
+        ex_times, laterrs, disterrs, li = [], [], [], 0
         for i in range(times):
             self._maybe_exit()
             
@@ -76,12 +91,15 @@ class TestLoop():
                 li += 1
 
             # calculate distance error
+            dist = abs(params[-3])
             if not math.isnan(err[0]):
-                errd = math.sqrt(sum(map(lambda x: x**2, err)))
-                errs.append(errd)
-                rerrs.append(errd/abs(params[-3])) # divided by distance
+                lerr = math.sqrt(err[0]**2 + err[1]**2) / dist
+                derr = abs(err[2]) / dist
+                laterrs.append(lerr)
+                disterrs.append(derr)
             else:
-                errd = float('nan')
+                lerr = float('nan')
+                derr = lerr
 
             ex_times.append(etime)
 
@@ -89,33 +107,39 @@ class TestLoop():
             with open(logfile, 'a') as file:
                 file.write('\t'.join(map(str, (
                     i, dt.now().strftime("%Y-%m-%d %H:%M:%S"), etime,
-                    *params, *noise, *pos, *err, errd, errd/abs(params[3])
+                    *params, *noise, *pos, *err, lerr, derr
                 )))+'\n')
                 
             # log opt fun values in other file
             with open(fval_logfile, 'a') as file:
                 file.write('\t'.join(map(str, fvals or []))+'\n')
-            
+        
+        calc_prctls = lambda errs: \
+                ', '.join('%.2f' % p
+                for p in 100*np.nanpercentile(errs, (50, 68, 95, 99.7)))
         try:
-            qtles = ', '.join(
-                    '%.2f' % (100*np.nanpercentile(rerrs, q),)
-                    for q in (50, 68, 95, 99.7))
+            laterr_pctls = calc_prctls(laterrs)
+            disterr_pctls = calc_prctls(disterrs)
         except Exception as e:
             print('Error calculating quantiles: %s'%e)
-            qtles = 'error'
+            laterr_pctls = 'error'
+            disterr_pctls = 'error'
         
         # a summary line
         summary = (
             '%s - time: %.1fh (%.0fs), '
-            +'err avg: %.0fkm, rel-err avg: %.2f%%, '
-            +'rel-err qs%%: (%s)\n'
+            + 'lat-err avg: %.2f%%, '
+            + 'lat-err qs%%: (%s), '
+            + 'dist-err avg: %.2f%%, '
+            + 'dist-err qs%%: (%s)\n'
         ) % (
             dt.now().strftime("%Y-%m-%d %H:%M:%S"),
             sum(ex_times)/3600,
             sum(ex_times)/times,
-            sum(errs)/times,
-            100*sum(rerrs)/times,
-            qtles,
+            100*sum(laterrs)/len(laterrs),
+            laterr_pctls,
+            100*sum(disterrs)/len(disterrs),
+            disterr_pctls,
         )
         
         with open(logfile, 'r') as org: data = org.read()
@@ -152,7 +176,7 @@ class TestLoop():
             sc_ast_v = -np.array([sc_ex, sc_ey, sc_ez])
 
             # sc orientation: uniform, center of asteroid at edge of screen - some margin
-            da = np.random.uniform(0, math.radians(CAMERA_FIELD_OF_VIEW/2))
+            da = np.random.uniform(0, rad(CAMERA_Y_FOV/2))
             dd = np.random.uniform(0, 2*math.pi)
             sco_lat = wrap_rads(-sc_lat + da*math.sin(dd))
             sco_lon = wrap_rads(math.pi + sc_lon + da*math.cos(dd))
@@ -163,7 +187,7 @@ class TestLoop():
             sc_x, sc_y, sc_z = q_times_v((sco_q * sm.q_sc2gl).conj(), sc_ast_v)
             
             # asteroid rotation axis, add zero mean gaussian with small variance
-            da = np.random.uniform(0, math.radians(0.1))
+            da = np.random.uniform(0, rad(self._noise_ast_rot_axis))
             dd = np.random.uniform(0, 2*math.pi)
             ax_lat_true = sm.asteroid.axis_latitude
             ax_lon_true = sm.asteroid.axis_longitude
@@ -176,20 +200,22 @@ class TestLoop():
             as_x, as_y, as_z = as_v = sm.asteroid.position(time)
             elong, direc = solar_elongation(as_v, sco_q)
 
-            # limit elongation to always be more than 15deg
-            if deg(elong) > 15:
+            # limit elongation to always be more than set elong
+            if elong > rad(self._min_elong):
                 break
             
         
         ## add measurement noise to
-        # - datetime (95% within +-10s)
-        meas_time = time + np.random.normal(0, 10/2)
+        # - datetime (seconds)
+        meas_time = time + np.random.normal(0, self._noise_time)
 
-        # - spacecraft orientation measure (95% within +-0.1 deg)
-        meas_sco_lat = sco_lat + np.random.normal(0, math.radians(0.1)/2)
-        meas_sco_lat = max(-math.pi/2, min(math.pi/2, meas_sco_lat))
-        meas_sco_lon = wrap_rads(sco_lon + np.random.normal(0, math.radians(0.1)/2))
-        meas_sco_rot = wrap_rads(sco_rot + np.random.normal(0, math.radians(0.1)/2))
+        # - spacecraft orientation measure
+        meas_sco_lat = max(-math.pi/2, min(math.pi/2, sco_lat
+                + np.random.normal(0, rad(self._noise_sco_lat))))
+        meas_sco_lon = wrap_rads(sco_lon 
+                + np.random.normal(0, rad(self._noise_sco_lon)))
+        meas_sco_rot = wrap_rads(sco_rot 
+                + np.random.normal(0, rad(self._noise_sco_rot)))
 
 
         ## based on above, call VISIT to make a target image
@@ -207,9 +233,9 @@ class TestLoop():
         visit_params = {
             'out_file':         VISIT_OUTFILE_PREFIX,
             'out_dir':          imgdir.replace('\\', '\\\\'),
-            'view_angle':       CAMERA_FIELD_OF_VIEW,
-            'out_width':        CAMERA_WIDTH,
-            'out_height':       CAMERA_HEIGHT,
+            'view_angle':       CAMERA_Y_FOV,
+            'out_width':        min(MAX_TEST_X_RES, CAMERA_WIDTH),
+            'out_height':       min(MAX_TEST_Y_RES, CAMERA_HEIGHT),
             'max_distance':     -sm.z_off.range[0]+10,
             'light_direction':  tuple(light),    # vector into the object
             'focus':            tuple(focus),    # vector from object to camera
@@ -290,21 +316,9 @@ class TestLoop():
     def _run_algo(self, imgfile_, **kwargs):
         self._algorithm_finished = threading.Event()
         def run_this_from_qt_thread(glWidget, imgfile, **kwargs):
-            glWidget.loadTargetImage(imgfile, CAMERA_HEIGHT)
-            try:
-                CentroidAlgo.update_sc_pos(glWidget.systemModel, glWidget.thr_image)
-                ok = True
-            except PositioningException as e:
-                if not e.args or e.args[0] != 'No asteroid found':
-                    print(str(e))
-                print('|', end='', flush=True)
-                ok = False
-
-            if ok and kwargs.get('method', False):
-                glWidget.parent().optim.findstate(glWidget.image, **kwargs)
-
-            imgfile = imgfile[0:-4]+'r'+'.png'
-            glWidget.saveViewToFile(imgfile)
+            ok = False
+            if kwargs.get('method', False):
+                ok = glWidget.parent().optim.findstate(imgfile, **kwargs)
             self._algorithm_finished.set()
             return ok
         
@@ -345,8 +359,8 @@ class TestLoop():
             self._visit_th = VisitThread()
             self._visit_th.start()
             
-            for i in range(3):
-                time.sleep(10)
+            for i in range(12):
+                time.sleep(5)
                 try:
                     self._sock.connect(('127.0.0.1', VISIT_PORT))
                     ok = True
