@@ -9,7 +9,7 @@ Needs:
 At least on Windows, to get necessary Python packages it's easiest to use [Anaconda](https://www.continuum.io/downloads)
 
 After installing Anaconda, run from command prompt:
-* `conda install -c menpo opencv3=3.1.0`
+* `conda install -c conda-forge opencv`
 * `conda install -c moble quaternion`
 
 Download data files from my [Google Drive folder](https://drive.google.com/drive/folders/0ByfhOdRO_959X05jTWczWGxLUkk?usp=sharing)

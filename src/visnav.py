@@ -45,13 +45,17 @@ from PyQt5.QtCore import (pyqtSignal, QPoint, QSize, Qt, QBuffer, QIODevice,
 from PyQt5.QtWidgets import (QApplication, QHBoxLayout, QVBoxLayout,
         QOpenGLWidget, QSlider, QPushButton, QWidget)
 
-
 from settings import *
-from model import SystemModel
-from algorithm import ImageProc, PhaseCorrelationAlgo, CentroidAlgo
+from algo import tools
+from algo.model import SystemModel
+from algo.image import ImageProc
+from algo.phasecorr import PhaseCorrelationAlgo
+from algo.centroid import CentroidAlgo
+from algo.keypoint import KeypointAlgo
+from algo.tools import PositioningException
+
 import obj_loader
 import lbl_loader
-import tools
 
 class MainThread(threading.Thread):
     def __init__(self, counter):
@@ -111,22 +115,60 @@ class Window(QWidget):
         topLayout.addWidget(self.sliders['time'])
 
         bottomLayout = QHBoxLayout()
-        self.optim = PhaseCorrelationAlgo(self.systemModel, self.glWidget)
+        self.phasecorr = PhaseCorrelationAlgo(self.systemModel, self.glWidget)
+        self.keypoint = KeypointAlgo(self.systemModel, self.glWidget)
         
         self.buttons = dict(
             (m.lower(), self.optbutton(m, bottomLayout))
-            for m in ('Simplex', 'Powell', 'COBYLA', 'CG',
-                      'BFGS', 'Anneal', 'Brute'))
+            for m in (
+                'Simplex',
+#                'Powell',
+                'COBYLA',
+#                'CG',
+#                'BFGS',
+                'Anneal',
+                'Brute',
+            )
+        )
         
         self.infobtn = QPushButton('Info', self)
         self.infobtn.clicked.connect(lambda: self.printInfo())
         bottomLayout.addWidget(self.infobtn)
+        
+#        self.zoombtn = QPushButton('+', self)
+#        self.zoombtn.clicked.connect(lambda: self.glWidget.setImageZoomAndResolution(
+#                im_xoff=300, im_yoff=180, 
+#                im_width=512, im_height=512, im_scale=1))
+#        bottomLayout.addWidget(self.zoombtn)
+#        
+#        self.defviewbtn = QPushButton('=', self)
+#        self.defviewbtn.clicked.connect(lambda: self.glWidget.setImageZoomAndResolution(
+#                im_xoff=0, im_yoff=0, 
+#                im_width=1024, im_height=1024, im_scale=0.5))
+#        bottomLayout.addWidget(self.defviewbtn)
+        
+        def testfun():
+            self.glWidget.saveViewToFile('testimg.png')
+            try:
+                self.keypoint.solve_pnp('testimg.png')
+            except PositioningException as e:
+                print('keypoint algorithm failed: %s' % e)
+            
+            #(xo, yo, w, h, sc) = self.optim._get_bounds(self.glWidget.image, 50, VIEW_WIDTH)
+            #self.glWidget.setImageZoomAndResolution(
+            #    im_xoff=xo, im_yoff=yo, 
+            #    im_width=w, im_height=h, im_scale=sc)
+        
+        self.test = QPushButton('T', self)
+        self.test.clicked.connect(testfun)
+        bottomLayout.addWidget(self.test)
         
         mainLayout = QVBoxLayout()
         mainLayout.addLayout(topLayout)
         mainLayout.addLayout(bottomLayout)
         self.setLayout(mainLayout)
         self.setWindowTitle("Hello 67P/C-G")
+        self.adjustSize()
 
     def slider(self, param):
         if param.is_gl_z:
@@ -159,10 +201,10 @@ class Window(QWidget):
             import cProfile
             ls = locals()
             ls.update({'self':self, 'm':m})
-            cProfile.runctx('self.optim.findstate(TARGET_IMAGE_FILE, method=m.lower())', 
+            cProfile.runctx('self.phasecorr.findstate(TARGET_IMAGE_FILE, method=m.lower())', 
                     globals(), ls, PROFILE_OUT_FILE)
         def handler():
-            self.optim.findstate(TARGET_IMAGE_FILE, method=m.lower())
+            self.phasecorr.findstate(TARGET_IMAGE_FILE, method=m.lower())
         
         btn.clicked.connect(profhandler if PROFILE else handler)
         layout.addWidget(btn)
@@ -180,6 +222,8 @@ class Window(QWidget):
 class GLWidget(QOpenGLWidget):
     def __init__(self, systemModel, parent=None):
         super(GLWidget, self).__init__(parent)
+        
+        self.setFixedSize(VIEW_WIDTH, VIEW_HEIGHT)
         
         self.systemModel = systemModel
         self.min_method = None
@@ -199,30 +243,41 @@ class GLWidget(QOpenGLWidget):
         self.im_height = CAMERA_HEIGHT
         
         self.debug_c = 0
+        self.gl = None
         self._paint_entered = False
 
         self._render = True
         self._algo_render = False
+        self._center_model = False
         
         self._noise_image = os.path.join(SCRIPT_DIR, '../data/noise-fg.png')
         
+        self._width = None
+        self._height = None
+        self._side = None
         self._gl_image = None
         self._object = 0
         self._lastPos = QPoint()
         self._imgColor = QColor.fromRgbF(1, 1, 1, 0.4)
         self._fgColor = QColor.fromRgbF(0.6, 0.6, 0.6, 1)
-        self._bgColor = QColor.fromCmykF(0.0, 0.0, 0.0, 1.0)
+        self._bgColor = QColor.fromRgbF(0, 0, 0, 1)
+        #self._bgColor = QColor.fromCmykF(0.0, 0.0, 0.0, 1.0)
         self._frustum_near = 0.1
         self._frustum_far = MAX_DISTANCE
         
     def minimumSizeHint(self):
-        return QSize(50, 50)
+        return QSize(VIEW_WIDTH, VIEW_HEIGHT)
+
+    def maximumSizeHint(self):
+        return QSize(VIEW_WIDTH, VIEW_HEIGHT)
 
     def sizeHint(self):
         return QSize(VIEW_WIDTH, VIEW_HEIGHT)
 
     def initializeGL(self):
         f = QSurfaceFormat()
+        #f.setVersion(2, 2)
+        f.setDepthBufferSize(32)
         p = QOpenGLVersionProfile(f)
         self.gl = self.context().versionFunctions(p)
         self.gl.initializeOpenGLFunctions()
@@ -240,6 +295,12 @@ class GLWidget(QOpenGLWidget):
             self._rendOpts()
         else:
             self._projOpts()
+
+        if not BATCH_MODE:
+            self.loadTargetImage(TARGET_IMAGE_FILE)
+            self.loadTargetImageMeta(TARGET_IMAGE_META_FILE)
+            if not USE_IMG_LABEL_FOR_SC_POS:
+                CentroidAlgo.update_sc_pos(self.systemModel, self.full_image)
         
     def _projOpts(self):
         # reset from potentially set rendering options
@@ -258,17 +319,9 @@ class GLWidget(QOpenGLWidget):
         rel_scale = self.im_scale / self.im_def_scale
         self.im_def_scale = min(width/CAMERA_WIDTH, height/CAMERA_HEIGHT)
         self.im_scale = self.im_def_scale * rel_scale
-        side = min(width, height)
-        if self.im_scale < 0 or side < 0:
-            return
-
-        if not BATCH_MODE:
-            self.loadTargetImage(TARGET_IMAGE_FILE)
-            self.loadTargetImageMeta(TARGET_IMAGE_META_FILE)
-            if not USE_IMG_LABEL_FOR_SC_POS:
-                CentroidAlgo.update_sc_pos(self.systemModel, self.full_image)
-        
-        self.gl.glViewport((width-side) // 2, (height-side) // 2, side, side)
+        self._width = width
+        self._height = height
+        self._side = min(width, height)
         self.updateFrustum()
         
 
@@ -278,7 +331,7 @@ class GLWidget(QOpenGLWidget):
         #       im_xoff, im_yoff, im_width and im_height
         x_fov = CAMERA_X_FOV * self.im_def_scale / self.im_scale
         y_fov = CAMERA_Y_FOV * self.im_def_scale / self.im_scale
-
+        
         # calculate frustum based on fov, aspect & near
         right = self._frustum_near * math.tan(math.radians(x_fov/2))
         top = self._frustum_near * math.tan(math.radians(y_fov/2))
@@ -289,13 +342,18 @@ class GLWidget(QOpenGLWidget):
             'top':top, 
         }
         
+        if self._width is not None:
+            self.gl.glViewport(
+                    (self._width-self._side)//2, (self._height-self._side)//2,
+                    self._side, self._side)
+
         self.gl.glMatrixMode(self.gl.GL_PROJECTION)
         self.gl.glLoadIdentity()
         self.gl.glFrustum(
                 self._frustum['left'], self._frustum['right'],
                 self._frustum['bottom'], self._frustum['top'],
                 self._frustum_near, self._frustum_far)
-        self.gl.glMatrixMode(self.gl.GL_MODELVIEW)        
+        self.gl.glMatrixMode(self.gl.GL_MODELVIEW)
 
     def renderParams(self):
         m = self.systemModel
@@ -303,15 +361,18 @@ class GLWidget(QOpenGLWidget):
         # NOTE: with wide angle camera, would need to take into account
         #       im_xoff, im_yoff, im_width and im_height
         xc_off = (self.im_xoff+self.im_width/2 - CAMERA_WIDTH/2)
-        xc_angle = xc_off/CAMERA_WIDTH * CAMERA_X_FOV
+        xc_angle = xc_off/CAMERA_WIDTH * math.radians(CAMERA_X_FOV)
         
         yc_off = (self.im_yoff+self.im_height/2 - CAMERA_HEIGHT/2)
-        yc_angle = yc_off/CAMERA_HEIGHT * CAMERA_Y_FOV
+        yc_angle = yc_off/CAMERA_HEIGHT * math.radians(CAMERA_Y_FOV)
         
         # first rotate around x-axis, then y-axis,
         # note that diff angle in image y direction corresponds to rotation
         # around x-axis and vise versa
-        q_crop = tools.spherical_to_q(yc_angle, xc_angle, 0)
+        q_crop = (
+            np.quaternion(math.cos(-yc_angle/2), math.sin(-yc_angle/2), 0, 0)
+          * np.quaternion(math.cos(-xc_angle/2), 0, math.sin(-xc_angle/2), 0)
+        )
         
         x = m.x_off.value
         y = m.y_off.value
@@ -321,14 +382,14 @@ class GLWidget(QOpenGLWidget):
         x, y, z = tools.q_times_v(q_crop.conj(), np.array([x, y, z]))
         
         # maybe put object in center of view
-        if self._algo_render:
+        if self._center_model:
             x, y = 0, 0
         
         # get object rotation and turn it a bit based on cropping effect
         q = m.sc_asteroid_rel_rot()
         qfin = (q * q_crop.conj())
         w, v = tools.q_to_angleaxis(qfin)
-        
+
         # light direction, translation, rotation
         return (m.light_rel_dir(), (x, y, z), (math.degrees(w), *v))
         
@@ -342,14 +403,17 @@ class GLWidget(QOpenGLWidget):
         self.gl.glClear(
                 self.gl.GL_COLOR_BUFFER_BIT | self.gl.GL_DEPTH_BUFFER_BIT)
 
-        self.gl.glLoadIdentity()
-
         light, transl, rot = self.renderParams()
+        
+        self.gl.glLoadIdentity()
         
         # sunlight config
         if self._render or self._algo_render:
             self.gl.glLightfv(self.gl.GL_LIGHT0, self.gl.GL_POSITION, tuple(-light)+(0,))
             self.gl.glLightfv(self.gl.GL_LIGHT0, self.gl.GL_SPOT_DIRECTION, tuple(light))
+            self.gl.glLightfv(self.gl.GL_LIGHT0, self.gl.GL_DIFFUSE, (.4,.4,.4,1))
+            self.gl.glLightfv(self.gl.GL_LIGHT0, self.gl.GL_AMBIENT, (0,0,0,1))
+            self.gl.glLightModelfv(self.gl.GL_LIGHT_MODEL_AMBIENT, (0,0,0,1))
         
         self.gl.glTranslated(*transl)
         self.gl.glRotated(*rot)
@@ -358,14 +422,47 @@ class GLWidget(QOpenGLWidget):
         if not self._algo_render and self._gl_image is not None:
             self.gl.glLoadIdentity()
             self.setColor(self._imgColor)
-            self.gl.glRasterPos3f(self._frustum['left'],
-                                  self._frustum['bottom'], -self._frustum_near)
+#            self.gl.glRasterPos3f(self._frustum['left'],
+#                                  self._frustum['bottom'], -self._frustum_near)
+            self.gl.glWindowPos2f(0,0)
             self.gl.glDrawPixels(self._image_w, self._image_h, self.gl.GL_RGBA,
                                  self.gl.GL_UNSIGNED_BYTE, self._gl_image)
 
         self.gl.glFinish()
         
-    def saveView(self):
+    def saveView(self, grayscale=True, depth=False):
+        self.makeCurrent()
+
+        # for some reason following gives 24 and not 32 bits
+        # f = self.format() 
+        # print('dbs: %s'%f.depthBufferSize())
+        
+        from OpenGL.GL.images import glReadPixels
+        pixels = glReadPixels(0, 0, VIEW_WIDTH, VIEW_HEIGHT,
+                self.gl.GL_DEPTH_COMPONENT if depth else self.gl.GL_LUMINANCE if grayscale else self.gl.GL_RGBA,
+                self.gl.GL_FLOAT if depth else self.gl.GL_UNSIGNED_BYTE)
+        
+        data = np.frombuffer(pixels, dtype=('float32' if depth else 'uint8'))
+        
+        if depth:
+            near = self._frustum_near
+            far = self._frustum_far
+            def convert_z(z):
+                wz = (2.0 * z) - 1.0
+                a = -(far - near) / (2.0 * far * near)
+                b =  (far + near) / (2.0 * far * near)
+                return 1.0 / (wz * a + b)
+            data = np.array([convert_z(z) for z in data])
+        
+        data = np.flipud(data.reshape([VIEW_HEIGHT, VIEW_WIDTH] + ([] if depth or grayscale else [4])))
+        
+        # print('data: %s'%(data,))
+        # cv2.imshow('target_image', data)
+        # cv2.waitKey()
+        
+        return data
+
+    def saveViewOld(self):
         fbo = self.grabFramebuffer() # calls paintGL
         buffer = QBuffer()
         buffer.open(QIODevice.ReadWrite)
@@ -380,7 +477,7 @@ class GLWidget(QOpenGLWidget):
         imdata = np.frombuffer(buffer.data(), dtype='int8')
         view = cv2.imdecode(imdata, cv2.IMREAD_GRAYSCALE)
         return view
-        
+    
     def saveViewTest(self):
         if False:
             # this takes around double the time than current way
@@ -400,17 +497,25 @@ class GLWidget(QOpenGLWidget):
         return view
         
     def saveViewToFile(self, imgfile):
-        cv2.imwrite(imgfile, self.saveView())
+        cv2.imwrite(imgfile, self.render(center=False))
  
-    def render(self):
+    def render(self, center=True, depth=False):
         if not self._render:
             self._rendOpts()
         self._algo_render = True
-        rr = self.saveView()
+        tmp = self._center_model
+        self._center_model = center
+        
+        fbo = self.grabFramebuffer() # calls paintGL
+        rr = self.saveView(depth=False)
+        if depth:
+            dr = self.saveView(depth=True)
+        
+        self._center_model = tmp
         self._algo_render = False
         if not self._render:
             self._projOpts()
-        return rr
+        return (rr, dr) if depth else rr
     
     def mousePressEvent(self, event):
         self._lastPos = event.pos()
@@ -439,38 +544,48 @@ class GLWidget(QOpenGLWidget):
         self.im_width = im_width
         self.im_height = im_height
         self.im_scale = im_scale
-        self.updateFrustum()
         
         self.image = ImageProc.crop_and_zoom_image(self.full_image, im_xoff, im_yoff,
                                                    im_width, im_height, im_scale)
-        self._image_w = self.image.shape[0]
-        self._image_h = self.image.shape[1]
+        self._image_h = self.image.shape[0]
+        self._image_w = self.image.shape[1]
         
         # form _gl_image that is used for rendering
         # black => 0 alpha, non-black => white => .5 alpha
         im = self.image.copy()
         alpha = np.zeros(im.shape, im.dtype)
-        im[im > 0] = 255
+        #im[im > 0] = 255
         alpha[im > 0] = 128
         self._gl_image = np.flipud(cv2.merge((im, im, im, alpha))).tobytes()
+        self.updateFrustum()
         
-    def loadTargetImage(self, src):
+        # WORK-AROUND: for some reason wont use new frustum if window not resized
+        s = self.parent().size()
+        self.parent().resize(s.width()+1, s.height())
+        self.parent().resize(s.width(), s.height())
+        self.update()
+        QCoreApplication.processEvents()
+        
+    def loadTargetImage(self, src, remove_bg=True):
         tmp = cv2.imread(src, cv2.IMREAD_GRAYSCALE)
         if tmp is None:
             raise Exception('Cant load image from file %s'%(src,))
 
-        if tmp.shape != (CAMERA_WIDTH, CAMERA_HEIGHT):
+        if tmp.shape != (CAMERA_HEIGHT, CAMERA_WIDTH):
             # visit fails to generate 1024 high images
             tmp = cv2.resize(tmp, None,
-                            fx=CAMERA_WIDTH/tmp.shape[0],
-                            fy=CAMERA_HEIGHT/tmp.shape[1],
+                            fx=CAMERA_WIDTH/tmp.shape[1],
+                            fy=CAMERA_HEIGHT/tmp.shape[0],
                             interpolation=cv2.INTER_CUBIC)
 
         if BATCH_MODE and self._noise_image:
             tmp = ImageProc.add_noise_to_image(tmp, self._noise_image)
         
         self.image_file = src
-        self.full_image, h, th = ImageProc.process_target_image(tmp)
+        if remove_bg:
+            self.full_image, h, th = ImageProc.process_target_image(tmp)
+        else:
+            self.full_image = tmp
         
         self.setImageZoomAndResolution(im_scale=self.im_def_scale)
         

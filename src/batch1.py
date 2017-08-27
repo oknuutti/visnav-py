@@ -19,15 +19,20 @@ if __name__ == '__main__':
     
     #tl.run(1000)
     
+    method = sys.argv[1] if len(sys.argv)>1 else 'keypoint'
+    count = int(sys.argv[2]) if len(sys.argv)>2 else 100
+    
     if False:
-        tl.run(10, cleanup=False, method='anneal', min_options={
+        tl.run(10, cleanup=False, method='phasecorr', min_options={
+            'method':'anneal',
             'niter':50, 'T':0.15, 'stepsize':0.03,
             'minimizer_kwargs':{
                 'method':'COBYLA',
                 'options':{'maxiter':6, 'rhobeg': 0.02},
         }})
     elif False:
-        tl.run(10, cleanup=False, method='anneal', min_options={
+        tl.run(10, cleanup=False, method='phasecorr', min_options={
+            'method':'anneal',
             'niter':20, 'T':0.15, 'stepsize':0.05,
             'minimizer_kwargs':{
                 'method':'Nelder-Mead',
@@ -43,22 +48,28 @@ if __name__ == '__main__':
             )
             return res.x, res.fun, res.status
 
-        tl.run(1000, cleanup=False, method='brute', centroid_init=True,
+        tl.run(1000, cleanup=False, method='phasecorr', centroid_init=True,
                 min_options={
+                    'method':'brute',
                     'max_iter':50,
                     'finish':None, #finfun,
                 })
-    elif True:
-        tl.run(10, cleanup=False, method='two-step-brute', centroid_init=True,
+    elif method=='phasecorr':
+        tl.run(count, cleanup=False, method='phasecorr', centroid_init=False,
                 min_options={
+                    'method':'two-step-brute',
                     'first':{
-                        'max_iter':50,
+                        'max_iter':160,
                     },
                     'second':{
-                        'margin':50,           # in original image pixels 
-                        'distance_margin':0.2, # distance search space centered around first round result
-                        'max_iter':20,
+                        'margin':20,           # in original image pixels 
+                        'distance_margin':0.05, # distance search space centered around first round result
+                        'max_iter':50,
                     },
                 })
+    elif method=='keypoint':
+        tl.run(count, method='keypoint', min_options={})
+    else:
+        assert False, 'Invalid method "%s"'%method
 
     th1.app.quit()

@@ -7,7 +7,7 @@ from astropy.time import Time
 from astropy import constants as const
 
 from settings import *
-import tools
+from algo import tools
 
 class Parameter():
     def __init__(self, min_val, max_val, def_val=None, estimate=True, is_gl_z=False):
@@ -162,6 +162,11 @@ class SystemModel():
 
         self.y_off.range = (pos[1] - half_range, pos[1] + half_range)
         self.y_off.value = pos[1]
+
+    def rotate_spacecraft(self, q):
+        new_q = self.spacecraft_q() * q
+        self.x_rot.value, self.y_rot.value, self.z_rot.value = \
+            list(map(math.degrees, tools.q_to_spherical(new_q)))
 
     def spacecraft_q(self):
         return tools.spherical_to_q(*list(map(

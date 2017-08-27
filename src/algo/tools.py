@@ -5,10 +5,31 @@ import numpy as np
 import quaternion
 from astropy.coordinates import SkyCoord
 
+from settings import *
+
+
+class PositioningException(Exception):
+	pass
+
+# cx, cy are centered pixel positions
+def calc_xy(cx, cy, z_off, width=CAMERA_WIDTH, height=CAMERA_HEIGHT):
+    cx = cx/width
+    cy = cy/height
+    #assert cx<=0.5 and cx>=-0.5 and cy<=0.5 and cy>=-0.5, 'Invalid range for cx or cy: %s, %s'%(cx, cy)
+    
+    h_angle = cx * math.radians(CAMERA_X_FOV)
+    x_off = z_off * math.tan(h_angle)
+    
+    v_angle = cy * math.radians(CAMERA_Y_FOV)
+    y_off = z_off * math.tan(v_angle)
+    
+    return x_off, y_off
+
 
 def surf_normal(x1, x2, x3):
     a, b, c = tuple(map(np.array, (x1, x2, x3)))
     return normalize_v(np.cross(b-a, c-a))
+
 
 def angle_between_v(v1, v2):
     # Notice: only returns angles between 0 and 180 deg
@@ -75,6 +96,15 @@ def spherical_to_q(lat, lon, roll):
         * np.quaternion(math.cos(-lat/2), 0, math.sin(-lat/2), 0)
         * np.quaternion(math.cos(roll/2), math.sin(roll/2), 0, 0)
     )
+    
+    
+def q_to_spherical(q):
+    # from https://math.stackexchange.com/questions/687964/getting-euler-tait-bryan-angles-from-quaternion-representation
+    q0,q1,q2,q3 = quaternion.as_float_array(q)[0]
+    roll = np.arctan2(q2*q3+q0*q1, .5-q1**2-q2**2)
+    lat = -np.arcsin(-2*(q1*q3-q0*q2))
+    lon  = np.arctan2(q1*q2+q0*q3, .5-q2**2-q3**2)
+    return lat, lon, roll
     
     
 def q_times_v(q, v):

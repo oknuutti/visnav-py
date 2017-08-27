@@ -16,9 +16,10 @@ import numpy as np
 import quaternion
 from astropy.coordinates import spherical_to_cartesian
 
-from tools import (spherical_to_q, q_times_v, q_to_unitbase, normalize_v,
+from algo.tools import (spherical_to_q, q_times_v, q_to_unitbase, normalize_v,
                    wrap_rads, solar_elongation, angle_between_ypr)
-from algorithm import CentroidAlgo, PositioningException
+from algo.tools import PositioningException
+from algo.centroid import CentroidAlgo
 
 VISIT_OUTFILE_PREFIX = "visitout"
 
@@ -78,7 +79,7 @@ class TestLoop():
                 'lat error', 'dist error',
             ))+'\n')
 
-        ex_times, laterrs, disterrs, li = [], [], [], 0
+        ex_times, laterrs, disterrs, fails, li = [], [], [], 0, 0
         for i in range(times):
             self._maybe_exit()
             
@@ -100,6 +101,7 @@ class TestLoop():
             else:
                 lerr = float('nan')
                 derr = lerr
+                fails += 1
 
             ex_times.append(etime)
 
@@ -131,7 +133,8 @@ class TestLoop():
             + 'lat-err avg: %.2f%%, '
             + 'lat-err qs%%: (%s), '
             + 'dist-err avg: %.2f%%, '
-            + 'dist-err qs%%: (%s)\n'
+            + 'dist-err qs%%: (%s), '
+            + 'fail: %.1f%% \n'
         ) % (
             dt.now().strftime("%Y-%m-%d %H:%M:%S"),
             sum(ex_times)/3600,
@@ -140,6 +143,7 @@ class TestLoop():
             laterr_pctls,
             100*sum(disterrs)/len(disterrs),
             disterr_pctls,
+            100*fails/times,
         )
         
         with open(logfile, 'r') as org: data = org.read()
@@ -165,7 +169,7 @@ class TestLoop():
             sc_lon = np.random.uniform(-math.pi, math.pi)
 
             # s/c distance as inverse uniform distribution
-            max_r, min_r = map(abs, sm.z_off.range)
+            max_r, min_r = MAX_DISTANCE, MIN_DISTANCE
             sc_r = 1/np.random.uniform(1/max_r, 1/min_r)
 
             # same in cartesian coord
@@ -274,8 +278,8 @@ class TestLoop():
         ok = self._run_algo(imgfile, **kwargs)
         
         # save function values from optimization
-        fvals = self.window.optim.optfun_values \
-                if ok and kwargs.get('method', False) \
+        fvals = self.window.phasecorr.optfun_values \
+                if ok and kwargs.get('method', False)=='phasecorr' \
                 else None
         final_fval = fvals[-1] if fvals else None
 
@@ -317,8 +321,15 @@ class TestLoop():
         self._algorithm_finished = threading.Event()
         def run_this_from_qt_thread(glWidget, imgfile, **kwargs):
             ok = False
-            if kwargs.get('method', False):
-                ok = glWidget.parent().optim.findstate(imgfile, **kwargs)
+            method = kwargs.pop('method', False)
+            if method == 'keypoint':
+                try:
+                    glWidget.parent().keypoint.solve_pnp(imgfile, **kwargs)
+                    ok = True
+                except PositioningException:
+                    pass
+            elif method == 'phasecorr':
+                ok = glWidget.parent().phasecorr.findstate(imgfile, **kwargs)
             self._algorithm_finished.set()
             return ok
         
