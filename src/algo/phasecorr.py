@@ -28,6 +28,7 @@ class PhaseCorrelationAlgo():
         self._target_image = None
         self._hannw = None
         self._render_result = None
+        self._count = 0
     
     def optfun(self, *args):
         if any(map(math.isnan, args)):
@@ -72,8 +73,10 @@ class PhaseCorrelationAlgo():
             render_result = self.glWidget.render()
             #imgfile = self.debug_filebase+('i%.0f'%(self.iter_count))+'.png'
             #cv2.imwrite(imgfile, render_result)
-            QCoreApplication.processEvents()
-            
+            self._count+=1
+            if self._count%5 == 0:
+                QCoreApplication.processEvents()
+
         self._render_result = render_result
 #        cv2.imshow('render_result', render_result)
 #        cv2.imshow('target_image', self._img)

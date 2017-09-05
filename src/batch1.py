@@ -59,12 +59,12 @@ if __name__ == '__main__':
                 min_options={
                     'method':'two-step-brute',
                     'first':{
-                        'max_iter':160,
+                        'max_iter':60,
                     },
                     'second':{
-                        'margin':20,           # in original image pixels 
+                        'margin':20,            # in original image pixels 
                         'distance_margin':0.05, # distance search space centered around first round result
-                        'max_iter':50,
+                        'max_iter':20,
                     },
                 })
     elif method=='keypoint':

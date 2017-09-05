@@ -39,6 +39,7 @@ import threading
 import numpy as np
 import cv2
 
+from OpenGL.GL.images import glReadPixels
 from PyQt5.QtGui import QColor, QSurfaceFormat, QOpenGLVersionProfile
 from PyQt5.QtCore import (pyqtSignal, QPoint, QSize, Qt, QBuffer, QIODevice,
         QCoreApplication)
@@ -264,6 +265,7 @@ class GLWidget(QOpenGLWidget):
         #self._bgColor = QColor.fromCmykF(0.0, 0.0, 0.0, 1.0)
         self._frustum_near = 0.1
         self._frustum_far = MAX_DISTANCE
+        self._expire=0
         
     def minimumSizeHint(self):
         return QSize(VIEW_WIDTH, VIEW_HEIGHT)
@@ -428,7 +430,9 @@ class GLWidget(QOpenGLWidget):
             self.gl.glDrawPixels(self._image_w, self._image_h, self.gl.GL_RGBA,
                                  self.gl.GL_UNSIGNED_BYTE, self._gl_image)
 
-        self.gl.glFinish()
+        # dont need? commented out glFinish as it takes around 4s to run
+        # after win10 "creators update"
+        #self.gl.glFinish()
         
     def saveView(self, grayscale=True, depth=False):
         self.makeCurrent()
@@ -437,22 +441,18 @@ class GLWidget(QOpenGLWidget):
         # f = self.format() 
         # print('dbs: %s'%f.depthBufferSize())
         
-        from OpenGL.GL.images import glReadPixels
         pixels = glReadPixels(0, 0, VIEW_WIDTH, VIEW_HEIGHT,
                 self.gl.GL_DEPTH_COMPONENT if depth else self.gl.GL_LUMINANCE if grayscale else self.gl.GL_RGBA,
                 self.gl.GL_FLOAT if depth else self.gl.GL_UNSIGNED_BYTE)
-        
+
         data = np.frombuffer(pixels, dtype=('float32' if depth else 'uint8'))
         
         if depth:
             near = self._frustum_near
             far = self._frustum_far
-            def convert_z(z):
-                wz = (2.0 * z) - 1.0
-                a = -(far - near) / (2.0 * far * near)
-                b =  (far + near) / (2.0 * far * near)
-                return 1.0 / (wz * a + b)
-            data = np.array([convert_z(z) for z in data])
+            a = -(far - near) / (2.0 * far * near)
+            b =  (far + near) / (2.0 * far * near)
+            data = np.divide(1.0,(2.0*a)*data -(a-b)) # 1/((2*X-1)*a+b)
         
         data = np.flipud(data.reshape([VIEW_HEIGHT, VIEW_WIDTH] + ([] if depth or grayscale else [4])))
         

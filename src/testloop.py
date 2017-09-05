@@ -320,6 +320,11 @@ class TestLoop():
     def _run_algo(self, imgfile_, **kwargs):
         self._algorithm_finished = threading.Event()
         def run_this_from_qt_thread(glWidget, imgfile, **kwargs):
+            if PROFILE:
+                import cProfile
+                pr = cProfile.Profile()
+                pr.enable()
+            
             ok = False
             method = kwargs.pop('method', False)
             if method == 'keypoint':
@@ -331,6 +336,11 @@ class TestLoop():
             elif method == 'phasecorr':
                 ok = glWidget.parent().phasecorr.findstate(imgfile, **kwargs)
             self._algorithm_finished.set()
+            
+            if PROFILE:
+                pr.disable()
+                pr.dump_stats(PROFILE_OUT_FILE)
+            
             return ok
         
         self.window.tsRun.emit((

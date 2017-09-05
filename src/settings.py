@@ -33,7 +33,7 @@ VISIT_SCRIPT_PY_FILE = os.path.join(SCRIPT_DIR, 'visit-py-script.py')
 VISIT_PORT = 8787
 
 PROFILE = False
-PROFILE_OUT_FILE = os.path.join(SCRIPT_DIR, '../profiler.out')
+PROFILE_OUT_FILE = os.path.join(SCRIPT_DIR, '../profile.out')
 
 START_IN_THREAD = False
 USE_IMG_LABEL_FOR_SC_POS = False
