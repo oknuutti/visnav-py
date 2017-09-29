@@ -34,10 +34,7 @@ class ImageProc():
         else:
             threshold_value = 15 # imgs created by VISIT dont have background
         
-        th, im = cv2.threshold(image_src, threshold_value, 255, 0)
-        image_dst = image_src.copy()
-        image_dst[im == 0] = 0;
-        
+        th, image_dst = cv2.threshold(image_src, threshold_value, 255, cv2.THRESH_TOZERO)
         return image_dst, hist, threshold_value
     
     @staticmethod

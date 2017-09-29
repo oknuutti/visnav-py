@@ -8,8 +8,8 @@ CAMERA_X_FOV = 5            # in deg
 CAMERA_Y_FOV = 5            # in deg
 CAMERA_WIDTH = 1024         # in pixels
 CAMERA_HEIGHT = 1024        # in pixels
-VIEW_WIDTH = 384 #384 #256 #512
-VIEW_HEIGHT = 384 #384 #256 #512
+VIEW_WIDTH  = 512  #256 #384 #512 #768
+VIEW_HEIGHT = 512  #256 #384 #512 #768
 
 MAX_TEST_X_RES = 873        # 
 MAX_TEST_Y_RES = 873        # visit fails to generate higher images
@@ -26,7 +26,7 @@ TARGET_IMAGE = 'ROS_CAM1_20150720T113057'  # 141.70
 #TARGET_IMAGE = 'ROS_CAM1_20150721T075733'  # 255.96
 TARGET_IMAGE_FILE = os.path.join(SCRIPT_DIR, '../data/targetimgs/'+TARGET_IMAGE+'_P.png')
 TARGET_IMAGE_META_FILE = os.path.join(SCRIPT_DIR, '../data/targetimgs/'+TARGET_IMAGE+'.LBL')
-TARGET_MODEL_FILE = os.path.join(SCRIPT_DIR, '../data/CSHP_DV_130_01_XLRES_00200.obj')
+TARGET_MODEL_FILE = os.path.join(SCRIPT_DIR, '../data/CSHP_DV_130_01_LORES_00200.obj') # _XLRES_
 
 LOG_DIR = os.path.join(SCRIPT_DIR, '../logs/')
 VISIT_SCRIPT_PY_FILE = os.path.join(SCRIPT_DIR, 'visit-py-script.py')

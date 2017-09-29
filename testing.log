@@ -1,0 +1,153 @@
+Esan hakemus:
+	The image is taken at Aalto University’s space laboratory clean room during final testing of the satellite prior to shipping it to India for launch in December 2017.
+	The camera and radio instrument will be included into a Virtual Reality (VR) experience, the development of which was initiated at Aalto University by E. Kallio (Fig. 4). It is envisioned that the VR development can be used in connection with the AI tasks and together may result in new software applications for science and industry.
+	Fig 4, text would have needed modifications
+
+
+phasecorr:
+2017-08-23 18:09:17 - time: 0.3h (11s), lat-err avg: 1.53%, lat-err qs%: (0.05, 0.07, 2.69, 63.97), dist-err avg: 39.09%, dist-err qs%: (0.70, 1.08, 45.55, 1549.08)
+2017-08-23 20:21:22 - time: 0.3h (11s), lat-err avg: 0.07%, lat-err qs%: (0.05, 0.07, 0.18, 0.29), dist-err avg: 1.22%, dist-err qs%: (0.74, 1.26, 4.38, 5.71), fail: 0.0%
+2017-08-23 20:58:42 - time: 0.4h (16s), lat-err avg: 0.75%, lat-err qs%: (0.04, 0.06, 0.16, 48.94), dist-err avg: 13.75%, dist-err qs%: (0.76, 1.12, 4.55, 881.74), fail: 0.0%
+2017-09-05 21:09:32 - time: 0.1h (4s), lat-err avg: 1.52%, lat-err qs%: (0.06, 0.08, 0.30, 83.68), dist-err avg: 33.61%, dist-err qs%: (1.04, 1.57, 5.07, 1852.96), fail: 0.0%
+
+keypoint:
+2017-08-23 17:19:35 - time: 0.2h (6s), lat-err avg: 0.14%, lat-err qs%: (0.05, 0.09, 0.41, 2.78), dist-err avg: 5.08%, dist-err qs%: (2.58, 3.14, 9.90, 95.01)
+2017-08-23 18:46:02 - time: 0.2h (6s), lat-err avg: 0.72%, lat-err qs%: (0.07, 0.11, 3.70, 12.56), dist-err avg: 16.74%, dist-err qs%: (2.49, 4.08, 43.98, 374.89), fail%: 58%
+2017-08-23 19:30:28 - time: 0.2h (6s), lat-err avg: 0.12%, lat-err qs%: (0.05, 0.11, 0.34, 1.28), dist-err avg: 4.52%, dist-err qs%: (2.18, 3.56, 9.20, 93.59), fail: 17.0%
+2017-08-23 19:43:54 - time: 0.2h (6s), lat-err avg: 0.57%, lat-err qs%: (0.07, 0.17, 4.12, 5.70), dist-err avg: 8.14%, dist-err qs%: (2.79, 5.30, 31.33, 86.09), fail: 16.0%
+2017-08-24 08:03:02 - time: 0.1h (5s), lat-err avg: 10.65%, lat-err qs%: (0.05, 0.08, 0.26, 660.14), dist-err avg: 40.18%, dist-err qs%: (2.47, 3.08, 9.06, 2343.05), fail: 17.0%
+2017-08-24 08:26:39 - time: 0.2h (6s), lat-err avg: 0.23%, lat-err qs%: (0.06, 0.11, 0.75, 4.66), dist-err avg: 5.41%, dist-err qs%: (2.82, 3.96, 15.63, 79.22), fail: 12.0%
+2017-09-05 12:03:45 - time: 0.5h (16s), lat-err avg: 0.10%, lat-err qs%: (0.05, 0.08, 0.34, 1.23), dist-err avg: 3.29%, dist-err qs%: (2.33, 3.29, 6.87, 29.80), fail: 18.0%
+2017-09-05 21:15:11 - time: 0.1h (2s), lat-err avg: 0.50%, lat-err qs%: (0.05, 0.09, 2.66, 12.33), dist-err avg: 7.71%, dist-err qs%: (2.49, 3.55, 14.00, 161.12), fail: 15.0%
+
+kp - brute - 384x384:
+1.6x far: 2017-09-25 16:43:45 - time: 0.1h (3s), lat-err avg: 12.24%, lat-err qs%: (0.05, 0.10, 1.12, 794.48), dist-err avg: 41.45%, dist-err qs%: (2.32, 3.56, 22.37, 2348.85), fail: 10.0%
+3.0x far: 2017-09-25 16:52:49 - time: 0.1h (3s), lat-err avg: 2.76%, lat-err qs%: (0.03, 0.04, 3.39, 97.51), dist-err avg: 66.73%, dist-err qs%: (1.86, 3.15, 27.38, 2447.53), fail: 54.0%
+1.3x far: 2017-09-25 16:59:27 - time: 0.1h (3s), lat-err avg: 0.34%, lat-err qs%: (0.06, 0.10, 0.71, 13.63), dist-err avg: 6.23%, dist-err qs%: (2.30, 4.03, 13.21, 124.21), fail: 8.0%
+
+kp - brute - 1.6x far - 512x512:
+2017-09-25 17:08:23 - time: 0.1h (3s), lat-err avg: 0.15%, lat-err qs%: (0.07, 0.10, 0.33, 2.92), dist-err avg: 3.21%, dist-err qs%: (2.70, 3.68, 7.37, 12.93), fail: 6.0%
+
+kp - brute - 1.6x far - 768x768:
+2017-09-25 17:20:56 - time: 0.1h (3s), lat-err avg: 0.15%, lat-err qs%: (0.06, 0.08, 0.29, 3.41), dist-err avg: 4.80%, dist-err qs%: (2.03, 3.31, 6.99, 162.55), fail: 8.0%
+
+kp - brute - 1.6x far - 384x384 - hires model:
+2017-09-25 17:30:18 - time: 0.1h (3s), lat-err avg: 0.15%, lat-err qs%: (0.05, 0.09, 0.59, 2.60), dist-err avg: 4.55%, dist-err qs%: (2.38, 3.33, 11.53, 56.49), fail: 15.0%
+
+kp - brute - 1.6x far - 512x512 - hires model:
+2017-09-25 17:36:55 - time: 0.1h (3s), lat-err avg: 0.12%, lat-err qs%: (0.04, 0.07, 0.33, 2.53), dist-err avg: 4.91%, dist-err qs%: (1.87, 2.86, 8.92, 88.10), fail: 10.0%
+
+... & lowe's method with 0.8:
+2017-09-25 18:16:23 - time: 0.1h (3s), lat-err avg: 0.10%, lat-err qs%: (0.06, 0.10, 0.31, 0.70), dist-err avg: 4.32%, dist-err qs%: (2.53, 3.41, 17.48, 36.14), fail: 4.0%
+
+... & nfeatures = 1000:
+2017-09-25 18:43:45 - time: 0.1h (3s), lat-err avg: 0.11%, lat-err qs%: (0.05, 0.11, 0.40, 1.47), dist-err avg: 3.19%, dist-err qs%: (2.56, 3.58, 6.30, 31.38), fail: 7.0%
+
+... & nfeatures = 1000, lowe = 0.75:
+2017-09-25 18:51:17 - time: 0.1h (3s), lat-err avg: 0.15%, lat-err qs%: (0.05, 0.07, 0.27, 4.73), dist-err avg: 3.38%, dist-err qs%: (2.59, 3.16, 5.62, 53.08), fail: 3.0%
+
+... & nfeatures = 2000:
+2017-09-25 18:36:20 - time: 0.1h (3s), lat-err avg: 0.30%, lat-err qs%: (0.04, 0.08, 0.35, 14.04), dist-err avg: 16.55%, dist-err qs%: (2.46, 3.40, 7.34, 931.20), fail: 5.0%
+
+... & nfeatures = 2000, lowe = 0.75:
+2017-09-25 18:58:18 - time: 0.1h (3s), lat-err avg: 0.71%, lat-err qs%: (0.05, 0.10, 0.28, 41.26), dist-err avg: 13.82%, dist-err qs%: (2.49, 3.57, 10.17, 703.13), fail: 8.0%
+
+... & nfeatures = 3000:
+2017-09-25 19:05:25 - time: 0.1h (3s), lat-err avg: 0.10%, lat-err qs%: (0.05, 0.08, 0.22, 1.83), dist-err avg: 2.99%, dist-err qs%: (2.28, 3.61, 7.98, 14.22), fail: 6.0%
+
+... & nfeatures = 3000, nlevels=16, scaleFactor=1.25:
+2017-09-25 19:13:37 - time: 0.1h (3s), lat-err avg: 0.08%, lat-err qs%: (0.04, 0.07, 0.24, 1.16), dist-err avg: 3.93%, dist-err qs%: (2.15, 3.52, 7.80, 58.53), fail: 3.0%
+
+... & nfeatures = 3000, nlevels=16, scaleFactor=1.15:
+2017-09-25 19:19:48 - time: 0.1h (3s), lat-err avg: 0.11%, lat-err qs%: (0.06, 0.11, 0.30, 0.81), dist-err avg: 3.86%, dist-err qs%: (2.82, 3.86, 8.89, 34.71), fail: 6.0%
+
+... & nfeatures = 3000, nlevels=32, scaleFactor=1.2:
+2017-09-25 19:26:55 - time: 0.1h (3s), lat-err avg: 0.30%, lat-err qs%: (0.05, 0.08, 0.24, 15.07), dist-err avg: 5.59%, dist-err qs%: (2.67, 3.42, 7.68, 152.94), fail: 1.0%
+
+... & nfeatures = 5000:
+2017-09-25 19:33:32 - time: 0.1h (3s), lat-err avg: 162.50%, lat-err qs%: (0.07, 0.11, 0.45, 11006.08), dist-err avg: 12.54%, dist-err qs%: (2.58, 3.77, 9.34, 608.58), fail: 6.0%
+
+... & nfeatures = 5000, nlevels=32:
+2017-09-25 19:41:03 - time: 0.1h (3s), lat-err avg: 0.09%, lat-err qs%: (0.05, 0.09, 0.24, 1.03), dist-err avg: 3.01%, dist-err qs%: (2.19, 3.49, 7.38, 19.49), fail: 7.0%
+
+... & nfeatures = 5000, nlevels=32, scaleFactor=1.25:
+2017-09-25 19:48:38 - time: 0.1h (3s), lat-err avg: 0.25%, lat-err qs%: (0.07, 0.12, 0.44, 7.77), dist-err avg: 6.62%, dist-err qs%: (2.63, 4.39, 9.45, 213.97), fail: 4.0%
+
+... & nfeatures = 5000, nlevels=32, scaleFactor=1.25, lowe=0.8:
+2017-09-25 19:55:24 - time: 0.1h (3s), lat-err avg: 0.55%, lat-err qs%: (0.06, 0.09, 0.25, 32.58), dist-err avg: 6.44%, dist-err qs%: (2.75, 3.80, 8.29, 173.42), fail: 2.0%
+
+... & nfeatures = 5000, nlevels=32, scaleFactor=1.1, lowe=0.8:
+2017-09-25 20:04:03 - time: 0.1h (3s), lat-err avg: 0.21%, lat-err qs%: (0.06, 0.14, 0.48, 5.32), dist-err avg: 6.85%, dist-err qs%: (3.21, 4.64, 25.98, 122.28), fail: 4.0%
+
+... & nfeatures = 5000, nlevels=32, scaleFactor=1.15, lowe=0.8:
+2017-09-25 20:11:51 - time: 0.1h (3s), lat-err avg: 0.18%, lat-err qs%: (0.05, 0.10, 0.43, 5.18), dist-err avg: 4.62%, dist-err qs%: (2.27, 3.87, 9.80, 69.09), fail: 1.0%
+
+... & nfeatures = 5000, nlevels=32, scaleFactor=1.15, lowe=0.8, patchSize=63:
+2017-09-25 20:18:53 - time: 0.1h (3s), lat-err avg: 0.14%, lat-err qs%: (0.07, 0.12, 0.39, 1.28), dist-err avg: 5.08%, dist-err qs%: (3.29, 4.63, 7.53, 71.56), fail: 9.0%
+
+... & nfeatures = 5000, nlevels=32, scaleFactor=1.15, lowe=0.8, patchSize=23:
+2017-09-25 20:35:22 - time: 0.1h (3s), lat-err avg: 16.34%, lat-err qs%: (0.05, 0.09, 0.45, 1067.81), dist-err avg: 5.83%, dist-err qs%: (2.79, 3.68, 21.34, 88.61), fail: 5.0%
+
+... & nfeatures = 5000, nlevels=32, scaleFactor=1.15, lowe=0.8, fastThreshold=10:
+2017-09-25 21:00:21 - time: 0.1h (3s), lat-err avg: 0.10%, lat-err qs%: (0.05, 0.10, 0.44, 0.86), dist-err avg: 3.58%, dist-err qs%: (2.26, 3.80, 7.57, 37.36), fail: 4.0%
+
+... & nfeatures = 10000, nlevels=32, scaleFactor=1.15, lowe=0.8, fastThreshold=10:
+2017-09-25 21:08:24 - time: 0.1h (4s), lat-err avg: 0.07%, lat-err qs%: (0.04, 0.08, 0.22, 0.50), dist-err avg: 3.18%, dist-err qs%: (2.65, 3.57, 7.22, 21.07), fail: 0.0%
+
+... & nfeatures = 10000:
+2017-09-25 21:33:54 - time: 0.1h (3s), lat-err avg: 0.09%, lat-err qs%: (0.06, 0.10, 0.28, 0.47), dist-err avg: 3.39%, dist-err qs%: (2.86, 4.61, 7.59, 13.81), fail: 9.0%
+
+... & nfeatures = 10000, scaleFactor=1.15, lowe=0.8:
+2017-09-25 22:34:05 - time: 0.1h (3s), lat-err avg: 0.92%, lat-err qs%: (0.05, 0.09, 0.60, 48.51), dist-err avg: 29.06%, dist-err qs%: (2.79, 4.32, 9.37, 1675.66), fail: 9.0%
+
+... & nfeatures = 10000, nlevels=32:
+2017-09-25 22:41:38 - time: 0.1h (3s), lat-err avg: 0.10%, lat-err qs%: (0.05, 0.08, 0.22, 1.32), dist-err avg: 3.80%, dist-err qs%: (2.92, 4.14, 8.05, 37.74), fail: 5.0%
+
+... & nfeatures = 10000, nlevels=32, lowe=0.8:
+2017-09-25 22:49:57 - time: 0.1h (3s), lat-err avg: 0.10%, lat-err qs%: (0.06, 0.09, 0.26, 0.84), dist-err avg: 4.25%, dist-err qs%: (2.50, 4.00, 10.01, 57.06), fail: 4.0%
+
+... & nfeatures = 10000, nlevels=32, scaleFactor=1.15:
+2017-09-26 00:07:49 - time: 0.1h (3s), lat-err avg: 0.10%, lat-err qs%: (0.06, 0.09, 0.29, 0.76), dist-err avg: 3.84%, dist-err qs%: (2.44, 3.66, 8.86, 39.59), fail: 7.0%
+
+... & nfeatures = 10000, nlevels=32, scaleFactor=1.15, lowe=0.8 (again):
+2017-09-25 23:56:33 - time: 0.1h (3s), lat-err avg: 0.09%, lat-err qs%: (0.04, 0.07, 0.31, 0.96), dist-err avg: 3.98%, dist-err qs%: (2.59, 3.40, 10.04, 44.19), fail: 4.0%
+
+... & nfeatures = 10000, wta_k=3:
+2017-09-26 00:16:33 - time: 0.1h (3s), lat-err avg: 0.08%, lat-err qs%: (0.05, 0.08, 0.25, 0.49), dist-err avg: 3.98%, dist-err qs%: (2.89, 3.97, 8.14, 36.05), fail: 6.0%
+
+... & nfeatures = 10000, FAST_SCORE:
+2017-09-26 00:24:34 - time: 0.1h (3s), lat-err avg: 0.08%, lat-err qs%: (0.04, 0.08, 0.21, 0.69), dist-err avg: 3.09%, dist-err qs%: (2.86, 3.81, 6.53, 7.62), fail: 10.0%
+
+... & nfeatures = 20000, FAST_SCORE:
+2017-09-26 00:31:03 - time: 0.1h (3s), lat-err avg: 0.96%, lat-err qs%: (0.07, 0.11, 0.29, 53.75), dist-err avg: 26.20%, dist-err qs%: (3.22, 3.84, 10.14, 1451.30), fail: 9.0%
+
+... & nfeatures = 1000, FAST_SCORE:
+2017-09-26 00:38:36 - time: 0.1h (3s), lat-err avg: 0.08%, lat-err qs%: (0.05, 0.09, 0.25, 0.30), dist-err avg: 3.07%, dist-err qs%: (2.42, 3.95, 7.29, 9.52), fail: 10.0%
+
+... & nfeatures = 500, FAST_SCORE:
+2017-09-26 00:44:43 - time: 0.1h (3s), lat-err avg: 0.47%, lat-err qs%: (0.05, 0.08, 1.62, 12.99), dist-err avg: 11.08%, dist-err qs%: (2.38, 3.50, 24.38, 269.71), fail: 11.0%
+
+..., FAST_SCORE, nfeatures = 1000, scaleFactor = 1.1, nlevels=16:
+<quite bad>
+
+..., FAST_SCORE, nfeatures = 1000 (again):
+2017-09-26 00:56:52 - time: 0.1h (3s), lat-err avg: 51.10%, lat-err qs%: (0.05, 0.09, 0.32, 3434.79), dist-err avg: 38.30%, dist-err qs%: (2.07, 3.63, 7.93, 2387.37), fail: 7.0%
+
+..., FAST_SCORE, nfeatures = 1000, patchSize=21:
+2017-09-26 01:04:10 - time: 0.1h (3s), lat-err avg: 0.19%, lat-err qs%: (0.05, 0.08, 0.22, 6.48), dist-err avg: 4.43%, dist-err qs%: (2.55, 3.57, 7.42, 80.54), fail: 6.0%
+
+..., FAST_SCORE, nfeatures = 1000, flann-matcher:
+2017-09-26 01:11:09 - time: 0.1h (3s), lat-err avg: 0.10%, lat-err qs%: (0.04, 0.09, 0.25, 2.15), dist-err avg: 3.00%, dist-err qs%: (2.30, 3.20, 7.49, 19.55), fail: 5.0%
+
+..., FAST_SCORE, nfeatures=2000, lowe=0.80, ransac_err=12, ransac_iter=1000:
+2017-09-26 11:42:05 - time: 0.1h (3s), lat-err avg: 0.57%, lat-err qs%: (0.04, 0.08, 0.56, 27.06), dist-err avg: 6.74%, dist-err qs%: (2.30, 3.63, 26.49, 94.43), fail: 1.0%
+
+..., nfeatures=3000, lowe=0.85, ransac_err=16, ransac_iter=3000:
+2017-09-26 11:53:44 - time: 0.1h (3s), lat-err avg: 10.94%, lat-err qs%: (0.05, 0.09, 0.62, 735.59), dist-err avg: 38.34%, dist-err qs%: (2.31, 3.71, 16.84, 2347.29), fail: 4.0%
+
+#..., nfeatures=1000, (lowe=0.75), ransac_iter=1000:
+#2017-09-26 12:02:10 - time: 0.1h (3s), lat-err avg: 0.08%, lat-err qs%: (0.05, 0.07, 0.28, 0.68), dist-err avg: 2.84%, dist-err qs%: (1.88, 2.83, 7.73, 17.57), fail: 2.0%
+
+..., nfeatures=1000, (lowe=0.75), ransac_iter=1000, 3x far: --note: better when asteroid far off, bad near matches
+2017-09-27 10:18:43 - time: 0.1h (3s), lat-err avg: 27.50%, lat-err qs%: (0.05, 0.08, 0.96, 1670.72), dist-err avg: 41.23%, dist-err qs%: (2.37, 3.41, 22.92, 2251.94), fail: 20.0%
+

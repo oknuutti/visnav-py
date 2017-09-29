@@ -327,9 +327,23 @@ class TestLoop():
             
             ok = False
             method = kwargs.pop('method', False)
+            if method == 'keypoint+':
+                try:
+                    glWidget.parent().centroid.adjust_iteratively(imgfile, **kwargs)
+                    init_dist = -glWidget.systemModel.z_off.value
+                    glWidget.parent().keypoint.solve_pnp(imgfile, init_dist=init_dist, **kwargs)
+                    ok = True
+                except PositioningException:
+                    pass
             if method == 'keypoint':
                 try:
                     glWidget.parent().keypoint.solve_pnp(imgfile, **kwargs)
+                    ok = True
+                except PositioningException:
+                    pass
+            elif method == 'centroid':
+                try:
+                    glWidget.parent().centroid.adjust_iteratively(imgfile, **kwargs)
                     ok = True
                 except PositioningException:
                     pass

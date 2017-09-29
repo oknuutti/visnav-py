@@ -118,6 +118,8 @@ class Window(QWidget):
         bottomLayout = QHBoxLayout()
         self.phasecorr = PhaseCorrelationAlgo(self.systemModel, self.glWidget)
         self.keypoint = KeypointAlgo(self.systemModel, self.glWidget)
+        self.centroid = CentroidAlgo(self.systemModel, self.glWidget,
+                                     bg_threshold=self.glWidget.image_bg_threshold)
         
         self.buttons = dict(
             (m.lower(), self.optbutton(m, bottomLayout))
@@ -148,21 +150,25 @@ class Window(QWidget):
 #                im_width=1024, im_height=1024, im_scale=0.5))
 #        bottomLayout.addWidget(self.defviewbtn)
         
-        def testfun():
-            self.glWidget.saveViewToFile('testimg.png')
+        def testfun1():
             try:
-                self.keypoint.solve_pnp('testimg.png')
+                self.centroid.adjust_iteratively(self.glWidget.image_file)
             except PositioningException as e:
-                print('keypoint algorithm failed: %s' % e)
-            
-            #(xo, yo, w, h, sc) = self.optim._get_bounds(self.glWidget.image, 50, VIEW_WIDTH)
-            #self.glWidget.setImageZoomAndResolution(
-            #    im_xoff=xo, im_yoff=yo, 
-            #    im_width=w, im_height=h, im_scale=sc)
+                print('algorithm failed: %s' % e)
+        self.test1 = QPushButton('T1', self)
+        self.test1.clicked.connect(testfun1)
+        bottomLayout.addWidget(self.test1)
         
-        self.test = QPushButton('T', self)
-        self.test.clicked.connect(testfun)
-        bottomLayout.addWidget(self.test)
+        def testfun2():
+            #self.glWidget.saveViewToFile('testimg.png')
+            try:
+                init_dist = -self.systemModel.z_off.value
+                self.keypoint.solve_pnp(self.glWidget.image_file, init_dist=init_dist)
+            except PositioningException as e:
+                print('algorithm failed: %s' % e)
+        self.test2 = QPushButton('T2', self)
+        self.test2.clicked.connect(testfun2)
+        bottomLayout.addWidget(self.test2)
         
         mainLayout = QVBoxLayout()
         mainLayout.addLayout(topLayout)
@@ -235,6 +241,9 @@ class GLWidget(QOpenGLWidget):
         self.iter_count = 0
         self.image = None
         self.image_file = None
+        
+        self.full_image = None
+        self.image_bg_threshold = None
 
         self.im_def_scale = min(VIEW_WIDTH/CAMERA_WIDTH, VIEW_HEIGHT/CAMERA_HEIGHT)
         self.im_scale = self.im_def_scale
@@ -301,8 +310,8 @@ class GLWidget(QOpenGLWidget):
         if not BATCH_MODE:
             self.loadTargetImage(TARGET_IMAGE_FILE)
             self.loadTargetImageMeta(TARGET_IMAGE_META_FILE)
-            if not USE_IMG_LABEL_FOR_SC_POS:
-                CentroidAlgo.update_sc_pos(self.systemModel, self.full_image)
+#            if not USE_IMG_LABEL_FOR_SC_POS:
+#                CentroidAlgo.update_sc_pos(self.systemModel, self.full_image)
         
     def _projOpts(self):
         # reset from potentially set rendering options
@@ -584,13 +593,32 @@ class GLWidget(QOpenGLWidget):
         self.image_file = src
         if remove_bg:
             self.full_image, h, th = ImageProc.process_target_image(tmp)
+            self.image_bg_threshold = th
+            self.parent().centroid.bg_threshold = th
         else:
             self.full_image = tmp
+            self.image_bg_threshold = None
+            self.parent().centroid.bg_threshold = None
         
         self.setImageZoomAndResolution(im_scale=self.im_def_scale)
         
     def loadTargetImageMeta(self, src):
-        lbl_loader.load_image_meta(src, self.systemModel)
+        if True:
+            # FIX: currently doesnt correspond with what is shown
+            lbl_loader.load_image_meta(src, self.systemModel)
+        else:
+            self.systemModel.ast_x_rot.value = -83.88
+            self.systemModel.ast_y_rot.value = 74.38
+            self.systemModel.ast_z_rot.value = -77.98
+            self.systemModel.time.range = (1437391848.27*0.99, 1437391848.27*1.01)
+            self.systemModel.time.value = 1437391848.27
+            self.systemModel.x_off.value = -0.42
+            self.systemModel.x_rot.value = -49.39
+            self.systemModel.y_off.value = 2.47
+            self.systemModel.y_rot.value = 123.26
+            self.systemModel.z_off.value = -158.39
+            self.systemModel.z_rot.value = -96.62   
+
         self.update()
 
     def loadObject(self):

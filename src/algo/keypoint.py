@@ -17,113 +17,146 @@ class KeypointAlgo():
     def __init__(self, system_model, glWidget):
         self.system_model = system_model
         self.glWidget = glWidget
-        self.min_options = None
-        self.errval0 = None
-        self.errval1 = None
-        self.errval  = None
-        self.iter_count = 0
-        self.start_time = None
-        self.optfun_values = []
         
         self.debug_filebase = None
-        self._target_image = None
-        self._hannw = None
-        self._render_result = None
-
-
-    def solve_pnp(self, scenefile, **kwargs):
-        # load scene image
-        self.glWidget.loadTargetImage(scenefile, remove_bg=False)
         
-        # orb features from scene image
-        orb = cv2.ORB_create()
-        sc_kp, sc_desc = orb.detectAndCompute(self.glWidget.full_image, None)
+        self.MIN_FEATURES = 8          # fail if less inliers at the end
+        self.MODEL_DISTANCE_COEF = 1.6 # default 1.6
+        self.LOWE_METHOD_COEF = 0.8   # default 0.7
+        self.RANSAC_ITERATIONS = 1000  # default 100
+        self.RANSAC_ERROR = 8.0        # default 8.0
+
+
+    def solve_pnp(self, sce_img, **kwargs):
+        # maybe load scene image
+        if isinstance(sce_img, str):
+            self.glWidget.loadTargetImage(sce_img, remove_bg=False)
+            sce_img = self.glWidget.full_image
 
         # render model image
-        #zoff = self.system_model.z_off.value
-        self.system_model.z_off.value = -MIN_DISTANCE*1.6
-        render_result, depth_result = self.glWidget.render(depth=True)
-        #self.system_model.z_off.value = zoff
+        init_dist = -kwargs.get('init_dist', MIN_DISTANCE * self.MODEL_DISTANCE_COEF)
+        self.system_model.z_off.value = init_dist
+        ref_img, depth_result = self.glWidget.render(depth=True)
         
-        # orb features from model image
-        ref_kp, ref_desc = orb.detectAndCompute(render_result, None)
+        # get keypoints and descriptors for both images
+        sce_kp, sce_desc, ref_kp, ref_desc = self._orb_features(sce_img, ref_img)
         
-        # match features
-        matches = self._flann_matcher(sc_desc, ref_desc)
-
-#        cv2.imshow('scene', self.glWidget.full_image)
-#        cv2.imshow('model', render_result)
-#        cv2.waitKey()
-
+        # match descriptors
+        try:
+            matches = self._match_features(sce_desc, ref_desc, method='brute')
+            error = None
+        except PositioningException as e:
+            matches = []
+            error = e
+        
         # debug by drawing matches
-#        self._draw_matches(self.glWidget.full_image, sc_kp,
-#                           render_result, ref_kp, matches)
+        if not BATCH_MODE or DEBUG:
+            print('matches: %s/%s'%(len(matches), min(len(sce_kp), len(ref_kp))), flush=True, end=", ")
+            self._draw_matches(sce_img, sce_kp, ref_img, ref_kp, matches, pause=False)
+        
+        if error is not None:
+            raise error
         
         # get feature 3d points using 3d model
         ref_kp_3d = self._inverse_project([ref_kp[m.trainIdx].pt for m in matches], depth_result)
         # TODO: scale coordinates from scene resolution to render resolution?
-        sc_kp_2d = np.array([sc_kp[m.queryIdx].pt for m in matches], dtype='float')
+        sce_kp_2d = np.array([sce_kp[m.queryIdx].pt for m in matches], dtype='float')
         
-#        print('keypoints: %s, %s'%(ref_kp_3d, sc_kp_2d), flush=True)
-#        print('3d range: %s'%(ref_kp_3d.max(axis=(0,2))-ref_kp_3d.min(axis=(0,2)),), flush=True)
+#        print('3d z-range: %s'%(ref_kp_3d.ptp(axis=(0,2)),), flush=True)
         
         # solve pnp with ransac
-        rvec, tvec, inliers = self._solve_pnp_ransac(sc_kp_2d, ref_kp_3d)
-        
-#        print('results: %s, %s, %s'%(rvec, tvec, len(inliers)), flush=True)
+        rvec, tvec, inliers = self._solve_pnp_ransac(sce_kp_2d, ref_kp_3d)
         
         # debug by drawing inlier matches
-        self._draw_matches(self.glWidget.full_image, sc_kp,
-                           render_result, ref_kp,
-                           [matches[i[0]] for i in inliers], pause=False)
+        if not BATCH_MODE or DEBUG:
+            print('inliers: %s/%s'%(len(inliers), len(matches)), flush=True)
+        self._draw_matches(sce_img, sce_kp, ref_img, ref_kp,
+                           [matches[i[0]] for i in inliers], label='inliers', pause=False)
+                               
         
         # set model params to solved pose & pos
         self._set_sc_from_ast_rot_and_trans(rvec, tvec)
-        
-        # TODO: other stuff? e.g. save some image for debugging perf?
     
     
-    def _flann_matcher(self, desc1, desc2):
-        MIN_FEATURES = 4
+    def _orb_features(self, scene_img, model_img):
+        params = {
+            'edgeThreshold':31,  # default: 31
+            'fastThreshold':20,  # default: 20
+            'firstLevel':0,      # always 0
+            'nfeatures':500,     # default: 500
+            'nlevels':8,         # default: 8
+            'patchSize':31,      # default: 31
+            'scaleFactor':1.2,   # default: 1.2
+            'scoreType':cv2.ORB_HARRIS_SCORE,  # default ORB_HARRIS_SCORE, other: ORB_FAST_SCORE
+            'WTA_K':2,           # default: 2
+        }
         
-        if desc1 is None or desc2 is None or len(desc1)<MIN_FEATURES or len(desc2)<MIN_FEATURES:
+        # orb features from scene image
+        params['nfeatures'] = 1000
+        orb = cv2.ORB_create(**params)
+        sce_kp, sce_desc = orb.detectAndCompute(scene_img, None)
+
+        # orb features from model image
+        params['nfeatures'] = 1000
+        orb = cv2.ORB_create(**params)
+        ref_kp, ref_desc = orb.detectAndCompute(model_img, None)
+        
+        return sce_kp, sce_desc, ref_kp, ref_desc
+    
+    
+    def _match_features(self, desc1, desc2, method='flann', symmetry_test=False, use_lowe=True, orb_wta_k_gt2=False):
+        
+        if desc1 is None or desc2 is None or len(desc1)<self.MIN_FEATURES or len(desc2)<self.MIN_FEATURES:
             raise PositioningException('Not enough features found')
         
-        FLANN_INDEX_LSH = 6
-#        FLANN_INDEX_KDTREE = 0
-        index_params = {
-#            'algorithm':FLANN_INDEX_KDTREE,
-#            'trees':5,
-            'algorithm':FLANN_INDEX_LSH,
-            'table_number':6,      # 12
-            'key_size':12,         # 20
-            'multi_probe_level':1, #2
-        }
-        search_params = {
-            'checks':100,
-        }
-        
-        flann = cv2.FlannBasedMatcher(index_params, search_params)
-        matches = flann.knnMatch(desc1, desc2, k=2)
+        if method == 'flann':
+            FLANN_INDEX_LSH = 6
+    #        FLANN_INDEX_KDTREE = 0 # for SIFT
+            index_params = {
+    #            'algorithm':FLANN_INDEX_KDTREE, # for SIFT
+    #            'trees':5, # for SIFT
+                'algorithm':FLANN_INDEX_LSH,
+                'table_number':6,      # 12
+                'key_size':12,         # 20
+                'multi_probe_level':1, #2
+            }
+            search_params = {
+                'checks':100,
+            }
 
-        if len(matches)<MIN_FEATURES:
+            matcher = cv2.FlannBasedMatcher(index_params, search_params)
+        elif method == 'brute':
+            matcher = cv2.BFMatcher(cv2.NORM_HAMMING2 if orb_wta_k_gt2 else cv2.NORM_HAMMING, symmetry_test) # for ORB
+        else:
+            assert False, 'unknown method %s'%mathod
+            
+        if use_lowe:
+            matches = matcher.knnMatch(desc1, desc2, k=2)
+        else:
+            matches = matcher.match(desc1, desc2)
+
+        if len(matches)<self.MIN_FEATURES:
             raise PositioningException('Not enough features matched')
 
-        # ratio test as per Lowe's paper
-        matches = list(m[0] for m in matches if len(m)>1 and m[0].distance < 0.7*m[1].distance)
-        
-        if len(matches)<MIN_FEATURES:
-            raise PositioningException('Too many features discarded')
+        if use_lowe:
+            # ratio test as per Lowe's paper
+            matches = list(
+                m[0]
+                for m in matches
+                if len(m)>1 and m[0].distance < self.LOWE_METHOD_COEF*m[1].distance
+            )
+            if len(matches)<self.MIN_FEATURES:
+                raise PositioningException('Too many features discarded')
         
         return matches
+
     
-    
-    def _draw_matches(self, img1, kp1, img2, kp2, matches, pause=True):
+    def _draw_matches(self, img1, kp1, img2, kp2, matches, pause=True, label='matches'):
         matches = list([m] for m in matches)
         draw_params = {
 #            matchColor: (88, 88, 88),
-#            singlePointColor: (155, 155, 155),
-            'flags': 2,
+            'singlePointColor': (0, 0, 255),
+#            'flags': cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS,
         }
         
         # scale keypoint positions
@@ -143,12 +176,12 @@ class KeypointAlgo():
         for kp in kp1:
             kp.pt = (kp.pt[0]*CAMERA_WIDTH/VIEW_WIDTH, kp.pt[1]*CAMERA_HEIGHT/VIEW_HEIGHT)
 
-        cv2.imshow('matches', img3)
+        cv2.imshow(label, img3)
         if pause:
             cv2.waitKey()
     
     
-    def _solve_pnp_ransac(self, sc_kp_2d, ref_kp_3d):
+    def _solve_pnp_ransac(self, sce_kp_2d, ref_kp_3d):
         x = CAMERA_WIDTH/2
         y = CAMERA_HEIGHT/2
         fl_x = x / math.tan( math.radians(CAMERA_X_FOV)/2 )
@@ -160,15 +193,17 @@ class KeypointAlgo():
         # assuming no lens distortion
         dist_coeffs = np.zeros((4,1), dtype="float")
         ref_kp_3d = np.reshape(ref_kp_3d, (len(ref_kp_3d),1,3))
-        sc_kp_2d = np.reshape(sc_kp_2d, (len(sc_kp_2d),1,2))
+        sce_kp_2d = np.reshape(sce_kp_2d, (len(sce_kp_2d),1,2))
         
         try:
             retval, rvec, tvec, inliers = cv2.solvePnPRansac(
-                    ref_kp_3d, sc_kp_2d, cam_mx, dist_coeffs,
-                    iterationsCount = 100,
-                    reprojectionError = 8.0)
+                    ref_kp_3d, sce_kp_2d, cam_mx, dist_coeffs,
+                    iterationsCount = self.RANSAC_ITERATIONS,
+                    reprojectionError = self.RANSAC_ERROR)
             if not retval:
                 raise PositioningException('RANSAC algorithm returned False')
+            if len(inliers) < self.MIN_FEATURES:
+                raise PositioningException('RANSAC algorithm was left with too few inliers')
         except Exception as e:
             raise PositioningException('RANSAC algorithm ran into problems') from e
 

@@ -152,6 +152,14 @@ class SystemModel():
     def param_change_events(self, enabled):
         for n, p in self.get_params(all=True):
             p.fire_change_events = enabled
+    
+    @property
+    def spacecraft_pos(self):
+        return self.x_off.value, self.y_off.value, self.z_off.value
+    
+    @property
+    def spacecraft_dist(self):
+        return math.sqrt(sum(x**2 for x in self.spacecraft_pos))
         
     def set_spacecraft_pos(self, pos):
         self.z_off.value = pos[2]

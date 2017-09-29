@@ -13,6 +13,8 @@ class PositioningException(Exception):
 
 # cx, cy are centered pixel positions
 def calc_xy(cx, cy, z_off, width=CAMERA_WIDTH, height=CAMERA_HEIGHT):
+    # TODO: use camera matrix? also, distance instead of z_off
+    
     cx = cx/width
     cy = cy/height
     #assert cx<=0.5 and cx>=-0.5 and cy<=0.5 and cy>=-0.5, 'Invalid range for cx or cy: %s, %s'%(cx, cy)
