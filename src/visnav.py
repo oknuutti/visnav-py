@@ -399,12 +399,12 @@ class GLWidget(QOpenGLWidget):
             x, y = 0, 0
         
         # get object rotation and turn it a bit based on cropping effect
-        q = m.sc_asteroid_rel_rot()
+        q = m.gl_sc_asteroid_rel_rot()
         qfin = (q * q_crop.conj())
-        w, v = tools.q_to_angleaxis(qfin)
+        rv = tools.q_to_angleaxis(qfin)
 
         # light direction, translation, rotation
-        return (m.light_rel_dir(), (x, y, z), (math.degrees(w), *v))
+        return (m.light_rel_dir(), (x, y, z), (math.degrees(rv[0]), *rv[1:]))
         
 
     def paintGL(self):
@@ -591,7 +591,7 @@ class GLWidget(QOpenGLWidget):
 
         if BATCH_MODE and self._noise_image:
             tmp = ImageProc.add_noise_to_image(tmp, self._noise_image)
-        
+            
         self.image_file = src
         if remove_bg:
             self.full_image, h, th = ImageProc.process_target_image(tmp)

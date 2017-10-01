@@ -76,12 +76,12 @@ def angle_between_v(v1, v2):
 def angle_between_q(q1, q2):
     # from  https://chrischoy.github.io/research/measuring-rotation/
     qd = q1.conj()*q2
-    return 2*math.atan(qd.w/np.linalg.norm(qd.vec))
+    return 2*math.acos(qd.normalized().w)
 
 
 def angle_between_ypr(ypr1, ypr2):
-    q1 = spherical_to_q(*ypr1)
-    q2 = spherical_to_q(*ypr2)
+    q1 = ypr_to_q(*ypr1)
+    q2 = ypr_to_q(*ypr2)
     return angle_between_q(q1, q2)
 
 
@@ -98,22 +98,27 @@ def equatorial_to_ecliptic(ra, dec):
     return math.radians(sc.lat.value), math.radians(sc.lon.value)
     
     
-def q_to_angleaxis(q):
+def q_to_angleaxis(q, compact=False):
     theta = math.acos(q.w) * 2.0
-    return theta, normalize_v(np.array([q.x, q.y, q.z]))
+    return (theta,) + tuple(normalize_v(np.array([q.x, q.y, q.z])))
 
 
-def angleaxis_to_q(theta, v):
+def angleaxis_to_q(rv):
+    if len(rv)==4:
+        theta = rv[0]
+        v = normalize_v(np.array(rv[1:]))
+    elif len(rv)==3:
+        theta = math.sqrt(sum(x**2 for x in rv))
+        v = np.array(rv)/theta
+    else:
+        raise Exception('Invalid angle-axis vector: %s'%(rv,))
+    
     w = math.cos(theta/2)
-    try:
-        sc = 1/math.sqrt(sum(map(lambda x: x**2, v)))
-        v = list(map(lambda x: x*math.sin(theta/2)*sc, v))
-    except Exception as e:
-        raise Exception('%s'%v) from e
+    v = v*math.sin(theta/2)
     return np.quaternion(w, *v).normalized()
 
 
-def spherical_to_q(lat, lon, roll):
+def ypr_to_q(lat, lon, roll):
     # Tait-Bryan angles, aka yaw-pitch-roll, nautical angles, cardan angles
     # intrinsic euler rotations z-y'-x'', pitch=-lat, yaw=lon
     return (
@@ -123,7 +128,7 @@ def spherical_to_q(lat, lon, roll):
     )
     
     
-def q_to_spherical(q):
+def q_to_ypr(q):
     # from https://math.stackexchange.com/questions/687964/getting-euler-tait-bryan-angles-from-quaternion-representation
     q0,q1,q2,q3 = quaternion.as_float_array(q)[0]
     roll = np.arctan2(q2*q3+q0*q1, .5-q1**2-q2**2)

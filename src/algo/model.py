@@ -5,6 +5,7 @@ import numpy as np
 import quaternion # adds to numpy
 from astropy.time import Time
 from astropy import constants as const
+import configparser
 
 from settings import *
 from algo import tools
@@ -17,6 +18,7 @@ class Parameter():
         self._def_val = def_val
         self._value = self.def_val
         self.is_gl_z = is_gl_z
+        self.real_value = None
         self.change_callback = None
         self.fire_change_events = True
     
@@ -96,12 +98,10 @@ class Parameter():
 
 class SystemModel():
     # from sc cam frame (axis: +x, up: +z) to opengl (axis -z, up: +y)
-    q_sc2gl = np.quaternion(0.5, 0.5, -0.5, -0.5)
+    sc2gl_q = np.quaternion(0.5, 0.5, -0.5, -0.5)
     
     def __init__(self, *args, **kwargs):
         self.asteroid = Asteroid()
-        
-        self.real_sc_pos = None
         
         # spacecraft position relative to asteroid, z towards spacecraft,
         #   x towards right when looking out from s/c camera, y up
@@ -121,10 +121,7 @@ class SystemModel():
         self.ast_x_rot = Parameter(-90, 90, estimate=False) # axis latitude
         self.ast_y_rot = Parameter(-180, 180, estimate=False) # axis longitude
         self.ast_z_rot = Parameter(-180, 180, estimate=False) # rotation
-        self.ast_x_rot.value = math.degrees(self.asteroid.axis_latitude)
-        self.ast_y_rot.value = math.degrees(self.asteroid.axis_longitude)
-        self.ast_z_rot.value = \
-                (math.degrees(self.asteroid.rotation_pm) + 180) % 360 - 180
+        self.asteroid_rotation_from_model()
 
         # time in seconds since 1970-01-01 00:00:00
         self.time = Parameter(
@@ -157,11 +154,8 @@ class SystemModel():
     def spacecraft_pos(self):
         return self.x_off.value, self.y_off.value, self.z_off.value
 
-    @property
-    def spacecraft_dist(self):
-        return math.sqrt(sum(x**2 for x in self.spacecraft_pos))
-
-    def set_spacecraft_pos(self, pos):
+    @spacecraft_pos.setter
+    def spacecraft_pos(self, pos):
         self.z_off.value = pos[2]
 
         half_range = abs(pos[2] / 170 * 4)
@@ -174,44 +168,115 @@ class SystemModel():
     @property
     def spacecraft_rot(self):
         return self.x_rot.value, self.y_rot.value, self.z_rot.value
-    
-    def set_spacecraft_rot(self, r):
-        self.x_rot.value, self.y_rot.value, self.z_rot.value = r
-    
-    def rotate_spacecraft(self, q):
-        new_q = self.spacecraft_q() * q
-        self.x_rot.value, self.y_rot.value, self.z_rot.value = \
-            list(map(math.degrees, tools.q_to_spherical(new_q)))
 
-    def spacecraft_q(self):
-        return tools.spherical_to_q(*list(map(
-                math.radians,
-                (self.x_rot.value, self.y_rot.value, self.z_rot.value)
-        )))
+    @spacecraft_rot.setter
+    def spacecraft_rot(self, r):
+        self.x_rot.value, self.y_rot.value, self.z_rot.value = r
+
+    @property
+    def asteroid_axis(self):
+        return self.ast_x_rot.value, self.ast_y_rot.value, self.ast_z_rot.value
     
-    def sc_asteroid_rel_rot(self):
-        """ rotation of asteroid relative to spacecraft in opengl coords """
-        
+    @asteroid_axis.setter
+    def asteroid_axis(self, r):
+        self.ast_x_rot.value, self.ast_y_rot.value, self.ast_z_rot.value = r
+
+    @property
+    def spacecraft_dist(self):
+        return math.sqrt(sum(x**2 for x in self.spacecraft_pos))
+
+    def asteroid_rotation_from_model(self):
+        self.ast_x_rot.value = math.degrees(self.asteroid.axis_latitude)
+        self.ast_y_rot.value = math.degrees(self.asteroid.axis_longitude)
+        self.ast_z_rot.value = (math.degrees(self.asteroid.rotation_pm) + 180) % 360 - 180
+
+    def update_asteroid_model(self):
         self.asteroid.axis_latitude = math.radians(self.ast_x_rot.value)
         self.asteroid.axis_longitude = math.radians(self.ast_y_rot.value)
         self.asteroid.rotation_pm = math.radians(self.ast_z_rot.value)
+
+    @property
+    def real_spacecraft_pos(self):
+        return self.x_off.real_value, self.y_off.real_value, self.z_off.real_value
+    
+    @real_spacecraft_pos.setter
+    def real_spacecraft_pos(self, rv):
+        self.x_off.real_value, self.y_off.real_value, self.z_off.real_value = rv
+
+    @property
+    def real_spacecraft_rot(self):
+        return self.x_rot.real_value, self.y_rot.real_value, self.z_rot.real_value
+    
+    @real_spacecraft_rot.setter
+    def real_spacecraft_rot(self, rv):
+        self.x_rot.real_value, self.y_rot.real_value, self.z_rot.real_value = rv
+
+    @property
+    def real_asteroid_axis(self):
+        return self.ast_x_rot.real_value, self.ast_y_rot.real_value, self.ast_z_rot.real_value
+    
+    @real_asteroid_axis.setter
+    def real_asteroid_axis(self, rv):
+        self.ast_x_rot.real_value, self.ast_y_rot.real_value, self.ast_z_rot.real_value = rv
+
+
+    def rotate_spacecraft(self, q):
+        new_q = self.spacecraft_q() * q
+        self.x_rot.value, self.y_rot.value, self.z_rot.value = \
+            list(map(math.degrees, tools.q_to_ypr(new_q)))
+
+    def rotate_asteroid(self, q):
+        new_q = self.asteroid.rotation_q(self.time.value) * q
+        self.x_rot.value, self.y_rot.value, self.z_rot.value = \
+            list(map(math.degrees, tools.q_to_ypr(new_q)))
+
+    def spacecraft_q(self):
+        return tools.ypr_to_q(*list(map(
+                math.radians,
+                (self.x_rot.value, self.y_rot.value, self.z_rot.value)
+        )))
         
-        ast_q = self.asteroid.rotation_q(self.time.value)
-        sc_q = self.spacecraft_q()
+    def asteroid_q(self):
+        return self.asteroid.rotation_q(self.time.value)
+    
+    def gl_sc_asteroid_rel_rot(self):
+        """ rotation of asteroid relative to spacecraft in opengl coords """
+        self.update_asteroid_model()
         
         # ast => eq => sc => opengl
-        q_tot = ast_q.conj() * sc_q * SystemModel.q_sc2gl
+        q_tot = SystemModel.sc2gl_q.conj() * self.sc_asteroid_rel_rot()
         
         if not BATCH_MODE and DEBUG:
-            print('asteroid x-axis: %s'%tools.q_times_v(q_tot.conj(), np.array([1, 0, 0])))
+            print('asteroid x-axis: %s'%tools.q_times_v(q_tot, np.array([1, 0, 0])))
         
-        return q_tot.conj()
+        return q_tot
+    
+    
+    def sc_asteroid_rel_rot(self, time=None):
+        ast_q = self.asteroid.rotation_q(time or self.time.value)
+        sc_q = self.spacecraft_q()
+        return sc_q.conj() * ast_q
+
+    def real_sc_asteroid_rel_rot(self):
+        org_sc_rot = self.spacecraft_rot
+        org_ast_axis = self.asteroid_axis
+        self.spacecraft_rot = self.real_spacecraft_rot
+        self.asteroid_axis = self.real_asteroid_axis
+        self.update_asteroid_model()
+        
+        q_tot = self.sc_asteroid_rel_rot(time=self.time.real_value)
+        
+        self.spacecraft_rot = org_sc_rot
+        self.asteroid_axis = org_ast_axis
+        self.update_asteroid_model()
+        return q_tot
+    
     
     def light_rel_dir(self):
         """ direction of light relative to spacecraft in opengl coords """
         ast_v = tools.normalize_v(self.asteroid.position(self.time.value))
         sc_q = self.spacecraft_q()
-        return tools.q_times_v(SystemModel.q_sc2gl.conj() * sc_q.conj(), ast_v)
+        return tools.q_times_v(SystemModel.sc2gl_q.conj() * sc_q.conj(), ast_v)
         
     def solar_elongation(self):
         ast_v = self.asteroid.position(self.time.value)
@@ -221,6 +286,34 @@ class SystemModel():
             print('elong: %.3f | dir: %.3f' % (
                 math.degrees(elong), math.degrees(direc)))
         return elong, direc
+    
+    def save_state(self, filename):
+        config = configparser.ConfigParser()
+        filename = filename+('.lbl' if len(filename)<5 or filename[-4:]!='.lbl' else '')
+        config.read(filename)
+        config.add_section('main')
+        config.add_section('real')
+        
+        for n, p in self.get_params(all=True):
+            config.set('main', n, str(p.value))
+            if p.real_value is not None:
+                config.set('real', n, str(p.real_value))
+
+        with open(filename, 'w') as f:
+            config.write(f)
+    
+    def load_state(self, filename):
+        config = configparser.ConfigParser()
+        filename = filename+('.lbl' if len(filename)<5 or filename[-4:]!='.lbl' else '')
+        config.read(filename)
+        
+        for n, p in self.get_params(all=True):
+            p.value = float(config.get('main').get(n))
+            if config.get('real').get(n, None) is not None:
+                p.real_value = float(config.get('real').get(n, None))
+        
+        self.update_asteroid_model()
+        assert np.isclose(self.time.value, time), 'Failed to set time value'
     
     def __repr__(self):
         return (
@@ -297,7 +390,7 @@ class Asteroid():
         # TODO: use precession info
         q_x2z = np.quaternion(1, 0, 1, 0).normalized()
         return q_x2z \
-                * tools.spherical_to_q(self.axis_latitude, self.axis_longitude, theta) \
+                * tools.ypr_to_q(self.axis_latitude, self.axis_longitude, theta) \
                 * q_x2z.conj()
     
     def position(self, timestamp):

@@ -35,8 +35,8 @@ class MixedAlgo():
             ok = True
         except PositioningException as e:
             if centroid_result:
-                self.system_model.set_spacecraft_rot(sc_r)
-                self.system_model.set_spacecraft_pos(centroid_result)
+                self.system_model.spacecraft_rot = sc_r
+                self.system_model.spacecraft_pos = centroid_result
                 if DEBUG:
                     print('Using centroid result as keypoint algo failed: %s'%(e,))
             else:

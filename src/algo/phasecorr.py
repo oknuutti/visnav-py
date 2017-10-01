@@ -100,7 +100,7 @@ class PhaseCorrelationAlgo():
                 tcy + self.glWidget._height/2)
         
         scx, scy = tools.calc_xy(xi, yi, m.z_off.value)
-        m.set_spacecraft_pos((scx, scy, m.z_off.value))
+        m.spacecraft_pos = (scx, scy, m.z_off.value)
         
         #print('z=%.3f: (%.3f, %.3f) => (%.3f, %.3f) => (%.3f, %.3f) => (%.3f, %.3f)'%(
         #    -m.z_off.value, tcx, tcy, cxc, cyc, cx, cy, m.x_off.value, m.y_off.value))

@@ -123,7 +123,7 @@ def load_image_meta(src, sm):
     sc_ast_ec_p = np.array([sc.x.value, sc.y.value, sc.z.value])
 
     # s/c orientation
-    scoq = tools.spherical_to_q(*sco)
+    scoq = tools.ypr_to_q(*sco)
 
     # project old position to new base vectors
     scub = tools.q_to_unitbase(scoq)
@@ -145,9 +145,9 @@ def load_image_meta(src, sm):
             ast_sc_p,
         ))
 
-    sm.real_sc_pos = ast_sc_p
+    sm.real_spacecraft_pos = ast_sc_p
     if USE_IMG_LABEL_FOR_SC_POS:
-        sm.set_spacecraft_pos(ast_sc_p)
+        sm.spacecraft_pos = ast_sc_p
     ##
     ## done setting spacecraft position
 

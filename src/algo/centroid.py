@@ -12,10 +12,12 @@ class CentroidAlgo():
         self.system_model = system_model
         self.glWidget = glWidget
         
-        self.debug_filebase = None
+        self.debug_filebase = kwargs.get('debug_filebase', None)
         self.bg_threshold = kwargs.get('bg_threshold', None)
         
         self._ref_img = None
+        
+        self.DEBUG_IMG_POSTFIX = 'c'            # fi batch mode, save result image in a file ending like this
         
         self.MODEL_DISTANCE_COEF = 1.6          # starting distance compared to min distance
         self.MIN_PIXELS_FOR_DETECTION = 30      # fail if less pixels lit
@@ -28,7 +30,7 @@ class CentroidAlgo():
     def adjust_iteratively(self, sce_img, **kwargs):
         sce_img = self.maybe_load_scene_image(sce_img)
         
-        self.system_model.set_spacecraft_pos((0, 0, -MIN_DISTANCE * self.MODEL_DISTANCE_COEF))
+        self.system_model.spacecraft_pos = (0, 0, -MIN_DISTANCE * self.MODEL_DISTANCE_COEF)
         for i in range(self.MAX_ITERATIONS):
             ox, oy, oz = self.system_model.spacecraft_pos
             od = math.sqrt(ox**2 + oy**2 + oz**2)
@@ -53,6 +55,9 @@ class CentroidAlgo():
         
         # TODO: check result validity
         
+        if BATCH_MODE and self.debug_filebase:
+            self.glWidget.saveViewToFile(self.debug_filebase+'r.png')
+        
         if DEBUG:
             cv2.waitKey()
             cv2.destroyAllWindows()
@@ -74,12 +79,12 @@ class CentroidAlgo():
         
         if not BATCH_MODE and DEBUG:
             print('\nreal pos:\n%s\nest pos:\n%s\n' % (
-                self.system_model.real_sc_pos, sc_v))
+                self.system_model.real_spacecraft_pos, sc_v))
         
         if any(map(math.isnan, sc_v)):
             raise PositioningException('Position resulted in a NAN: %s'(sc_v,))
         
-        self.system_model.set_spacecraft_pos(sc_v)
+        self.system_model.spacecraft_pos = sc_v
         
         
     def match_brightness_centroids(self, sce_img, ref_img):
@@ -233,6 +238,7 @@ class CentroidAlgo():
 
     def maybe_load_scene_image(self, sce_img):
         if isinstance(sce_img, str):
+            self.debug_filebase = sce_img[0:-4]+self.DEBUG_IMG_POSTFIX
             self.glWidget.loadTargetImage(sce_img, remove_bg=True)
             sce_img = self.glWidget.full_image
             self.bg_threshold = self.glWidget.image_bg_threshold
