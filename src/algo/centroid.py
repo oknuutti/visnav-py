@@ -15,24 +15,47 @@ class CentroidAlgo():
         self.debug_filebase = None
         self.bg_threshold = kwargs.get('bg_threshold', None)
         
-        self.MIN_PIXELS_FOR_DETECTION = 10  # fail if less pixels lit
-        self.MAX_ITERATIONS = 10            # max number of iterations       
-        self.ITERATION_TOL = 0.002          # min change % in position vector
+        self._ref_img = None
+        
+        self.MODEL_DISTANCE_COEF = 1.6          # starting distance compared to min distance
+        self.MIN_PIXELS_FOR_DETECTION = 30      # fail if less pixels lit
+        self.ASTEROID_MIN_BORDER_MARGIN = 0.04  # if less than margin at both extrames, astroid too close
+        self.ASTEROID_MAX_SPAN = 0.85           # if asteroid spans more than this, it's too close
+        self.MAX_ITERATIONS = 10                # max number of iterations       
+        self.ITERATION_TOL = 0.002              # min change % in position vector
     
     
     def adjust_iteratively(self, sce_img, **kwargs):
         sce_img = self.maybe_load_scene_image(sce_img)
+        
+        self.system_model.set_spacecraft_pos((0, 0, -MIN_DISTANCE * self.MODEL_DISTANCE_COEF))
         for i in range(self.MAX_ITERATIONS):
             ox, oy, oz = self.system_model.spacecraft_pos
             od = math.sqrt(ox**2 + oy**2 + oz**2)
             
-            self.adjust(sce_img)
+            if not DEBUG:
+                self.adjust(sce_img)
+            else:
+                try:
+                    self.adjust(sce_img)
+                except PositioningException as e:
+                    print(str(e))
+                    break
+                finally:
+                    cv2.imshow('rendered img i=%d'%i, self._ref_img)
             
             nx, ny, nz = self.system_model.spacecraft_pos
             ch = math.sqrt((nx-ox)**2 + (ny-oy)**2 + (nz-oz)**2)
-            print('i%d: d0=%.2f, ch=%.2f, rel_ch=%.2f%%'%(i, od, ch, ch/od*100))
+            if DEBUG:
+                print('i%d: d0=%.2f, ch=%.2f, rel_ch=%.2f%%'%(i, od, ch, ch/od*100))
             if ch/od < self.ITERATION_TOL:
                 break
+        
+        # TODO: check result validity
+        
+        if DEBUG:
+            cv2.waitKey()
+            cv2.destroyAllWindows()
     
     
     def adjust(self, sce_img, ref_img=None, simple=False):
@@ -43,6 +66,7 @@ class CentroidAlgo():
                 ref_img = self.glWidget.render(center=False)
                 th, ref_img = cv2.threshold(ref_img, self.bg_threshold, 255, cv2.THRESH_TOZERO)
                 ref_img = np.atleast_3d(ref_img)
+                self._ref_img = ref_img
                 
             sc_v = self.match_brightness_centroids(sce_img, ref_img)
         else:
@@ -61,41 +85,93 @@ class CentroidAlgo():
     def match_brightness_centroids(self, sce_img, ref_img):
         
         # for asteroid cross section area visible, get lit pixels (so that no need to fine tune rendering)
-        t1, t2, sce_px, t3, t4 = self.get_image_centroid(sce_img, binary=True)
+        t1, t2, sce_px, t3, t4 = self.get_image_centroid(sce_img, is_scene=True, binary=True)
         t1, t2, ref_px, t3, t4 = self.get_image_centroid(ref_img, binary=True)
 
         # for centroid, use centre of brightness
-        sce_icx, sce_icy, t1, t2, t3 = self.get_image_centroid(sce_img, binary=False)
+        sce_icx, sce_icy, t1, t2, t3 = self.get_image_centroid(sce_img, is_scene=True, binary=False)
         ref_icx, ref_icy, t1, t2, t3 = self.get_image_centroid(ref_img, binary=False)
         
         old_x = self.system_model.x_off.value
         old_y = self.system_model.y_off.value
         old_z = self.system_model.z_off.value
-        old_d = math.sqrt(old_x**2 + old_y**2 + old_z**2)
         
         # estimate distance first
-        new_d = old_d * math.sqrt(ref_px/sce_px)
+        new_z =  old_z * math.sqrt(ref_px/sce_px)
         
         # calculate brightness centroid coordinates
-        ref_cx, ref_cy = tools.calc_xy(ref_icx, ref_icy, new_d)
-        sce_cx, sce_cy = tools.calc_xy(sce_icx, sce_icy, new_d)
+        ref_cx, ref_cy = tools.calc_xy(ref_icx, ref_icy, new_z)
+        sce_cx, sce_cy = tools.calc_xy(sce_icx, sce_icy, new_z)
 
         # move x_off & y_off by centroid error
         new_x = old_x - (ref_cx - sce_cx)
         new_y = old_y - (ref_cy - sce_cy)
         
-        # use new x & y for better estimate of z
-        new_z = -math.sqrt(new_d**2 - new_x**2 - new_y**2)
-        
         # return new location
         return (new_x, new_y, new_z)
+     
         
+    def detect_asteroid(self, sce_img):
+        ih, iw = sce_img.shape[0:2]
+        
+        # Threshold it so it becomes binary
+        ret, bin_img = cv2.threshold(sce_img, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        
+        # connect close pixels by dilating and eroding
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        bin_img = cv2.morphologyEx(bin_img, cv2.MORPH_CLOSE, kernel)
+        
+        # get connected regions and their stats
+        n, regs, stats, c = cv2.connectedComponentsWithStats(bin_img, 8, cv2.CV_32S)
+        
+        # detect asteroid
+        i = np.argmax(list(s[cv2.CC_STAT_AREA] for i,s in enumerate(stats) if i>0))+1
+        if stats[i][cv2.CC_STAT_AREA] < self.MIN_PIXELS_FOR_DETECTION:
+            raise PositioningException('No asteroid found')
+        
+        # asteroid parts (i=0 is background)
+        ast_parts = (
+                i for i,s in enumerate(stats)
+                if i>0 and s[cv2.CC_STAT_AREA]>=self.MIN_PIXELS_FOR_DETECTION
+        )
+        
+        # check asteroid extent
+        ast_parts = [
+            (
+                i, s[cv2.CC_STAT_AREA],
+                s[cv2.CC_STAT_LEFT]/iw, (iw - (s[cv2.CC_STAT_LEFT]+s[cv2.CC_STAT_WIDTH]))/iw,
+                s[cv2.CC_STAT_TOP]/ih, (ih - (s[cv2.CC_STAT_TOP]+s[cv2.CC_STAT_HEIGHT]))/ih
+            )
+            for i,s in enumerate(stats) if i>0 and s[cv2.CC_STAT_AREA]>=self.MIN_PIXELS_FOR_DETECTION]
+
+        tot_area = sum((p[1] for p in ast_parts))/iw/ih
+        t1, t2, lm, rm, tm, bm = np.min(ast_parts, axis=0)
+        
+        if DEBUG:
+            print('Asteroid l,r,t,b margins: %.2f, %.2f, %.2f, %.2f'%(lm, rm, tm, bm), flush=True)
+        
+        if(False):
+            lim = self.ASTEROID_MIN_BORDER_MARGIN
+            if (lm < lim and rm < lim or tm < lim and bm < lim):
+                raise PositioningException('Asteroid too close: margins (l,r,t,b): %.2f, %.2f, %.2f, %.2f'%(lm, rm, tm, bm))
+        else:
+            lim = self.ASTEROID_MAX_SPAN
+            if (1-lm-rm > lim or 1-tm-bm > lim):
+                raise PositioningException('Asteroid too close: span (w,h): %.2f, %.2f'%(1-lm-rm, 1-tm-bm))
+        
+        # set too small regions to zero in scene image (stars)
+        for i in range(n):
+            if i>0 and i not in [p[0] for p in ast_parts]:
+                sce_img[regs==i] = 0
+        
+        return tot_area
+    
     
     # not in use, for a reason...
     def simple_adjusted_centroid(self, img):
         img = self.maybe_load_scene_image(img)
         
-        cx, cy, pixels, hr_app, vr_app = self.get_image_centroid(img, binary=True)
+        cx, cy, pixels, hr_app, vr_app = self.get_image_centroid(img, is_scene=True, binary=True)
         
         solar_elongation, direction = self.system_model.solar_elongation()
 
@@ -150,7 +226,7 @@ class CentroidAlgo():
         angle = r/CAMERA_HEIGHT * math.radians(CAMERA_Y_FOV)
         dist = R/1000 / math.tan(angle) # in km
         
-        x_off, y_off = tools.calc_xy(cx, cy, dist)
+        x_off, y_off = tools.calc_xy(cx, cy, -dist)
         
         return (x_off, y_off, -dist)
         
@@ -160,24 +236,30 @@ class CentroidAlgo():
             self.glWidget.loadTargetImage(sce_img, remove_bg=True)
             sce_img = self.glWidget.full_image
             self.bg_threshold = self.glWidget.image_bg_threshold
+            self.detect_asteroid(sce_img)
+            if DEBUG:
+                cv2.imshow('scene th=%d'%self.bg_threshold, sce_img)
             
         return np.atleast_3d(sce_img)
 
-    def get_image_centroid(self, img, binary=False):
+    def get_image_centroid(self, img, is_scene=False, binary=False):
         ih, iw, cs = img.shape
         m = cv2.moments(img[:,:,0], binaryImage=binary)
         
-        if m['m00'] < self.MIN_PIXELS_FOR_DETECTION:
-            raise PositioningException('No asteroid found')
+        if np.isclose(m['m00'],0):
+            if is_scene:
+                raise PositioningException('No asteroid found')
+            else:
+                raise PositioningException('Algorithm failure: model moved out of view')
         
         # image centroid
-        icx = (m['m10']/m['m00'] - iw/2)/iw*CAMERA_WIDTH
-        icy = (ih/2 - m['m01']/m['m00'])/ih*CAMERA_HEIGHT
+        icx = m['m10']/m['m00']/iw*CAMERA_WIDTH
+        icy = m['m01']/m['m00']/ih*CAMERA_HEIGHT
         brightness = m['m00']/iw/ih*CAMERA_WIDTH*CAMERA_HEIGHT
         
         # pixel spreads
         # used to model dimensions of asteroid parts visible in image
-        hr = math.sqrt(m['mu20']/m['m00'])
-        vr = math.sqrt(m['mu02']/m['m00'])
+        hr = math.sqrt(m['mu20']/m['m00']) if m['mu20']>0 else 1
+        vr = math.sqrt(m['mu02']/m['m00']) if m['mu02']>0 else 1
         
         return icx, icy, brightness, hr, vr

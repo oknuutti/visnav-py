@@ -11,20 +11,43 @@ from settings import *
 class PositioningException(Exception):
 	pass
 
-# cx, cy are centered pixel positions
-def calc_xy(cx, cy, z_off, width=CAMERA_WIDTH, height=CAMERA_HEIGHT):
-    # TODO: use camera matrix? also, distance instead of z_off
+
+def intrinsic_camera_mx(w=CAMERA_WIDTH, h=CAMERA_HEIGHT):
+    x = w/2
+    y = h/2
+    fl_x = x / math.tan( math.radians(CAMERA_X_FOV)/2 )
+    fl_y = y / math.tan( math.radians(CAMERA_Y_FOV)/2 )
+    return np.array([[fl_x, 0, x],
+                    [0, fl_y, y],
+                    [0, 0, 1]], dtype = "float")
+
+
+def inv_intrinsic_camera_mx(w=CAMERA_WIDTH, h=CAMERA_HEIGHT):
+    return np.linalg.inv(intrinsic_camera_mx(w, h))
+
+
+def calc_xy(xi, yi, z_off, width=CAMERA_WIDTH, height=CAMERA_HEIGHT):
+    """ xi and yi are unaltered image coordinates, z_off is usually negative  """
     
-    cx = cx/width
-    cy = cy/height
-    #assert cx<=0.5 and cx>=-0.5 and cy<=0.5 and cy>=-0.5, 'Invalid range for cx or cy: %s, %s'%(cx, cy)
+    xh = xi+0.5
+    yh = height - (yi+0.5)
+    zh = -z_off
     
-    h_angle = cx * math.radians(CAMERA_X_FOV)
-    x_off = z_off * math.tan(h_angle)
-    
-    v_angle = cy * math.radians(CAMERA_Y_FOV)
-    y_off = z_off * math.tan(v_angle)
-    
+    if True:
+        iK = inv_intrinsic_camera_mx(w=width, h=height)
+        x_off, y_off, dist = iK.dot(np.array([xh, yh, 1]))*zh
+        
+    else:
+        cx = xh/width - 0.5
+        cy = yh/height - 0.5
+
+        h_angle = cx * math.radians(CAMERA_X_FOV)
+        x_off = zh * math.tan(h_angle)
+
+        v_angle = cy * math.radians(CAMERA_Y_FOV)
+        y_off = zh * math.tan(v_angle)
+        
+    # print('%.3f~%.3f, %.3f~%.3f, %.3f~%.3f'%(ax, x_off, ay, y_off, az, z_off))
     return x_off, y_off
 
 

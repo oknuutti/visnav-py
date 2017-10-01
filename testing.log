@@ -151,3 +151,13 @@ kp - brute - 1.6x far - 512x512 - hires model:
 ..., nfeatures=1000, (lowe=0.75), ransac_iter=1000, 3x far: --note: better when asteroid far off, bad near matches
 2017-09-27 10:18:43 - time: 0.1h (3s), lat-err avg: 27.50%, lat-err qs%: (0.05, 0.08, 0.96, 1670.72), dist-err avg: 41.23%, dist-err qs%: (2.37, 3.41, 22.92, 2251.94), fail: 20.0%
 
+keypoint+, nfeatures=1000, (lowe=0.80), ransac_iter=1000
+2017-09-30 14:57:41 - time: 0.1h (3s), lat-err avg: 0.16%, lat-err qs%: (0.06, 0.12, 0.38, 3.06), dist-err avg: 5.06%, dist-err qs%: (2.93, 4.17, 11.10, 78.60), fail: 7.0%
+
+keypoint+, nfeatures=1000, (lowe=0.75), ransac_iter=1000
+2017-09-30 15:27:06 - time: 0.1h (3s), lat-err avg: 0.19%, lat-err qs%: (0.04, 0.08, 0.27, 7.21), dist-err avg: 6.90%, dist-err qs%: (2.43, 3.46, 21.46, 204.63), fail: 2.0%
+2017-09-30 15:48:12 - time: 0.3h (3s), lat-err avg: 0.26%, lat-err qs%: (0.06, 0.10, 0.35, 8.67), dist-err avg: 7.72%, dist-err qs%: (2.76, 4.06, 12.20, 184.09), fail: 1.0%
+
+centroid:
+2017-09-30 20:09:41 - time: 0.1h (3s), lat-err avg: 0.39%, lat-err qs%: (0.09, 0.18, 0.67, 12.72), dist-err avg: 10.71%, dist-err qs%: (4.19, 6.38, 26.88, 262.27), fail: 23.0%
+

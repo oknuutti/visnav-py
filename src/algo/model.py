@@ -156,11 +156,11 @@ class SystemModel():
     @property
     def spacecraft_pos(self):
         return self.x_off.value, self.y_off.value, self.z_off.value
-    
+
     @property
     def spacecraft_dist(self):
         return math.sqrt(sum(x**2 for x in self.spacecraft_pos))
-        
+
     def set_spacecraft_pos(self, pos):
         self.z_off.value = pos[2]
 
@@ -171,6 +171,13 @@ class SystemModel():
         self.y_off.range = (pos[1] - half_range, pos[1] + half_range)
         self.y_off.value = pos[1]
 
+    @property
+    def spacecraft_rot(self):
+        return self.x_rot.value, self.y_rot.value, self.z_rot.value
+    
+    def set_spacecraft_rot(self, r):
+        self.x_rot.value, self.y_rot.value, self.z_rot.value = r
+    
     def rotate_spacecraft(self, q):
         new_q = self.spacecraft_q() * q
         self.x_rot.value, self.y_rot.value, self.z_rot.value = \

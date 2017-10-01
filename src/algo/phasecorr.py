@@ -95,14 +95,11 @@ class PhaseCorrelationAlgo():
                 np.float32(render_result), self._target_image, self._hannw)
         
         # if crop params set, compensate cx, cy
-        cx, cy = self._original_image_coords(
+        xi, yi = self._original_image_coords(
                 tcx + self.glWidget._width/2,
                 tcy + self.glWidget._height/2)
         
-        cxc = cx - CAMERA_WIDTH/2
-        cyc = cy - CAMERA_HEIGHT/2
-        
-        scx, scy = tools.calc_xy(cxc, -cyc, -m.z_off.value)
+        scx, scy = tools.calc_xy(xi, yi, m.z_off.value)
         m.set_spacecraft_pos((scx, scy, m.z_off.value))
         
         #print('z=%.3f: (%.3f, %.3f) => (%.3f, %.3f) => (%.3f, %.3f) => (%.3f, %.3f)'%(
@@ -115,7 +112,7 @@ class PhaseCorrelationAlgo():
             print((
                 'E[%.3f] | (%.2f, %.2f) | %.2f | %.2f | %.2f > '+
                     '%.2f | %.2f | %.2f | %.2f < %s')%(
-                    self.errval1, -cx, -cy,
+                    self.errval1, -xi, -yi,
                     m.x_rot.nvalue, m.y_rot.nvalue, m.z_rot.nvalue,
                     m.x_off.nvalue, m.y_off.nvalue, m.z_off.nvalue, m.time.nvalue,
                     '%s'%self.iter_count if self.iter_count>0 else '-'

@@ -53,6 +53,7 @@ from algo.image import ImageProc
 from algo.phasecorr import PhaseCorrelationAlgo
 from algo.centroid import CentroidAlgo
 from algo.keypoint import KeypointAlgo
+from algo.mixed import MixedAlgo
 from algo.tools import PositioningException
 
 import obj_loader
@@ -120,6 +121,7 @@ class Window(QWidget):
         self.keypoint = KeypointAlgo(self.systemModel, self.glWidget)
         self.centroid = CentroidAlgo(self.systemModel, self.glWidget,
                                      bg_threshold=self.glWidget.image_bg_threshold)
+        self.mixed = MixedAlgo(self.centroid, self.keypoint)
         
         self.buttons = dict(
             (m.lower(), self.optbutton(m, bottomLayout))

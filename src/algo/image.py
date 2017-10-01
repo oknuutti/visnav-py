@@ -28,12 +28,10 @@ class ImageProc():
     @staticmethod
     def process_target_image(image_src):
         hist = cv2.calcHist([image_src],[0],None,[256],[0,256])
-        
-        if not BATCH_MODE:
+        if False:
             threshold_value = ImageProc.optimal_threshold(hist)
         else:
-            threshold_value = 15 # imgs created by VISIT dont have background
-        
+            threshold_value = 50
         th, image_dst = cv2.threshold(image_src, threshold_value, 255, cv2.THRESH_TOZERO)
         return image_dst, hist, threshold_value
     
@@ -80,13 +78,19 @@ class ImageProc():
             print('threshold_value: %s; bg_ratio: %s'%(threshold_value, bg_ratio))
 
         # plot figure with histogram and estimated distributions
-        if False:
+        if True:
             from matplotlib import pyplot as plt
-            plt.plot(x, fitfun1(out[0][:3], x))
-            plt.plot(x, fitfun2(out[0][3:], x))
-            plt.plot(x, fitfun(out[0], x))
-            plt.plot(x, loghist)
-            plt.show()
+            plt.clf()
+            plt.plot(x, fitfun1(out[0][:3], x), label='background')
+            plt.plot(x, fitfun2(out[0][3:], x), label='foreground')
+            plt.plot(x, fitfun(out[0], x), label='total fit')
+            plt.plot(x, loghist, label='log(hist)')
+            plt.legend()
+            fig = plt.gcf()
+            fig.canvas.draw()
+            data = np.fromstring(fig.canvas.tostring_rgb(), dtype=np.uint8, sep='')
+            data = data.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+            cv2.imshow('histogram fitting', data)
         
         return threshold_value
 

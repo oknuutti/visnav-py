@@ -22,7 +22,7 @@ class KeypointAlgo():
         
         self.MIN_FEATURES = 8          # fail if less inliers at the end
         self.MODEL_DISTANCE_COEF = 1.6 # default 1.6
-        self.LOWE_METHOD_COEF = 0.8   # default 0.7
+        self.LOWE_METHOD_COEF = 0.75   # default 0.7
         self.RANSAC_ITERATIONS = 1000  # default 100
         self.RANSAC_ERROR = 8.0        # default 8.0
 
@@ -182,13 +182,6 @@ class KeypointAlgo():
     
     
     def _solve_pnp_ransac(self, sce_kp_2d, ref_kp_3d):
-        x = CAMERA_WIDTH/2
-        y = CAMERA_HEIGHT/2
-        fl_x = x / math.tan( math.radians(CAMERA_X_FOV)/2 )
-        fl_y = y / math.tan( math.radians(CAMERA_Y_FOV)/2 )
-        cam_mx = np.array([[fl_x, 0, x],
-                           [0, fl_y, y],
-                           [0, 0, 1]], dtype = "float")
         
         # assuming no lens distortion
         dist_coeffs = np.zeros((4,1), dtype="float")
@@ -197,7 +190,7 @@ class KeypointAlgo():
         
         try:
             retval, rvec, tvec, inliers = cv2.solvePnPRansac(
-                    ref_kp_3d, sce_kp_2d, cam_mx, dist_coeffs,
+                    ref_kp_3d, sce_kp_2d, intrinsic_camera_mx(), dist_coeffs,
                     iterationsCount = self.RANSAC_ITERATIONS,
                     reprojectionError = self.RANSAC_ERROR)
             if not retval:
@@ -214,8 +207,7 @@ class KeypointAlgo():
         z0 = self.system_model.z_off.value # translate to object origin
         def invproj(xi, yi):
             d = depths[int(yi)][int(xi)]
-            x, y = tools.calc_xy(xi-VIEW_WIDTH/2, yi-VIEW_HEIGHT/2, d,
-                                 width=VIEW_WIDTH, height=VIEW_HEIGHT)
+            x, y = tools.calc_xy(xi, yi, -d, width=VIEW_WIDTH, height=VIEW_HEIGHT)
             return x, y, -d-z0
         
         points_3d = np.array([invproj(pt[0], pt[1]) for pt in points_2d])
