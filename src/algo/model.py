@@ -97,8 +97,21 @@ class Parameter():
     
 
 class SystemModel():
+    (
+        OPENGL_FRAME,
+        SPACECRAFT_FRAME,
+        ASTEROID_FRAME,
+        OPENCV_FRAME,
+    ) = range(4)
+    
     # from sc cam frame (axis: +x, up: +z) to opengl (axis -z, up: +y)
     sc2gl_q = np.quaternion(0.5, 0.5, -0.5, -0.5)
+
+    # from ast frame (axis: +z, up: -x) to opengl (axis -z, up: +y)
+    ast2gl_q = np.quaternion(1, 0, 0, -1).normalized()
+    
+    # from opencv cam frame (axis: +z, up: -y) to opengl (axis -z, up: +y)
+    cv2gl_q = np.quaternion(0, 1, 0, 0)
     
     def __init__(self, *args, **kwargs):
         self.asteroid = Asteroid()
@@ -180,6 +193,7 @@ class SystemModel():
     @asteroid_axis.setter
     def asteroid_axis(self, r):
         self.ast_x_rot.value, self.ast_y_rot.value, self.ast_z_rot.value = r
+        self.update_asteroid_model()
 
     @property
     def spacecraft_dist(self):
@@ -229,6 +243,7 @@ class SystemModel():
         new_q = self.asteroid.rotation_q(self.time.value) * q
         self.x_rot.value, self.y_rot.value, self.z_rot.value = \
             list(map(math.degrees, tools.q_to_ypr(new_q)))
+        self.update_asteroid_model()
 
     def spacecraft_q(self):
         return tools.ypr_to_q(*list(map(
@@ -239,36 +254,36 @@ class SystemModel():
     def asteroid_q(self):
         return self.asteroid.rotation_q(self.time.value)
     
-    def gl_sc_asteroid_rel_rot(self):
+    def gl_sc_asteroid_rel_q(self):
         """ rotation of asteroid relative to spacecraft in opengl coords """
         self.update_asteroid_model()
-        
-        # ast => eq => sc => opengl
-        q_tot = SystemModel.sc2gl_q.conj() * self.sc_asteroid_rel_rot()
-        
+        sc_ast_rel_q = SystemModel.sc2gl_q.conj() * self.sc_asteroid_rel_q() # why cant have: * SystemModel.sc2gl_q ??
         if not BATCH_MODE and DEBUG:
-            print('asteroid x-axis: %s'%tools.q_times_v(q_tot, np.array([1, 0, 0])))
+            print('asteroid x-axis: %s'%tools.q_times_v(sc_ast_rel_q, np.array([1, 0, 0])))
         
-        return q_tot
+        return sc_ast_rel_q
     
     
-    def sc_asteroid_rel_rot(self, time=None):
+    def sc_asteroid_rel_q(self, time=None):
+        """ rotation of asteroid relative to spacecraft in opengl coords """
+        sc2ast_q = self.frm_conv_q(self.SPACECRAFT_FRAME, self.ASTEROID_FRAME)
         ast_q = self.asteroid.rotation_q(time or self.time.value)
+        ast_q = sc2ast_q * ast_q * sc2ast_q.conj()
+        
         sc_q = self.spacecraft_q()
         return sc_q.conj() * ast_q
 
-    def real_sc_asteroid_rel_rot(self):
+
+    def real_sc_asteroid_rel_q(self):
         org_sc_rot = self.spacecraft_rot
         org_ast_axis = self.asteroid_axis
         self.spacecraft_rot = self.real_spacecraft_rot
         self.asteroid_axis = self.real_asteroid_axis
-        self.update_asteroid_model()
         
-        q_tot = self.sc_asteroid_rel_rot(time=self.time.real_value)
+        q_tot = self.sc_asteroid_rel_q(time=self.time.real_value)
         
         self.spacecraft_rot = org_sc_rot
         self.asteroid_axis = org_ast_axis
-        self.update_asteroid_model()
         return q_tot
     
     
@@ -314,6 +329,18 @@ class SystemModel():
         
         self.update_asteroid_model()
         assert np.isclose(self.time.value, time), 'Failed to set time value'
+    
+    
+    @staticmethod
+    def frm_conv_q(fsrc, fdst):
+        fqm = {
+            SystemModel.OPENGL_FRAME:np.quaternion(1,0,0,0),
+            SystemModel.OPENCV_FRAME:SystemModel.cv2gl_q,
+            SystemModel.SPACECRAFT_FRAME:SystemModel.sc2gl_q,
+            SystemModel.ASTEROID_FRAME:SystemModel.ast2gl_q,
+        }
+        return fqm[fsrc]*fqm[fdst].conj()
+
     
     def __repr__(self):
         return (
@@ -388,10 +415,7 @@ class Asteroid():
     def rotation_q(self, timestamp):
         theta = self.rotation_theta(timestamp)
         # TODO: use precession info
-        q_x2z = np.quaternion(1, 0, 1, 0).normalized()
-        return q_x2z \
-                * tools.ypr_to_q(self.axis_latitude, self.axis_longitude, theta) \
-                * q_x2z.conj()
+        return tools.ypr_to_q(self.axis_latitude, self.axis_longitude, theta)
     
     def position(self, timestamp):
         # from http://space.stackexchange.com/questions/8911/determining-\

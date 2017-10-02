@@ -399,7 +399,7 @@ class GLWidget(QOpenGLWidget):
             x, y = 0, 0
         
         # get object rotation and turn it a bit based on cropping effect
-        q = m.gl_sc_asteroid_rel_rot()
+        q = m.gl_sc_asteroid_rel_q()
         qfin = (q * q_crop.conj())
         rv = tools.q_to_angleaxis(qfin)
 

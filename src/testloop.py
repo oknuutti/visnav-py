@@ -201,11 +201,12 @@ class TestLoop():
             sc_x, sc_y, sc_z = q_times_v((sco_q * sm.sc2gl_q).conj(), sc_ast_v)
             
             # asteroid rotation axis, add zero mean gaussian with small variance
+            cq = sm.frm_conv_q(sm.SPACECRAFT_FRAME, sm.ASTEROID_FRAME)
             da = np.random.uniform(0, rad(self._noise_ast_rot_axis))
             dd = np.random.uniform(0, 2*math.pi)
             ax_lat_true = sm.asteroid.axis_latitude
             ax_lon_true = sm.asteroid.axis_longitude
-            ast_q_true = sm.asteroid.rotation_q(time)
+            ast_q_true = cq*sm.asteroid.rotation_q(time)*cq.conj()
             est_ax_lat = ax_lat_true + da*math.sin(dd)
             est_ax_lon = ax_lon_true + da*math.cos(dd)
             
@@ -309,19 +310,9 @@ class TestLoop():
 
         self._maybe_exit()
 
-        if False:
-            # DEBUG ONLY: for plotting in own software for comparison
-            sm.time.value = time
-            sm.x_rot.value = deg(sco_lat)
-            sm.y_rot.value = deg(sco_lon)
-            sm.z_rot.value = deg(sco_rot)
-            sm.asteroid.axis_latitude = ax_lat_true
-            sm.asteroid.axis_longitude = ax_lon_true
-            sm.spacecraft_pos = (sc_x, sc_y, sc_z)
-
         # assemble return values
         etime = (dt.now() - start_time).total_seconds()
-        real_rel_rot = q_to_ypr(sm.real_sc_asteroid_rel_rot())
+        real_rel_rot = q_to_ypr(sm.real_sc_asteroid_rel_q())
         params = (time, deg(ax_lat_true), deg(ax_lon_true),
                 deg(sm.asteroid.rotation_theta(time)),
                 deg(sco_lat), deg(sco_lon), deg(sco_rot),
@@ -342,7 +333,7 @@ class TestLoop():
             
         else:
             pos = sm.spacecraft_pos
-            rel_rot = q_to_ypr(sm.sc_asteroid_rel_rot())
+            rel_rot = q_to_ypr(sm.sc_asteroid_rel_q())
             err = (
                 *np.subtract(pos, sm.real_spacecraft_pos),
                 deg(angle_between_ypr(rel_rot, real_rel_rot)),

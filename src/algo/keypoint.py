@@ -226,21 +226,24 @@ class KeypointAlgo():
         return points_3d
     
     
-    def _set_sc_from_ast_rot_and_trans(self, rvec, tvec):
-        # from opencv cam frame (axis: +z, up: -y) to opengl (axis -z, up: +y)
-        # by rotating 180deg around x-axis
-        cv2gl_q = np.quaternion(0, 1, 0, 0)
-        self.system_model.spacecraft_pos = tools.q_times_v(cv2gl_q, tvec)#[tvec[0], -tvec[1], -tvec[2]]
-        
-        # from opencv cam frame to spacecraft cam frame
-        cv2sc_q = cv2gl_q * self.system_model.sc2gl_q.conj()
-        
-        cv_cam_delta_q = tools.angleaxis_to_q(rvec)
-        sc_delta_q =  cv2sc_q.conj() * cv_cam_delta_q.conj() * cv2sc_q
-        
-        self.system_model.rotate_spacecraft(sc_delta_q)
+    def _set_sc_from_ast_rot_and_trans(self, rvec, tvec, rotate_sc=True):
+        sm = self.system_model
 
-        # for some reason rotating asteroid instead of spacecraft 
-        # doesnt work as simply as below
-        #self.system_model.rotate_asteroid(sc_delta_q.conj())
+        # rotate to gl frame from opencv camera frame
+        gl2cv_q = sm.frm_conv_q(sm.OPENGL_FRAME, sm.OPENCV_FRAME)
+        sm.spacecraft_pos = tools.q_times_v(gl2cv_q, tvec)
         
+        # camera rotation in opencv frame
+        cv_cam_delta_q = tools.angleaxis_to_q(rvec)
+        
+        if rotate_sc:
+            # from opencv cam frame to spacecraft cam frame
+            sc2cv_q = sm.frm_conv_q(sm.SPACECRAFT_FRAME, sm.OPENCV_FRAME)
+            sc_delta_q =  sc2cv_q * cv_cam_delta_q * sc2cv_q.conj()
+            sm.rotate_spacecraft(sc_delta_q.conj())
+        else:
+            # from asteroid frame to opencv cam frame
+            # seems can't make work, dont know why
+            ast2cv_q = sm.frm_conv_q(sm.ASTEROID_FRAME, sm.OPENCV_FRAME)
+            ast_delta_q = ast2cv_q * cv_cam_delta_q * ast2cv_q.conj()
+            sm.rotate_asteroid(ast_delta_q)
