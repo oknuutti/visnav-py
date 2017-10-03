@@ -180,6 +180,91 @@ def solar_elongation(ast_v, sc_q):
 
     return elong, direc
 
+def solve_rotation(src_q, dst_q):
+    """ q*src_q*q.conj() == dst_q, solve for q """
+    # based on http://web.cs.iastate.edu/~cs577/handouts/quaternion.pdf
+    # and https://en.wikipedia.org/wiki/Quaternions_and_spatial_rotation#Pairs_of_unit_quaternions_as_rotations_in_4D_space
+    
+    # NOTE: not certain if works..
+    
+    M = np.zeros((4,4))
+    for i in range(len(src_q)):
+        si = src_q[i]
+        Pi = np.array((
+            (si.w, -si.x, -si.y, -si.z),
+            (si.x, si.w, si.z, -si.y),
+            (si.y, -si.z, si.w, si.x),
+            (si.z, si.y, -si.x, si.w),
+        ))
+
+        qi = dst_q[i]
+        Qi = np.array((
+            (qi.w, -qi.x, -qi.y, -qi.z),
+            (qi.x, qi.w, -qi.z, qi.y),
+            (qi.y, qi.z, qi.w, -qi.x),
+            (qi.z, -qi.y, qi.x, qi.w),
+        ))
+    
+        M += Pi.T * Qi
+    
+    w, v = np.linalg.eig(M)
+    i = np.argmax(w)
+    res_q = np.quaternion(*v[:,i])
+#    alt = v.dot(w)
+#    print('%s,%s'%(res_q, alt))
+#    res_q = np.quaternion(*alt).normalized()
+    return res_q
+
+def solve_q_bf(src_q, dst_q):
+    qs = []
+    d = []
+    for res_q in (
+        np.quaternion(0,0,0,1).normalized(),
+        np.quaternion(0,0,1,0).normalized(),
+        np.quaternion(0,0,1,1).normalized(),
+        np.quaternion(0,0,-1,1).normalized(),
+        np.quaternion(0,1,0,0).normalized(),
+        np.quaternion(0,1,0,1).normalized(),
+        np.quaternion(0,1,0,-1).normalized(),
+        np.quaternion(0,1,1,0).normalized(),
+        np.quaternion(0,1,-1,0).normalized(),
+        np.quaternion(0,1,1,1).normalized(),
+        np.quaternion(0,1,1,-1).normalized(),
+        np.quaternion(0,1,-1,1).normalized(),
+        np.quaternion(0,1,-1,-1).normalized(),
+        np.quaternion(1,0,0,1).normalized(),
+        np.quaternion(1,0,0,-1).normalized(),
+        np.quaternion(1,0,1,0).normalized(),
+        np.quaternion(1,0,-1,0).normalized(),
+        np.quaternion(1,0,1,1).normalized(),
+        np.quaternion(1,0,1,-1).normalized(),
+        np.quaternion(1,0,-1,1).normalized(),
+        np.quaternion(1,0,-1,-1).normalized(),
+        np.quaternion(1,1,0,0).normalized(),
+        np.quaternion(1,-1,0,0).normalized(),
+        np.quaternion(1,1,0,1).normalized(),
+        np.quaternion(1,1,0,-1).normalized(),
+        np.quaternion(1,-1,0,1).normalized(),
+        np.quaternion(1,-1,0,-1).normalized(),
+        np.quaternion(1,1,1,0).normalized(),
+        np.quaternion(1,1,-1,0).normalized(),
+        np.quaternion(1,-1,1,0).normalized(),
+        np.quaternion(1,-1,-1,0).normalized(),
+        np.quaternion(1,1,1,-1).normalized(),
+        np.quaternion(1,1,-1,1).normalized(),
+        np.quaternion(1,1,-1,-1).normalized(),
+        np.quaternion(1,-1,1,1).normalized(),
+        np.quaternion(1,-1,1,-1).normalized(),
+        np.quaternion(1,-1,-1,1).normalized(),
+        np.quaternion(1,-1,-1,-1).normalized(),
+    ):
+        tq = res_q * src_q * res_q.conj()
+        qs.append(res_q)
+        d.append(1-np.array((tq.w, tq.x, tq.y, tq.z)).dot(np.array((dst_q.w, dst_q.x, dst_q.y, dst_q.z)))**2)
+    i = np.argmin(d)
+    return qs[i]
+
+
 #
 # Not sure if unitbase_to_q works, haven't deleted just in case still need:
 #

@@ -240,10 +240,14 @@ class SystemModel():
             list(map(math.degrees, tools.q_to_ypr(new_q)))
 
     def rotate_asteroid(self, q):
-        new_q = self.asteroid.rotation_q(self.time.value) * q
-        self.x_rot.value, self.y_rot.value, self.z_rot.value = \
-            list(map(math.degrees, tools.q_to_ypr(new_q)))
-        self.update_asteroid_model()
+        ast = self.asteroid
+        new_q = ast.rotation_q(self.time.value) * q
+        ast.axis_latitude, ast.axis_longitude, new_theta = tools.q_to_ypr(new_q)
+        
+        old_theta = ast.rotation_theta(self.time.value)
+        ast.rotation_pm = tools.wrap_rads(ast.rotation_pm + new_theta - old_theta)
+        
+        self.asteroid_rotation_from_model()
 
     def spacecraft_q(self):
         return tools.ypr_to_q(*list(map(

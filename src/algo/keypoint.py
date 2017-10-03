@@ -226,7 +226,7 @@ class KeypointAlgo():
         return points_3d
     
     
-    def _set_sc_from_ast_rot_and_trans(self, rvec, tvec, rotate_sc=True):
+    def _set_sc_from_ast_rot_and_trans(self, rvec, tvec, rotate_sc=False):
         sm = self.system_model
 
         # rotate to gl frame from opencv camera frame
@@ -243,7 +243,13 @@ class KeypointAlgo():
             sm.rotate_spacecraft(sc_delta_q.conj())
         else:
             # from asteroid frame to opencv cam frame
-            # seems can't make work, dont know why
-            ast2cv_q = sm.frm_conv_q(sm.ASTEROID_FRAME, sm.OPENCV_FRAME)
-            ast_delta_q = ast2cv_q * cv_cam_delta_q * ast2cv_q.conj()
+            ast2sc_q = sm.frm_conv_q(sm.ASTEROID_FRAME, sm.SPACECRAFT_FRAME)
+            sc2cv_q = sm.frm_conv_q(sm.SPACECRAFT_FRAME, sm.OPENCV_FRAME)
+            sc_q = sm.spacecraft_q()
+            ast_q = sm.asteroid_q()
+            
+            # -- arrived to this frame rotation formula by experimetation!
+            frame_q = ast_q.conj() * ast2sc_q * sc_q * sc2cv_q
+            
+            ast_delta_q = frame_q * cv_cam_delta_q * frame_q.conj()
             sm.rotate_asteroid(ast_delta_q)

@@ -229,7 +229,7 @@ class TestLoop():
                 + np.random.normal(0, rad(self._noise_sco_lat))))
         meas_sco_lon = wrap_rads(sco_lon 
                 + np.random.normal(0, rad(self._noise_sco_lon)))
-        meas_sco_rot = wrap_rads(sco_rot 
+        meas_sco_rot = wrap_rads(sco_rot
                 + np.random.normal(0, rad(self._noise_sco_rot)))
 
         ## based on above, call VISIT to make a target image
