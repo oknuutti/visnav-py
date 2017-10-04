@@ -23,7 +23,7 @@ class MixedAlgo():
             self._centroid.adjust_iteratively(sce_img, **kwargs)
             sc_r = self.system_model.spacecraft_rot
             centroid_result = self.system_model.spacecraft_pos
-            kwargs['init_dist'] = -centroid_result[2]
+            kwargs['init_z'] = centroid_result[2]
         except PositioningException as e:
             if str(e) == 'No asteroid found':
                 raise e

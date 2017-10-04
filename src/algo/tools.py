@@ -180,6 +180,21 @@ def solar_elongation(ast_v, sc_q):
 
     return elong, direc
 
+
+def interp2(array, x, y):
+    assert y<array.shape[0] and x<array.shape[1], 'out of bounds %s: %s'%(array.shape, (y, x))
+    
+    v = array[int(y):int(y)+2, int(x):int(x)+2]
+    xf = x-int(x)
+    yf = y-int(y)
+    w = np.array((
+        ((1-yf)*(1-xf), (1-yf)*xf),
+        (yf*(1-xf),     yf*xf),
+    ))
+    w = w/np.sum(w)
+    return np.sum(w*v)
+    
+
 def solve_rotation(src_q, dst_q):
     """ q*src_q*q.conj() == dst_q, solve for q """
     # based on http://web.cs.iastate.edu/~cs577/handouts/quaternion.pdf

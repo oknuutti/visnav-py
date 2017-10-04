@@ -7,6 +7,7 @@ import cv2
 
 from settings import *
 from algo import tools
+from algo.image import ImageProc
 from algo.tools import PositioningException
 
 # TODO:
@@ -17,7 +18,6 @@ class KeypointAlgo():
     def __init__(self, system_model, glWidget):
         self.system_model = system_model
         self.glWidget = glWidget
-        
         self.debug_filebase = None
         
         self.DEBUG_IMG_POSTFIX = 'k'   # fi batch mode, save result image in a file ending like this
@@ -37,9 +37,15 @@ class KeypointAlgo():
             sce_img = self.glWidget.full_image
 
         # render model image
-        init_dist = -kwargs.get('init_dist', MIN_DISTANCE * self.MODEL_DISTANCE_COEF)
-        self.system_model.z_off.value = init_dist
+        render_z = -MIN_DISTANCE * self.MODEL_DISTANCE_COEF
+        self.system_model.z_off.value = render_z
         ref_img, depth_result = self.glWidget.render(depth=True)
+        
+        # scale to match scene image asteroid extent in pixels
+        init_z = kwargs.get('init_z', render_z)
+        ref_img_sc = render_z/init_z * CAMERA_WIDTH/VIEW_WIDTH
+        ref_img = cv2.resize(ref_img, None, fx=ref_img_sc, fy=ref_img_sc, 
+                interpolation=cv2.INTER_CUBIC)
         
         # get keypoints and descriptors for both images
         sce_kp, sce_desc, ref_kp, ref_desc = self._orb_features(sce_img, ref_img)
@@ -55,14 +61,13 @@ class KeypointAlgo():
         # debug by drawing matches
         if not BATCH_MODE or DEBUG:
             print('matches: %s/%s'%(len(matches), min(len(sce_kp), len(ref_kp))), flush=True, end=", ")
-        self._draw_matches(sce_img, sce_kp, ref_img, ref_kp, matches, pause=False, show=DEBUG)
+        self._draw_matches(sce_img, sce_kp, ref_img, ref_img_sc, ref_kp, matches, pause=False, show=DEBUG)
         
         if error is not None:
             raise error
         
         # get feature 3d points using 3d model
-        ref_kp_3d = self._inverse_project([ref_kp[m.trainIdx].pt for m in matches], depth_result)
-        # TODO: scale coordinates from scene resolution to render resolution?
+        ref_kp_3d = self._inverse_project([ref_kp[m.trainIdx].pt for m in matches], depth_result, ref_img_sc)
         sce_kp_2d = np.array([sce_kp[m.queryIdx].pt for m in matches], dtype='float')
 
         if DEBUG:
@@ -74,7 +79,7 @@ class KeypointAlgo():
         # debug by drawing inlier matches
         if not BATCH_MODE or DEBUG:
             print('inliers: %s/%s'%(len(inliers), len(matches)), flush=True)
-        self._draw_matches(sce_img, sce_kp, ref_img, ref_kp,
+        self._draw_matches(sce_img, sce_kp, ref_img, ref_img_sc, ref_kp,
                            [matches[i[0]] for i in inliers], label='inliers', pause=False)
         
         # set model params to solved pose & pos
@@ -82,7 +87,7 @@ class KeypointAlgo():
         
         if BATCH_MODE and self.debug_filebase:
             self.glWidget.saveViewToFile(self.debug_filebase+'r.png')
-    
+        
     
     def _orb_features(self, scene_img, model_img):
         params = {
@@ -157,7 +162,7 @@ class KeypointAlgo():
         return matches
 
     
-    def _draw_matches(self, img1, kp1, img2, kp2, matches, pause=True, show=True, label='matches'):
+    def _draw_matches(self, img1, kp1, img2, img2_sc, kp2, matches, pause=True, show=True, label='matches'):
         matches = list([m] for m in matches)
         draw_params = {
 #            matchColor: (88, 88, 88),
@@ -168,19 +173,26 @@ class KeypointAlgo():
         # scale keypoint positions
         for kp in kp1:
             kp.pt = (kp.pt[0]*VIEW_WIDTH/CAMERA_WIDTH, kp.pt[1]*VIEW_HEIGHT/CAMERA_HEIGHT)
+        for kp in kp2:
+            kp.pt = (kp.pt[0]/img2_sc, kp.pt[1]/img2_sc)
         
         # scale image
         img1sc = cv2.cvtColor(cv2.resize(img1, None,
                             fx=VIEW_WIDTH/CAMERA_WIDTH,
                             fy=VIEW_HEIGHT/CAMERA_HEIGHT,
                             interpolation=cv2.INTER_CUBIC), cv2.COLOR_GRAY2RGB)
-        img2c = cv2.cvtColor(img2, cv2.COLOR_GRAY2RGB)
+        img2sc = cv2.cvtColor(cv2.resize(img2, None,
+                            fx=1/img2_sc,
+                            fy=1/img2_sc,
+                            interpolation=cv2.INTER_CUBIC), cv2.COLOR_GRAY2RGB)
 
-        img3 = cv2.drawMatchesKnn(img1sc, kp1, img2c, kp2, matches, None, **draw_params)
+        img3 = cv2.drawMatchesKnn(img1sc, kp1, img2sc, kp2, matches, None, **draw_params)
 
         # restore original keypoint positions
         for kp in kp1:
             kp.pt = (kp.pt[0]*CAMERA_WIDTH/VIEW_WIDTH, kp.pt[1]*CAMERA_HEIGHT/VIEW_HEIGHT)
+        for kp in kp2:
+            kp.pt = (kp.pt[0]*img2_sc, kp.pt[1]*img2_sc)
 
         if BATCH_MODE and self.debug_filebase:
             cv2.imwrite(self.debug_filebase+label[:1]+'.png', img3)
@@ -208,18 +220,18 @@ class KeypointAlgo():
             if len(inliers) < self.MIN_FEATURES:
                 raise PositioningException('RANSAC algorithm was left with too few inliers')
         except Exception as e:
-            if DEBUG:
-                print(str(e))
-            raise PositioningException('RANSAC algorithm ran into problems') from e
+            raise PositioningException('RANSAC algorithm ran into problems: %s'%e) from e
 
         return rvec, tvec, inliers
 
     
-    def _inverse_project(self, points_2d, depths):
+    def _inverse_project(self, points_2d, depths, img_sc):
         z0 = self.system_model.z_off.value # translate to object origin
+        sc = img_sc * VIEW_WIDTH/CAMERA_WIDTH
+        
         def invproj(xi, yi):
-            z = -depths[int(yi)][int(xi)]
-            x, y = tools.calc_xy(xi, yi, z, width=VIEW_WIDTH, height=VIEW_HEIGHT)
+            z = -tools.interp2(depths, xi/img_sc, yi/img_sc)
+            x, y = tools.calc_xy(xi/sc, yi/sc, z, width=CAMERA_WIDTH, height=CAMERA_HEIGHT)
             return x, -y, -(z-z0) # same as rotate using cv2gl_q
         
         points_3d = np.array([invproj(pt[0], pt[1]) for pt in points_2d])

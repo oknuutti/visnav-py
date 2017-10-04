@@ -94,3 +94,38 @@ class ImageProc():
         
         return threshold_value
 
+
+    @staticmethod
+    def norm_xcorr(sce_img, res_img):
+        """ calculate normalized cross corralation of images """
+        
+        if sce_img.shape[:2] != res_img.shape[:2]:
+            sce_img = cv2.resize(sce_img, None,
+                fx=res_img.shape[1]/sce_img.shape[1],
+                fy=res_img.shape[0]/sce_img.shape[0],
+                interpolation=cv2.INTER_CUBIC)
+        
+        sce_img = np.atleast_3d(sce_img)
+        res_img = np.atleast_3d(res_img)
+        
+        sce_mean, sce_std = cv2.meanStdDev(sce_img)
+        res_mean, res_std = cv2.meanStdDev(res_img)
+        stds = sce_std * res_std
+        if stds==0:
+            return 0
+
+        corr = (sce_img-sce_mean)*(res_img-res_mean)
+        nxcorr = np.mean(corr)/stds
+        
+        if False:
+            # for debugging
+            tmp = np.log(corr-np.min(corr)+0.001)
+            mint = np.min(tmp)
+            maxt = np.max(tmp)
+            tmp = (tmp-mint)*(1/(maxt-mint))
+
+            print('sm %.3f, ss %.3f, rm %.3f, rs %.3f, min %.3f, max %.3f, res %.3f'%(sce_mean, sce_std, res_mean, res_std, mint, maxt, nxcorr))
+            cv2.imshow('corr', tmp)
+            cv2.waitKey()
+        
+        return nxcorr

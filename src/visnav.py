@@ -246,6 +246,7 @@ class GLWidget(QOpenGLWidget):
         
         self.full_image = None
         self.image_bg_threshold = None
+        self.latest_rendered_image = None
 
         self.im_def_scale = min(VIEW_WIDTH/CAMERA_WIDTH, VIEW_HEIGHT/CAMERA_HEIGHT)
         self.im_scale = self.im_def_scale
@@ -518,7 +519,7 @@ class GLWidget(QOpenGLWidget):
         self._center_model = center
         
         fbo = self.grabFramebuffer() # calls paintGL
-        rr = self.saveView(depth=False)
+        self.latest_rendered_image = rr = self.saveView(depth=False)
         if depth:
             dr = self.saveView(depth=True)
         

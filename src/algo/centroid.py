@@ -5,6 +5,7 @@ import cv2
 
 from settings import *
 from algo import tools
+from algo.image import ImageProc
 from algo.tools import PositioningException
 
 class CentroidAlgo():
@@ -25,6 +26,8 @@ class CentroidAlgo():
         self.ASTEROID_MAX_SPAN = 0.85           # if asteroid spans more than this, it's too close
         self.MAX_ITERATIONS = 10                # max number of iterations       
         self.ITERATION_TOL = 0.002              # min change % in position vector
+        self.CHECK_RESULT_VALIDITY = False
+        self.MIN_RESULT_XCORR = 0.3             # if result xcorr with scene is less than this, fail
     
     
     def adjust_iteratively(self, sce_img, **kwargs):
@@ -53,7 +56,10 @@ class CentroidAlgo():
             if ch/od < self.ITERATION_TOL:
                 break
         
-        # TODO: check result validity
+        if self.CHECK_RESULT_VALIDITY:
+            result_quality = ImageProc.norm_xcorr(sce_img, self._ref_img)
+            if result_quality < self.MIN_RESULT_XCORR:
+                raise PositioningException('Result failed quality test with score: %.3f'%(result_quality,))
         
         if BATCH_MODE and self.debug_filebase:
             self.glWidget.saveViewToFile(self.debug_filebase+'r.png')
@@ -115,7 +121,7 @@ class CentroidAlgo():
         # return new location
         return (new_x, new_y, new_z)
      
-        
+     
     def detect_asteroid(self, sce_img):
         ih, iw = sce_img.shape[0:2]
         
