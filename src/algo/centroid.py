@@ -20,7 +20,6 @@ class CentroidAlgo():
         
         self.DEBUG_IMG_POSTFIX = 'c'            # fi batch mode, save result image in a file ending like this
         
-        self.MODEL_DISTANCE_COEF = 1.6          # starting distance compared to min distance
         self.MIN_PIXELS_FOR_DETECTION = 30      # fail if less pixels lit
         self.ASTEROID_MIN_BORDER_MARGIN = 0.04  # if less than margin at both extrames, astroid too close
         self.ASTEROID_MAX_SPAN = 0.85           # if asteroid spans more than this, it's too close
@@ -33,7 +32,7 @@ class CentroidAlgo():
     def adjust_iteratively(self, sce_img, **kwargs):
         sce_img = self.maybe_load_scene_image(sce_img)
         
-        self.system_model.spacecraft_pos = (0, 0, -MIN_DISTANCE * self.MODEL_DISTANCE_COEF)
+        self.system_model.spacecraft_pos = (0, 0, -MED_DISTANCE)
         for i in range(self.MAX_ITERATIONS):
             ox, oy, oz = self.system_model.spacecraft_pos
             od = math.sqrt(ox**2 + oy**2 + oz**2)

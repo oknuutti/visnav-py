@@ -1,4 +1,4 @@
-
+import sys
 import math
 
 import numpy as np
@@ -123,7 +123,7 @@ class SystemModel():
         
         # whole view: 1.65km/tan(2.5deg) = 38km
         # can span ~30px: 1.65km/tan(2.5deg * 30/1024) = 1290km
-        self.z_off = Parameter(-MAX_DISTANCE, -MIN_DISTANCE, def_val=-200, is_gl_z=True) # was 120, 220
+        self.z_off = Parameter(-MAX_DISTANCE, -MIN_DISTANCE, def_val=-MED_DISTANCE, is_gl_z=True) # was 120, 220
 
         # spacecraft orientation relative to stars
         self.x_rot = Parameter(-90, 90, estimate=False) # axis latitude
@@ -306,7 +306,7 @@ class SystemModel():
                 math.degrees(elong), math.degrees(direc)))
         return elong, direc
     
-    def save_state(self, filename):
+    def save_state(self, filename, printout=False):
         config = configparser.ConfigParser()
         filename = filename+('.lbl' if len(filename)<5 or filename[-4:]!='.lbl' else '')
         config.read(filename)
@@ -318,8 +318,11 @@ class SystemModel():
             if p.real_value is not None:
                 config.set('real', n, str(p.real_value))
 
-        with open(filename, 'w') as f:
-            config.write(f)
+        if not printout:
+            with open(filename, 'w') as f:
+                config.write(f)
+        else:
+            config.write(sys.stdout)
     
     def load_state(self, filename):
         config = configparser.ConfigParser()

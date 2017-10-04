@@ -154,3 +154,37 @@ def load_image_meta(src, sm):
     ## impossible to calculate asteroid rotation axis based on given data!!
     ## ast_sc_lat, ast_sc_lon
     
+
+#FOR TARGET_IMAGE = 'ROS_CAM1_20150720T113057', this seems to be a perfect match:
+#system state:
+#        ast_x_rot = -74.81 in [-90.00, 90.00]
+#        ast_y_rot = -94.82 in [-180.00, 180.00]
+#        ast_z_rot = 138.96 in [-180.00, 180.00]
+#        time = 1437391848.27 in [1437376452.06, 1437407263.16]
+#        x_off = -0.54 in [-4.53, 3.45]
+#        x_rot = -29.99 in [-90.00, 90.00]
+#        y_off = 2.68 in [-1.34, 6.64]
+#        y_rot = 122.54 in [-180.00, 180.00]
+#        z_off = -170.19 in [-1280.00, -16.00]
+#        z_rot = -103.10 in [-180.00, 180.00]
+#
+#solar elongation: (94.07914335833404, 87.37274850492905)
+#
+#asteroid rotation: 104.05
+#
+#[main]
+#ast_x_rot = -73.584
+#ast_y_rot = -92.664
+#ast_z_rot = 144.216
+#time = 1437391848.267516
+#x_off = -0.526339523473
+#x_rot = -29.628
+#y_off = 2.61886006801
+#y_rot = 121.824
+#z_off = -170.55296469020652
+#z_rot = -104.544
+#
+#[real]
+#x_off = 0.545467755596
+#y_off = 2.48761450039
+#z_off = -170.626950251

@@ -14,8 +14,9 @@ VIEW_HEIGHT = 512  #256 #384 #512 #768
 MAX_TEST_X_RES = 873        # 
 MAX_TEST_Y_RES = 873        # visit fails to generate higher images
 
-MIN_DISTANCE = 38           # in km
-MAX_DISTANCE = 1290         # in km
+MIN_DISTANCE = 16           # in km
+MED_DISTANCE = 64           # in km
+MAX_DISTANCE = 1280         # in km
 
 # from http://imagearchives.esac.esa.int/index.php?/category/167/start-224
 #TARGET_IMAGE = 'ROS_CAM1_20150720T064939'  # 196.99
@@ -38,4 +39,4 @@ PROFILE_OUT_FILE = os.path.join(SCRIPT_DIR, '../profile.out')
 START_IN_THREAD = False
 USE_IMG_LABEL_FOR_SC_POS = False
 BATCH_MODE = False
-DEBUG = False
+DEBUG = True

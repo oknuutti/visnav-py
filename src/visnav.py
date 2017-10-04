@@ -164,8 +164,8 @@ class Window(QWidget):
         def testfun2():
             #self.glWidget.saveViewToFile('testimg.png')
             try:
-                init_dist = -self.systemModel.z_off.value
-                self.keypoint.solve_pnp(self.glWidget.image_file, init_dist=init_dist)
+                init_z = self.systemModel.z_off.value
+                self.keypoint.solve_pnp(self.glWidget.image_file, init_z=init_z)
             except PositioningException as e:
                 print('algorithm failed: %s' % e)
         self.test2 = QPushButton('T2', self)
@@ -225,7 +225,10 @@ class Window(QWidget):
         super(Window, self).closeEvent(evnt) 
         
     def printInfo(self):
-        print('\n%r\n' % self.systemModel)
+        print('')
+        self.systemModel.save_state('no-matter', printout=True)
+        print('')
+        #print('\n%r\n' % self.systemModel)
         
 
 class GLWidget(QOpenGLWidget):

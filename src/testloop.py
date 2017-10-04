@@ -179,7 +179,7 @@ class TestLoop():
             sc_lon = np.random.uniform(-math.pi, math.pi)
 
             # s/c distance as inverse uniform distribution
-            max_r, min_r = MAX_DISTANCE, MIN_DISTANCE
+            max_r, min_r = MED_DISTANCE/2, MIN_DISTANCE
             sc_r = 1/np.random.uniform(1/max_r, 1/min_r)
 
             # same in cartesian coord
@@ -289,7 +289,7 @@ class TestLoop():
         
         # set datetime, spacecraft & asteroid orientation to sample values
         sm.time.value = meas_time; assert np.isclose(sm.time.value, meas_time), 'Failed to set time value'
-        sm.spacecraft_pos = (0, 0, MIN_DISTANCE*2) # set to default value
+        sm.spacecraft_pos = (0, 0, -MED_DISTANCE) # set to default value
         sm.spacecraft_rot = (deg(meas_sco_lat), deg(meas_sco_lon), deg(meas_sco_rot))
         sm.asteroid.axis_latitude = est_ax_lat
         sm.asteroid.axis_longitude = est_ax_lon

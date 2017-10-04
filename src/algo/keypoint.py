@@ -7,7 +7,6 @@ import cv2
 
 from settings import *
 from algo import tools
-from algo.image import ImageProc
 from algo.tools import PositioningException
 
 # TODO:
@@ -22,65 +21,93 @@ class KeypointAlgo():
         
         self.DEBUG_IMG_POSTFIX = 'k'   # fi batch mode, save result image in a file ending like this
         
-        self.MIN_FEATURES = 8          # fail if less inliers at the end
-        self.MODEL_DISTANCE_COEF = 1.6 # default 1.6
+        self.MIN_FEATURES = 12         # fail if less inliers at the end
         self.LOWE_METHOD_COEF = 0.75   # default 0.7
         self.RANSAC_ITERATIONS = 1000  # default 100
         self.RANSAC_ERROR = 8.0        # default 8.0
+        self.SCENE_SCALE_STEP = 1.4142 # sqrt(2) scale scene image by this amount if fail
+        self.MAX_SCENE_SCALE_STEPS = 5 # from mid range 64km to near range 16km (64/sqrt(2)**(5-1) => 16)
 
 
-    def solve_pnp(self, sce_img, **kwargs):
+    def solve_pnp(self, orig_sce_img, near_range=True, **kwargs):
         # maybe load scene image
-        if isinstance(sce_img, str):
-            self.debug_filebase = sce_img[0:-4]+self.DEBUG_IMG_POSTFIX
-            self.glWidget.loadTargetImage(sce_img, remove_bg=False)
-            sce_img = self.glWidget.full_image
+        if isinstance(orig_sce_img, str):
+            self.debug_filebase = orig_sce_img[0:-4]+self.DEBUG_IMG_POSTFIX
+            self.glWidget.loadTargetImage(orig_sce_img, remove_bg=False)
+            orig_sce_img = self.glWidget.full_image
 
         # render model image
-        render_z = -MIN_DISTANCE * self.MODEL_DISTANCE_COEF
+        render_z = -MED_DISTANCE
         self.system_model.z_off.value = render_z
         ref_img, depth_result = self.glWidget.render(depth=True)
         
         # scale to match scene image asteroid extent in pixels
         init_z = kwargs.get('init_z', render_z)
-        ref_img_sc = render_z/init_z * CAMERA_WIDTH/VIEW_WIDTH
+        ref_img_sc = min(1,render_z/init_z) * CAMERA_WIDTH/VIEW_WIDTH
         ref_img = cv2.resize(ref_img, None, fx=ref_img_sc, fy=ref_img_sc, 
                 interpolation=cv2.INTER_CUBIC)
         
-        # get keypoints and descriptors for both images
-        sce_kp, sce_desc, ref_kp, ref_desc = self._orb_features(sce_img, ref_img)
+        # get keypoints and descriptors
+        ref_kp, ref_desc = self._orb_features(ref_img, nfeats=4500)
         
-        # match descriptors
-        try:
-            matches = self._match_features(sce_desc, ref_desc, method='brute')
-            error = None
-        except PositioningException as e:
-            matches = []
-            error = e
-        
-        # debug by drawing matches
-        if not BATCH_MODE or DEBUG:
-            print('matches: %s/%s'%(len(matches), min(len(sce_kp), len(ref_kp))), flush=True, end=", ")
-        self._draw_matches(sce_img, sce_kp, ref_img, ref_img_sc, ref_kp, matches, pause=False, show=DEBUG)
-        
-        if error is not None:
-            raise error
-        
-        # get feature 3d points using 3d model
-        ref_kp_3d = self._inverse_project([ref_kp[m.trainIdx].pt for m in matches], depth_result, ref_img_sc)
-        sce_kp_2d = np.array([sce_kp[m.queryIdx].pt for m in matches], dtype='float')
+        ok = False
+        for i in range(self.MAX_SCENE_SCALE_STEPS):
+            try:
+                sce_img_sc = 1/self.SCENE_SCALE_STEP**i
+                if np.isclose(sce_img_sc, 1):
+                    sce_img = orig_sce_img
+                else:
+                    sce_img = cv2.resize(orig_sce_img, None,
+                            fx=sce_img_sc, fy=sce_img_sc, 
+                            interpolation=cv2.INTER_CUBIC)
+                
+                sce_kp, sce_desc = self._orb_features(sce_img, nfeats=1500)
 
-        if DEBUG:
-            print('3d z-range: %s'%(ref_kp_3d.ptp(axis=0),), flush=True)
-        
-        # solve pnp with ransac
-        rvec, tvec, inliers = self._solve_pnp_ransac(sce_kp_2d, ref_kp_3d)
-        
-        # debug by drawing inlier matches
-        if not BATCH_MODE or DEBUG:
-            print('inliers: %s/%s'%(len(inliers), len(matches)), flush=True)
-        self._draw_matches(sce_img, sce_kp, ref_img, ref_img_sc, ref_kp,
-                           [matches[i[0]] for i in inliers], label='inliers', pause=False)
+                # match descriptors
+                try:
+                    matches = self._match_features(sce_desc, ref_desc, method='brute')
+                    error = None
+                except PositioningException as e:
+                    matches = []
+                    error = e
+
+                # debug by drawing matches
+                if not BATCH_MODE or DEBUG:
+                    print('matches: %s/%s'%(len(matches), min(len(sce_kp), len(ref_kp))), flush=True, end=", ")
+                self._draw_matches(sce_img, sce_img_sc, sce_kp, ref_img, ref_img_sc, ref_kp, matches, pause=False, show=DEBUG)
+
+                if error is not None:
+                    raise error
+
+                # get feature 3d points using 3d model
+                ref_kp_3d = self._inverse_project([ref_kp[m.trainIdx].pt for m in matches], depth_result, ref_img_sc)
+                sce_kp_2d = np.array([tuple(np.divide(sce_kp[m.queryIdx].pt, sce_img_sc)) for m in matches], dtype='float')
+
+                if DEBUG:
+                    print('3d z-range: %s'%(ref_kp_3d.ptp(axis=0),), flush=True)
+
+                # solve pnp with ransac
+                rvec, tvec, inliers = self._solve_pnp_ransac(sce_kp_2d, ref_kp_3d)
+
+                # debug by drawing inlier matches
+                if not BATCH_MODE or DEBUG:
+                    print('inliers: %s/%s'%(len(inliers), len(matches)), flush=True)
+                self._draw_matches(sce_img, sce_img_sc, sce_kp, ref_img, ref_img_sc, ref_kp,
+                                   [matches[i[0]] for i in inliers], label='inliers', pause=False)
+                
+                # dont try again if found enough inliers
+                ok = True
+                break
+            
+            except PositioningException as e:
+                if not near_range:
+                    raise e
+                # maybe try again using scaled down scene image
+                
+        if not ok:
+            raise PositioningException('Not enough inliers even if tried scaling scene image down x%.1f'%(1/sce_img_sc))
+        else:
+            print('success at x%.1f'%(1/sce_img_sc))
         
         # set model params to solved pose & pos
         self._set_sc_from_ast_rot_and_trans(rvec, tvec)
@@ -89,12 +116,12 @@ class KeypointAlgo():
             self.glWidget.saveViewToFile(self.debug_filebase+'r.png')
         
     
-    def _orb_features(self, scene_img, model_img):
+    def _orb_features(self, img, nfeats=1000):
         params = {
             'edgeThreshold':31,  # default: 31
             'fastThreshold':20,  # default: 20
             'firstLevel':0,      # always 0
-            'nfeatures':500,     # default: 500
+            'nfeatures':nfeats,  # default: 500
             'nlevels':8,         # default: 8
             'patchSize':31,      # default: 31
             'scaleFactor':1.2,   # default: 1.2
@@ -103,16 +130,9 @@ class KeypointAlgo():
         }
         
         # orb features from scene image
-        params['nfeatures'] = 1000
         orb = cv2.ORB_create(**params)
-        sce_kp, sce_desc = orb.detectAndCompute(scene_img, None)
-
-        # orb features from model image
-        params['nfeatures'] = 1000
-        orb = cv2.ORB_create(**params)
-        ref_kp, ref_desc = orb.detectAndCompute(model_img, None)
-        
-        return sce_kp, sce_desc, ref_kp, ref_desc
+        kp, desc = orb.detectAndCompute(img, None)
+        return kp, desc
     
     
     def _match_features(self, desc1, desc2, method='flann', symmetry_test=False, use_lowe=True, orb_wta_k_gt2=False):
@@ -162,7 +182,7 @@ class KeypointAlgo():
         return matches
 
     
-    def _draw_matches(self, img1, kp1, img2, img2_sc, kp2, matches, pause=True, show=True, label='matches'):
+    def _draw_matches(self, img1, img1_sc, kp1, img2, img2_sc, kp2, matches, pause=True, show=True, label='matches'):
         matches = list([m] for m in matches)
         draw_params = {
 #            matchColor: (88, 88, 88),
@@ -172,14 +192,14 @@ class KeypointAlgo():
         
         # scale keypoint positions
         for kp in kp1:
-            kp.pt = (kp.pt[0]*VIEW_WIDTH/CAMERA_WIDTH, kp.pt[1]*VIEW_HEIGHT/CAMERA_HEIGHT)
+            kp.pt = tuple(np.divide(kp.pt, img1_sc*CAMERA_WIDTH/VIEW_WIDTH))
         for kp in kp2:
-            kp.pt = (kp.pt[0]/img2_sc, kp.pt[1]/img2_sc)
+            kp.pt = tuple(np.divide(kp.pt, img2_sc))
         
         # scale image
         img1sc = cv2.cvtColor(cv2.resize(img1, None,
-                            fx=VIEW_WIDTH/CAMERA_WIDTH,
-                            fy=VIEW_HEIGHT/CAMERA_HEIGHT,
+                            fx=1/img1_sc*VIEW_WIDTH/CAMERA_WIDTH,
+                            fy=1/img1_sc*VIEW_HEIGHT/CAMERA_HEIGHT,
                             interpolation=cv2.INTER_CUBIC), cv2.COLOR_GRAY2RGB)
         img2sc = cv2.cvtColor(cv2.resize(img2, None,
                             fx=1/img2_sc,
@@ -190,9 +210,9 @@ class KeypointAlgo():
 
         # restore original keypoint positions
         for kp in kp1:
-            kp.pt = (kp.pt[0]*CAMERA_WIDTH/VIEW_WIDTH, kp.pt[1]*CAMERA_HEIGHT/VIEW_HEIGHT)
+            kp.pt = tuple(np.multiply(kp.pt, img1_sc*CAMERA_WIDTH/VIEW_WIDTH))
         for kp in kp2:
-            kp.pt = (kp.pt[0]*img2_sc, kp.pt[1]*img2_sc)
+            kp.pt = tuple(np.multiply(kp.pt, img2_sc))
 
         if BATCH_MODE and self.debug_filebase:
             cv2.imwrite(self.debug_filebase+label[:1]+'.png', img3)
