@@ -68,11 +68,11 @@ if __name__ == '__main__':
                     },
                 })
     elif method=='keypoint+':
-        tl.run(count, method='keypoint+', min_options={})
+        tl.run(count, cleanup=False, method='keypoint+', min_options={})
     elif method=='keypoint':
-        tl.run(count, method='keypoint', min_options={})
+        tl.run(count, cleanup=False, method='keypoint', min_options={})
     elif method=='centroid':
-        tl.run(count, method='centroid', min_options={})
+        tl.run(count, cleanup=False, method='centroid', min_options={})
     else:
         assert False, 'Invalid method "%s"'%method
 

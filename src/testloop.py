@@ -179,7 +179,7 @@ class TestLoop():
             sc_lon = np.random.uniform(-math.pi, math.pi)
 
             # s/c distance as inverse uniform distribution
-            max_r, min_r = MED_DISTANCE/2, MIN_DISTANCE
+            max_r, min_r = MAX_DISTANCE, MIN_DISTANCE
             sc_r = 1/np.random.uniform(1/max_r, 1/min_r)
 
             # same in cartesian coord
@@ -283,9 +283,7 @@ class TestLoop():
         sm.asteroid.axis_longitude = ax_lon_true
         #sm.asteroid.rotation_pm is what it is (time counts for the random element)
         sm.asteroid_rotation_from_model()
-        for n in ('x', 'y', 'z'):
-            p = getattr(sm, 'ast_'+n+'_rot')
-            p.real_value = p.value
+        sm.real_asteroid_axis = sm.asteroid_axis
         
         # set datetime, spacecraft & asteroid orientation to sample values
         sm.time.value = meas_time; assert np.isclose(sm.time.value, meas_time), 'Failed to set time value'

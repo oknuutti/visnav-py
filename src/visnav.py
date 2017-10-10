@@ -190,6 +190,7 @@ class Window(QWidget):
         
         def setter(val):
             value = slider.getValue()
+            #if not np.isclose(value, param.value):
             if value != param.value:
                 param.value = value
                 self.glWidget.update()
@@ -281,7 +282,11 @@ class GLWidget(QOpenGLWidget):
         self._frustum_near = 0.1
         self._frustum_far = MAX_DISTANCE
         self._expire=0
-        
+
+        if not BATCH_MODE:
+            self.loadTargetImageMeta(TARGET_IMAGE_META_FILE)
+
+
     def minimumSizeHint(self):
         return QSize(VIEW_WIDTH, VIEW_HEIGHT)
 
@@ -315,7 +320,6 @@ class GLWidget(QOpenGLWidget):
 
         if not BATCH_MODE:
             self.loadTargetImage(TARGET_IMAGE_FILE)
-            self.loadTargetImageMeta(TARGET_IMAGE_META_FILE)
 #            if not USE_IMG_LABEL_FOR_SC_POS:
 #                CentroidAlgo.update_sc_pos(self.systemModel, self.full_image)
         

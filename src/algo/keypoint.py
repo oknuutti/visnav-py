@@ -14,6 +14,11 @@ from algo.tools import PositioningException
 # 
 
 class KeypointAlgo():
+    (
+        ORB,
+        AKAZE,
+    ) = range(2)
+    
     def __init__(self, system_model, glWidget):
         self.system_model = system_model
         self.glWidget = glWidget
@@ -29,7 +34,7 @@ class KeypointAlgo():
         self.MAX_SCENE_SCALE_STEPS = 5 # from mid range 64km to near range 16km (64/sqrt(2)**(5-1) => 16)
 
 
-    def solve_pnp(self, orig_sce_img, near_range=True, **kwargs):
+    def solve_pnp(self, orig_sce_img, feat=ORB, near_range=True, **kwargs):
         # maybe load scene image
         if isinstance(orig_sce_img, str):
             self.debug_filebase = orig_sce_img[0:-4]+self.DEBUG_IMG_POSTFIX
@@ -38,8 +43,10 @@ class KeypointAlgo():
 
         # render model image
         render_z = -MED_DISTANCE
+        orig_z = self.system_model.z_off.value
         self.system_model.z_off.value = render_z
         ref_img, depth_result = self.glWidget.render(depth=True)
+        self.system_model.z_off.value = orig_z
         
         # scale to match scene image asteroid extent in pixels
         init_z = kwargs.get('init_z', render_z)
@@ -48,7 +55,7 @@ class KeypointAlgo():
                 interpolation=cv2.INTER_CUBIC)
         
         # get keypoints and descriptors
-        ref_kp, ref_desc = self._orb_features(ref_img, nfeats=4500)
+        ref_kp, ref_desc = self._detect_features(ref_img, feat, nfeats=4500)
         
         ok = False
         for i in range(self.MAX_SCENE_SCALE_STEPS):
@@ -61,7 +68,7 @@ class KeypointAlgo():
                             fx=sce_img_sc, fy=sce_img_sc, 
                             interpolation=cv2.INTER_CUBIC)
                 
-                sce_kp, sce_desc = self._orb_features(sce_img, nfeats=1500)
+                sce_kp, sce_desc = self._detect_features(sce_img, feat, nfeats=1500)
 
                 # match descriptors
                 try:
@@ -116,6 +123,16 @@ class KeypointAlgo():
             self.glWidget.saveViewToFile(self.debug_filebase+'r.png')
         
     
+    def _detect_features(self, img, feat, **kwargs):
+        if feat == KeypointAlgo.ORB:
+            kp, desc = self._orb_features(img, **kwargs)
+        elif feat == KeypointAlgo.AKAZE:
+            kp, desc = self._akaze_features(img, **kwargs)
+        else:
+            assert False, 'invalid feature: %s'%(feat,)
+        return kp, desc
+        
+    
     def _orb_features(self, img, nfeats=1000):
         params = {
             'edgeThreshold':31,  # default: 31
@@ -135,7 +152,16 @@ class KeypointAlgo():
         return kp, desc
     
     
-    def _match_features(self, desc1, desc2, method='flann', symmetry_test=False, use_lowe=True, orb_wta_k_gt2=False):
+    def _akaze_features(ref_img, nfeats=1000):
+        params = {
+            # TODO
+        }
+        akaze = cv2.AKAZE_create(**params)
+        kp, desc = akaze.detectAndCompute(img, None)
+        
+        
+    
+    def _match_features(self, desc1, desc2, method='flann', symmetry_test=False, ratio_test=True, norm=cv2.NORM_HAMMING):
         
         if desc1 is None or desc2 is None or len(desc1)<self.MIN_FEATURES or len(desc2)<self.MIN_FEATURES:
             raise PositioningException('Not enough features found')
@@ -157,11 +183,11 @@ class KeypointAlgo():
 
             matcher = cv2.FlannBasedMatcher(index_params, search_params)
         elif method == 'brute':
-            matcher = cv2.BFMatcher(cv2.NORM_HAMMING2 if orb_wta_k_gt2 else cv2.NORM_HAMMING, symmetry_test) # for ORB
+            matcher = cv2.BFMatcher(norm, symmetry_test) # for ORB
         else:
             assert False, 'unknown method %s'%mathod
             
-        if use_lowe:
+        if ratio_test:
             matches = matcher.knnMatch(desc1, desc2, k=2)
         else:
             matches = matcher.match(desc1, desc2)
@@ -169,8 +195,8 @@ class KeypointAlgo():
         if len(matches)<self.MIN_FEATURES:
             raise PositioningException('Not enough features matched')
 
-        if use_lowe:
-            # ratio test as per Lowe's paper
+        if ratio_test:
+            # ratio test as per "Lowe's paper"
             matches = list(
                 m[0]
                 for m in matches
@@ -230,17 +256,15 @@ class KeypointAlgo():
         ref_kp_3d = np.reshape(ref_kp_3d, (len(ref_kp_3d),1,3))
         sce_kp_2d = np.reshape(sce_kp_2d, (len(sce_kp_2d),1,2))
         
-        try:
-            retval, rvec, tvec, inliers = cv2.solvePnPRansac(
-                    ref_kp_3d, sce_kp_2d, tools.intrinsic_camera_mx(), dist_coeffs,
-                    iterationsCount = self.RANSAC_ITERATIONS,
-                    reprojectionError = self.RANSAC_ERROR)
-            if not retval:
-                raise PositioningException('RANSAC algorithm returned False')
-            if len(inliers) < self.MIN_FEATURES:
-                raise PositioningException('RANSAC algorithm was left with too few inliers')
-        except Exception as e:
-            raise PositioningException('RANSAC algorithm ran into problems: %s'%e) from e
+        retval, rvec, tvec, inliers = cv2.solvePnPRansac(
+                ref_kp_3d, sce_kp_2d, tools.intrinsic_camera_mx(), dist_coeffs,
+                iterationsCount = self.RANSAC_ITERATIONS,
+                reprojectionError = self.RANSAC_ERROR)
+        
+        if not retval:
+            raise PositioningException('RANSAC algorithm returned False')
+        if len(inliers) < self.MIN_FEATURES:
+            raise PositioningException('RANSAC algorithm was left with too few inliers')
 
         return rvec, tvec, inliers
 

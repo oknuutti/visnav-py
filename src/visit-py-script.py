@@ -49,6 +49,7 @@ def _reset():
     print('Restarting computing engine to avoid memory leak')
     CloseComputeEngine("localhost", "")
     OpenComputeEngine("localhost", ("-l", "srun", "-np", "1"))
+    RestoreSession("data/default-visit.session",0)
 
 since_reset = 0
 
@@ -75,7 +76,7 @@ while True:
         csock.send(fname.encode('utf-8'))
     csock.close()
     since_reset += 1
-    if since_reset >= 500:
+    if since_reset >= 335:
         _reset()
         since_reset = 0
 

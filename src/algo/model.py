@@ -5,6 +5,8 @@ import numpy as np
 import quaternion # adds to numpy
 from astropy.time import Time
 from astropy import constants as const
+from astropy import units
+from astropy.coordinates import SkyCoord
 import configparser
 
 from settings import *
@@ -29,7 +31,8 @@ class Parameter():
     @range.setter
     def range(self, range):
         min_val, max_val = range
-        if self._min_val != min_val or self._max_val != max_val:
+        if not np.isclose(self._min_val, min_val, rtol=1e-12) \
+                or not np.isclose(self._max_val, max_val, rtol=1e-12):
             self._min_val = min_val
             self._max_val = max_val
             if self.fire_change_events:
@@ -58,7 +61,7 @@ class Parameter():
     
     @value.setter
     def value(self, value):
-        if self._value != value:
+        if not np.isclose(self._value, value, rtol=1e-12):
             self._value = value
             if self.fire_change_events:
                 try:
@@ -301,7 +304,7 @@ class SystemModel():
         ast_v = self.asteroid.position(self.time.value)
         sc_q = self.spacecraft_q()
         elong, direc = tools.solar_elongation(ast_v, sc_q)
-        if not BATCH_MODE or DEBUG:
+        if not BATCH_MODE and DEBUG:
             print('elong: %.3f | dir: %.3f' % (
                 math.degrees(elong), math.degrees(direc)))
         return elong, direc
@@ -368,43 +371,52 @@ class Asteroid():
         # for cross section, assume spherical object and 2km radius
         self.mean_cross_section = math.pi*2000**2
         
-        # epoch for orbital elements, 2017-Jan-10 00:00:00.0000 TDB
-        self.oe_epoch = Time(2457763.5, format='jd')
+        # epoch for orbital elements, 2010-Oct-22.0 TDB
+        self.oe_epoch = Time(2455491.5, format='jd')
 
-        #orbital elements (from http://ssd.jpl.nasa.gov/horizons.cgi)
-        self.eccentricity = .6424327680961353
-        self.semimajor_axis = 3.463077807329411 * const.au
-        self.inclination = math.radians(7.060539942545541)
-        self.longitude_of_ascending_node = math.radians(50.01776564570947)
-        self.argument_of_periapsis = math.radians(12.82332717180694)
-        self.mean_anomaly = math.radians(78.81269978123633)
+        # orbital elements (from https://ssd.jpl.nasa.gov/sbdb.cgi)
+        # reference: JPL K154/1 (heliocentric ecliptic J2000)
+        self.eccentricity = .6405823233437267
+        self.semimajor_axis = 3.464737502510219 * const.au
+        self.inclination = math.radians(7.043680712713979)
+        self.longitude_of_ascending_node = math.radians(50.18004588418096)
+        self.argument_of_periapsis = math.radians(12.69446409956478)
+        self.mean_anomaly = math.radians(91.76808585530111)
 
         #other
-        self.aphelion = 5.687258171672372 * const.au
-        self.perihelion = 1.242352456168495 * const.au
-        self.orbital_period = 6.4495062735684*365.25*24*3600 # seconds
-        self.true_anomaly = math.radians(145.5260853202137)
+        self.aphelion = 5.684187101644357 * const.au
+        self.perihelion = 1.245287903376082 * const.au
+        self.orbital_period = 2355.612944885578*24*3600 # seconds
+        #self.true_anomaly = math.radians(145.5260853202137 ??)
   
         # rotation
         # from http://www.aanda.org/articles/aa/full_html/2015/11/aa26349-15/aa26349-15.html
         self.rot_epoch = Time('J2000')
+        use_own = False
         #self.rotation_velocity = 2*math.pi/12.4043/3600 # prograde, in rad/s
         # --- above seems incorrect based on the pics, own estimate
         # based on ROS_CAM1_20150720T165249 - ROS_CAM1_20150721T075733
-        self.rotation_velocity = 0.000203926
+        if use_own:
+            self.rotation_velocity = 0.000203926
+        else:
+            self.rotation_velocity = 2*math.pi/12.4043/3600
         
         # will use as ecliptic longitude of
         # asteroid zero longitude (cheops) at J2000, based on 20150720T165249
         # papar had 114deg in it..
-        self.rotation_pm = math.radians(150.594)
+        if use_own:
+            self.rotation_pm = math.radians(150.594)
+        else:
+            self.rotation_pm = math.radians(114)
         
         # precession cone center (J2000), paper had 69.54, 64.11, own corrected
         # values used instead
         self.axis_latitude, self.axis_longitude = \
-                tools.equatorial_to_ecliptic(69.54, 64.11)
-                
-        self.axis_latitude += math.radians(12.93)
-        self.axis_longitude += math.radians(-227.35)
+                tools.equatorial_to_ecliptic(69.54*units.deg, 64.11*units.deg, 149e9*units.m)
+        
+        if use_own:
+            self.axis_latitude += math.radians(12.93)
+            self.axis_longitude += math.radians(-227.35)
         
         self.precession_cone_radius = math.radians(0.14)
         self.precession_period = 10.7*24*3600
@@ -454,6 +466,12 @@ class Asteroid():
         xtemp = x
         x = math.cos(W) * xtemp - math.sin(W) * y
         y = math.sin(W) * xtemp + math.cos(W) * y
+        
+        # corrections for ROS_CAM1_20150720T113057
+        if(True):
+            x += 1.5e9*units.m
+            y += -1e9*units.m
+            z += -26.55e9*units.m
         
         return np.array([x.value, y.value, z.value])
     

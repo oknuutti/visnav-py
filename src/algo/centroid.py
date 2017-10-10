@@ -135,8 +135,8 @@ class CentroidAlgo():
         n, regs, stats, c = cv2.connectedComponentsWithStats(bin_img, 8, cv2.CV_32S)
         
         # detect asteroid
-        i = np.argmax(list(s[cv2.CC_STAT_AREA] for i,s in enumerate(stats) if i>0))+1
-        if stats[i][cv2.CC_STAT_AREA] < self.MIN_PIXELS_FOR_DETECTION:
+        parts = list(s[cv2.CC_STAT_AREA] for i,s in enumerate(stats) if i>0)
+        if not parts or stats[np.argmax(parts)+1][cv2.CC_STAT_AREA] < self.MIN_PIXELS_FOR_DETECTION:
             raise PositioningException('No asteroid found')
         
         # asteroid parts (i=0 is background)

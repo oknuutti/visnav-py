@@ -7,6 +7,7 @@ import numpy as np
 import quaternion
 from astropy.coordinates import SkyCoord
 from astropy.time import Time
+from astropy import units
 
 from settings import *
 from algo import tools
@@ -71,9 +72,15 @@ def load_image_meta(src, sm):
     image_time = config.get('meta', 'IMAGE_TIME')
 
     # from sun to spacecraft, equatorial J2000
-    sc_x, sc_y, sc_z = \
+    sun_sc_eq_x, sun_sc_eq_y, sun_sc_eq_z = \
             -np.array(config.gettuple('meta', 'SC_SUN_POSITION_VECTOR'))
-
+    sc = SkyCoord(x=sun_sc_eq_x, y=sun_sc_eq_y, z=sun_sc_eq_z, unit='km', frame='icrs',
+            representation='cartesian', obstime='J2000')\
+            .transform_to('heliocentrictrueecliptic')\
+            .represent_as('cartesian')
+    sun_sc_ec_p = np.array([sc.x.value, sc.y.value, sc.z.value])
+    sun_sc_dist = sum(np.sqrt(sun_sc_ec_p*sun_sc_ec_p))
+    
     # from spacecraft to asteroid, equatorial J2000
     sc_ast_x, sc_ast_y, sc_ast_z = \
             config.gettuple('meta', 'SC_TARGET_POSITION_VECTOR')
@@ -100,61 +107,87 @@ def load_image_meta(src, sm):
     ## set spacecraft orientation
     ##
     #xc, yc, zc = 0, 0 ,0
-    xc, yc, zc = 0.2699, -0.09, 0 # based on ROS_CAM1_20150720T165249
-    #xc, yc, zc = 0.09, -0.02, 0 # based on ROS_CAM1_20150720T064939
+    xc, yc, zc = -0.283, -0.127, 0     # ROS_CAM1_20150720T113057
+    #xc, yc, zc = 0.2699, -0.09, 0  # ROS_CAM1_20150720T165249
+    #xc, yc, zc = 0.09, -0.02, 0    # ROS_CAM1_20150720T064939
 
-    sc = SkyCoord(ra=sc_rot_ra, dec=sc_rot_dec, unit='deg',
+    sc = SkyCoord(ra=sc_rot_ra*units.deg, dec=sc_rot_dec*units.deg,
             frame='icrs', obstime='J2000')\
             .transform_to('barycentrictrueecliptic')
     sm.x_rot.value = sc.lat.value+xc       # axis lat
     sm.y_rot.value = (sc.lon.value+yc+180)%360 - 180 # axis lon
-    sm.z_rot.value = -((sc_rot_cnca-zc+180)%360 - 180) # rotation
-
-    sco = list(map(math.radians,
-            (sm.x_rot.value, sm.y_rot.value, sm.z_rot.value)))
-
-
+    sm.z_rot.value = (sc_rot_cnca+zc+180)%360 - 180  # rotation
+    sm.real_spacecraft_rot = sm.spacecraft_rot
+    
     ## set spacecraft position
     ##
-    sc = SkyCoord(x=sc_ast_x, y=sc_ast_y, z=sc_ast_z, frame='icrs',
+    sc = SkyCoord(x=sc_ast_x, y=sc_ast_y, z=sc_ast_z, unit='km', frame='icrs',
             representation='cartesian', obstime='J2000')\
             .transform_to('barycentrictrueecliptic')\
             .represent_as('cartesian')
     sc_ast_ec_p = np.array([sc.x.value, sc.y.value, sc.z.value])
 
     # s/c orientation
+    sco = list(map(math.radians, sm.spacecraft_rot))
     scoq = tools.ypr_to_q(*sco)
 
     # project old position to new base vectors
-    scub = tools.q_to_unitbase(scoq)
-    ast_sc_p = - scub.dot(sc_ast_ec_p.transpose())
+    sc2gl_q = sm.frm_conv_q(sm.SPACECRAFT_FRAME, sm.OPENGL_FRAME)
+    scub = tools.q_to_unitbase(scoq * sc2gl_q)
+    scub_o = tools.q_to_unitbase(scoq)
+    sc_ast_p = scub.dot(sc_ast_ec_p.transpose())
 
     # rotate these coords to default opengl -z aligned view
-    ast_sc_p = tuple(ast_sc_p[((1, 2, 0),)])
+    #ast_sc_p[((1, 2, 0),)
+    #ast_sc_p = tools.q_times_v(, ast_sc_p)
+
+    sm.real_spacecraft_pos = sc_ast_p
+    if USE_IMG_LABEL_FOR_SC_POS:
+        sm.spacecraft_pos = sc_ast_p
+    ##
+    ## done setting spacecraft position
 
     if False:
         print((''
             + '\nsco:\n%s\n'
             + '\nscoq:\n%s\n'
+            + '\nscub_o:\n%s\n'
+            + '\nscub:\n%s\n'
             + '\nast_sc_ec_p:\n%s\n'
             + '\nast_sc_p:\n%s\n'
         ) % (
-            list(map(math.degrees, sco)),
+            sm.spacecraft_rot,
             scoq,
+            scub,
+            scub_o,
             sc_ast_ec_p,
-            ast_sc_p,
+            sc_ast_p,
         ))
-
-    sm.real_spacecraft_pos = ast_sc_p
-    if USE_IMG_LABEL_FOR_SC_POS:
-        sm.spacecraft_pos = ast_sc_p
-    ##
-    ## done setting spacecraft position
-
-    ## impossible to calculate asteroid rotation axis based on given data!!
-    ## ast_sc_lat, ast_sc_lon
     
+    if True:
+        lbl_sun_ast_v = (sun_sc_ec_p+sc_ast_ec_p)*1e3
+        lbl_se, lbl_dir = tools.solar_elongation(lbl_sun_ast_v, scoq)
+        
+        m_elong, m_dir = sm.solar_elongation()
+        mastp = sm.asteroid.position(sm.time.value)
+        print((
+            'solar elongation (deg), file: %.1f (%.1f), model: %.1f\n'
+            + 'light direction (deg), file: %s, model: %s\n'
+            + 'sun-asteroid loc (Gm), file: %s, model: %s\n'
+            ) % (
+            solar_elongation, math.degrees(lbl_se), math.degrees(m_elong),
+            math.degrees(lbl_dir), math.degrees(m_dir),
+            lbl_sun_ast_v*1e-9, (mastp)*1e-9,
+        ))
+        
+    sm.save_state('none',printout=True)
+    quit()
 
+    ## Impossible to calculate asteroid rotation axis based on given data!!
+    ## TODO: Or is it? Can use some help data from model.AsteroidModel?
+    ## These should be used: ast_sc_lat, ast_sc_lon
+    
+    
 #FOR TARGET_IMAGE = 'ROS_CAM1_20150720T113057', this seems to be a perfect match:
 #system state:
 #        ast_x_rot = -74.81 in [-90.00, 90.00]

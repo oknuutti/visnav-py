@@ -91,10 +91,10 @@ def q_to_unitbase(q):
     return quaternion.as_float_array(Uq)[:, 1:]
 
 
-def equatorial_to_ecliptic(ra, dec):
+def equatorial_to_ecliptic(ra, dec, dist):
     """ translate from equatorial coordinates to ecliptic ones """
-    sc = SkyCoord(ra, dec, frame='icrs', unit='deg',
-            obstime='J2000').transform_to('barycentrictrueecliptic')
+    sc = SkyCoord(ra, dec, distance=dist, frame='icrs',
+            obstime='J2000').transform_to('heliocentrictrueecliptic')
     return math.radians(sc.lat.value), math.radians(sc.lon.value)
     
     
