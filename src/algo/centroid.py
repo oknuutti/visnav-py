@@ -32,12 +32,12 @@ class CentroidAlgo():
     def adjust_iteratively(self, sce_img, **kwargs):
         sce_img = self.maybe_load_scene_image(sce_img)
         
-        self.system_model.spacecraft_pos = (0, 0, -MED_DISTANCE)
+        self.system_model.spacecraft_pos = (0, 0, -MIN_MED_DISTANCE)
         for i in range(self.MAX_ITERATIONS):
             ox, oy, oz = self.system_model.spacecraft_pos
             od = math.sqrt(ox**2 + oy**2 + oz**2)
             
-            if not DEBUG:
+            if not DEBUG or BATCH_MODE:
                 self.adjust(sce_img)
             else:
                 try:

@@ -287,7 +287,7 @@ class TestLoop():
         
         # set datetime, spacecraft & asteroid orientation to sample values
         sm.time.value = meas_time; assert np.isclose(sm.time.value, meas_time), 'Failed to set time value'
-        sm.spacecraft_pos = (0, 0, -MED_DISTANCE) # set to default value
+        sm.spacecraft_pos = (0, 0, -MIN_MED_DISTANCE) # set to default value
         sm.spacecraft_rot = (deg(meas_sco_lat), deg(meas_sco_lon), deg(meas_sco_rot))
         sm.asteroid.axis_latitude = est_ax_lat
         sm.asteroid.axis_longitude = est_ax_lon

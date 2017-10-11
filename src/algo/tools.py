@@ -181,6 +181,20 @@ def solar_elongation(ast_v, sc_q):
     return elong, direc
 
 
+def bf_lat_lon(tol):
+    # tol**2 == (step/2)**2 + (step/2)**2   -- 7deg is quite nice in terms of len(lon)*len(lat) == 1260
+    step = math.sqrt(2)*tol
+    
+    lon_steps = np.array(range(math.ceil(2*math.pi/step)))[:-1]
+    lon = (2*math.pi/(len(lon_steps)+1)) * lon_steps
+    
+    lat_steps = np.array(range(math.ceil(math.pi/step)))[:-1]
+    lat_steps = np.concatenate(-np.flip(lat_steps,0), lat_steps[1:])
+    lat = (math.pi/(len(lat_steps)+2)) * lat_steps
+    
+    return lon, lat
+
+
 def interp2(array, x, y):
     assert y<array.shape[0] and x<array.shape[1], 'out of bounds %s: %s'%(array.shape, (y, x))
     

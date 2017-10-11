@@ -126,7 +126,7 @@ class SystemModel():
         
         # whole view: 1.65km/tan(2.5deg) = 38km
         # can span ~30px: 1.65km/tan(2.5deg * 30/1024) = 1290km
-        self.z_off = Parameter(-MAX_DISTANCE, -MIN_DISTANCE, def_val=-MED_DISTANCE, is_gl_z=True) # was 120, 220
+        self.z_off = Parameter(-MAX_DISTANCE, -MIN_DISTANCE, def_val=-MIN_MED_DISTANCE, is_gl_z=True) # was 120, 220
 
         # spacecraft orientation relative to stars
         self.x_rot = Parameter(-90, 90, estimate=False) # axis latitude

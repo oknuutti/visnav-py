@@ -15,7 +15,8 @@ MAX_TEST_X_RES = 873        #
 MAX_TEST_Y_RES = 873        # visit fails to generate higher images
 
 MIN_DISTANCE = 16           # in km
-MED_DISTANCE = 64           # in km
+MIN_MED_DISTANCE = 64       # in km
+MAX_MED_DISTANCE = 640      # in km
 MAX_DISTANCE = 1280         # in km
 
 # from http://imagearchives.esac.esa.int/index.php?/category/167/start-224
@@ -27,7 +28,7 @@ TARGET_IMAGE = 'ROS_CAM1_20150720T113057'  # 141.70
 #TARGET_IMAGE = 'ROS_CAM1_20150721T075733'  # 255.96
 TARGET_IMAGE_FILE = os.path.join(SCRIPT_DIR, '../data/targetimgs/'+TARGET_IMAGE+'_P.png')
 TARGET_IMAGE_META_FILE = os.path.join(SCRIPT_DIR, '../data/targetimgs/'+TARGET_IMAGE+'.LBL')
-TARGET_MODEL_FILE = os.path.join(SCRIPT_DIR, '../data/CSHP_DV_130_01_LORES_00200.obj') # _XLRES_
+TARGET_MODEL_FILE = os.path.join(SCRIPT_DIR, '../data/CSHP_DV_130_01_XLRES_00200.obj') # _XLRES_, _LORES_
 
 LOG_DIR = os.path.join(SCRIPT_DIR, '../logs/')
 VISIT_SCRIPT_PY_FILE = os.path.join(SCRIPT_DIR, 'visit-py-script.py')

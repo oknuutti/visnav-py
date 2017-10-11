@@ -181,7 +181,7 @@ def load_image_meta(src, sm):
         ))
         
     sm.save_state('none',printout=True)
-    quit()
+    #quit()
 
     ## Impossible to calculate asteroid rotation axis based on given data!!
     ## TODO: Or is it? Can use some help data from model.AsteroidModel?

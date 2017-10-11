@@ -335,7 +335,7 @@ class PhaseCorrelationAlgo():
         self.glWidget.saveViewToFile(outfile)
         
         if method=='two-step-brute':
-            self.system_model.z_off.range = (-MAX_DISTANCE, -MED_DISTANCE)
+            self.system_model.z_off.range = (-MAX_DISTANCE, -MIN_MED_DISTANCE)
             if DEBUG:
                 print('Phase II: (%s, %s, %s)\n'%(
                     self.system_model.x_off.value,

@@ -34,7 +34,7 @@ class MixedAlgo():
             self._keypoint.solve_pnp(sce_img, **kwargs)
             ok = True
         except PositioningException as e:
-            if centroid_result and kwargs.get('centroid_fallback', False):
+            if centroid_result and kwargs.get('centroid_fallback', True) and centroid_result[2] < -MIN_MED_DISTANCE:
                 self.system_model.spacecraft_rot = sc_r
                 self.system_model.spacecraft_pos = centroid_result
                 if DEBUG:

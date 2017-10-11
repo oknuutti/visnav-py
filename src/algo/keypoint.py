@@ -17,12 +17,16 @@ class KeypointAlgo():
     (
         ORB,
         AKAZE,
-    ) = range(2)
+        SIFT,
+        SURF,
+    ) = range(4)
     
     def __init__(self, system_model, glWidget):
         self.system_model = system_model
         self.glWidget = glWidget
         self.debug_filebase = None
+        
+        self._latest_detector = None
         
         self.DEBUG_IMG_POSTFIX = 'k'   # fi batch mode, save result image in a file ending like this
         
@@ -34,7 +38,7 @@ class KeypointAlgo():
         self.MAX_SCENE_SCALE_STEPS = 5 # from mid range 64km to near range 16km (64/sqrt(2)**(5-1) => 16)
 
 
-    def solve_pnp(self, orig_sce_img, feat=ORB, near_range=True, **kwargs):
+    def solve_pnp(self, orig_sce_img, feat=AKAZE, near_range=True, **kwargs):
         # maybe load scene image
         if isinstance(orig_sce_img, str):
             self.debug_filebase = orig_sce_img[0:-4]+self.DEBUG_IMG_POSTFIX
@@ -42,7 +46,7 @@ class KeypointAlgo():
             orig_sce_img = self.glWidget.full_image
 
         # render model image
-        render_z = -MED_DISTANCE
+        render_z = -MIN_MED_DISTANCE
         orig_z = self.system_model.z_off.value
         self.system_model.z_off.value = render_z
         ref_img, depth_result = self.glWidget.render(depth=True)
@@ -87,11 +91,11 @@ class KeypointAlgo():
                     raise error
 
                 # get feature 3d points using 3d model
-                ref_kp_3d = self._inverse_project([ref_kp[m.trainIdx].pt for m in matches], depth_result, ref_img_sc)
+                ref_kp_3d = self._inverse_project([ref_kp[m.trainIdx].pt for m in matches], depth_result, render_z, ref_img_sc)
                 sce_kp_2d = np.array([tuple(np.divide(sce_kp[m.queryIdx].pt, sce_img_sc)) for m in matches], dtype='float')
 
-                if DEBUG:
-                    print('3d z-range: %s'%(ref_kp_3d.ptp(axis=0),), flush=True)
+                #if DEBUG:
+                #   print('3d z-range: %s'%(ref_kp_3d.ptp(axis=0),), flush=True)
 
                 # solve pnp with ransac
                 rvec, tvec, inliers = self._solve_pnp_ransac(sce_kp_2d, ref_kp_3d)
@@ -125,15 +129,19 @@ class KeypointAlgo():
     
     def _detect_features(self, img, feat, **kwargs):
         if feat == KeypointAlgo.ORB:
-            kp, desc = self._orb_features(img, **kwargs)
+            self._latest_detector = self._orb_detector(**kwargs)
         elif feat == KeypointAlgo.AKAZE:
-            kp, desc = self._akaze_features(img, **kwargs)
+            self._latest_detector = self._akaze_detector(**kwargs)
+        elif feat == KeypointAlgo.SIFT:
+            self._latest_detector = self._sift_detector(**kwargs)
+        elif feat == KeypointAlgo.SURF:
+            self._latest_detector = self._sift_detector(**kwargs)
         else:
             assert False, 'invalid feature: %s'%(feat,)
-        return kp, desc
+        return self._latest_detector.detectAndCompute(img, None)
         
     
-    def _orb_features(self, img, nfeats=1000):
+    def _orb_detector(self, nfeats=1000):
         params = {
             'edgeThreshold':31,  # default: 31
             'fastThreshold':20,  # default: 20
@@ -145,28 +153,50 @@ class KeypointAlgo():
             'scoreType':cv2.ORB_HARRIS_SCORE,  # default ORB_HARRIS_SCORE, other: ORB_FAST_SCORE
             'WTA_K':2,           # default: 2
         }
-        
-        # orb features from scene image
-        orb = cv2.ORB_create(**params)
-        kp, desc = orb.detectAndCompute(img, None)
-        return kp, desc
+        return cv2.ORB_create(**params)
     
-    
-    def _akaze_features(ref_img, nfeats=1000):
+    def _akaze_detector(self, nfeats=1000):
         params = {
-            # TODO
+            'descriptor_type':cv2.AKAZE_DESCRIPTOR_MLDB,
+            'descriptor_channels':3,
+            'descriptor_size':0,
+            'diffusivity':cv2.KAZE_DIFF_PM_G2,
+            'threshold':0.001,
+            'nOctaves':4,
+            'nOctaveLayers':4,
         }
-        akaze = cv2.AKAZE_create(**params)
-        kp, desc = akaze.detectAndCompute(img, None)
+        return cv2.AKAZE_create(**params)
         
-        
+    def _sift_detector(self, nfeats=0):
+        params = {
+            'nfeatures':nfeats,
+            'nOctaveLayers':3,
+            'contrastThreshold':0.04,
+            'edgeThreshold':10,
+            'sigma':1.6,
+        }
+        return cv2.xfeatures2d.SIFT_create(**params)
     
-    def _match_features(self, desc1, desc2, method='flann', symmetry_test=False, ratio_test=True, norm=cv2.NORM_HAMMING):
+    def _surf_detector(self, nfeats=1000):
+        params = {
+            'hessianThreshold':100.0,
+            'nOctaves':4,
+            'nOctaveLayers':3,
+            'extended':False,
+            'upright':False,
+        }
+        return cv2.xfeatures2d.SURF_create(**params)
+    
+    
+    def _match_features(self, desc1, desc2, method='brute', symmetry_test=False, ratio_test=True):
         
         if desc1 is None or desc2 is None or len(desc1)<self.MIN_FEATURES or len(desc2)<self.MIN_FEATURES:
             raise PositioningException('Not enough features found')
         
         if method == 'flann':
+            
+            assert False, 'doesnt currently support flann matcher'
+            
             FLANN_INDEX_LSH = 6
     #        FLANN_INDEX_KDTREE = 0 # for SIFT
             index_params = {
@@ -183,7 +213,7 @@ class KeypointAlgo():
 
             matcher = cv2.FlannBasedMatcher(index_params, search_params)
         elif method == 'brute':
-            matcher = cv2.BFMatcher(norm, symmetry_test) # for ORB
+            matcher = cv2.BFMatcher(self._latest_detector.defaultNorm(), symmetry_test)
         else:
             assert False, 'unknown method %s'%mathod
             
@@ -269,14 +299,13 @@ class KeypointAlgo():
         return rvec, tvec, inliers
 
     
-    def _inverse_project(self, points_2d, depths, img_sc):
-        z0 = self.system_model.z_off.value # translate to object origin
+    def _inverse_project(self, points_2d, depths, render_z, img_sc):
         sc = img_sc * VIEW_WIDTH/CAMERA_WIDTH
         
         def invproj(xi, yi):
             z = -tools.interp2(depths, xi/img_sc, yi/img_sc)
             x, y = tools.calc_xy(xi/sc, yi/sc, z, width=CAMERA_WIDTH, height=CAMERA_HEIGHT)
-            return x, -y, -(z-z0) # same as rotate using cv2gl_q
+            return x, -y, -(z-render_z) # same as rotate using cv2gl_q
         
         points_3d = np.array([invproj(pt[0], pt[1]) for pt in points_2d])
         return points_3d
