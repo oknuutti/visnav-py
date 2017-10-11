@@ -41,3 +41,5 @@ START_IN_THREAD = False
 USE_IMG_LABEL_FOR_SC_POS = True
 BATCH_MODE = False
 DEBUG = False
+
+USE_ICRS = True # if true, use barycentric equatorial system, else heliocentric ecliptic

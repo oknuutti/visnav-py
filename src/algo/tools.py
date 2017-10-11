@@ -91,16 +91,17 @@ def q_to_unitbase(q):
     return quaternion.as_float_array(Uq)[:, 1:]
 
 
-def equatorial_to_ecliptic(ra, dec, dist):
-    """ translate from equatorial coordinates to ecliptic ones """
-    sc = SkyCoord(ra, dec, distance=dist, frame='icrs',
-            obstime='J2000').transform_to('heliocentrictrueecliptic')
+def equatorial_to_ecliptic(ra, dec):
+    """ translate from equatorial ra & dec to ecliptic ones """
+    sc = SkyCoord(ra, dec, unit='deg', frame='icrs', obstime='J2000') \
+            .transform_to('barycentrictrueecliptic')
     return math.radians(sc.lat.value), math.radians(sc.lon.value)
     
     
 def q_to_angleaxis(q, compact=False):
     theta = math.acos(q.w) * 2.0
-    return (theta,) + tuple(normalize_v(np.array([q.x, q.y, q.z])))
+    v = np.array([q.x, q.y, q.z])
+    return (theta,) + tuple(normalize_v(v) if sum(v)>0 else v)
 
 
 def angleaxis_to_q(rv):
@@ -166,6 +167,13 @@ def eccentric_anomaly(eccentricity, mean_anomaly, tol=1e-6):
 
 def solar_elongation(ast_v, sc_q):
     sco_x, sco_y, sco_z = q_to_unitbase(sc_q)
+    
+    if USE_ICRS:
+        sc = SkyCoord(x=ast_v[0], y=ast_v[1], z=ast_v[2], frame='icrs',
+                      unit='m', representation='cartesian', obstime='J2000')\
+            .transform_to('hcrs')\
+            .represent_as('cartesian')
+        ast_v = np.array([sc.x.value, sc.y.value, sc.z.value])
     
     # angle between camera axis and the sun, 0: right ahead, pi: behind
     elong = angle_between_v(-ast_v, sco_x)

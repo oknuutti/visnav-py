@@ -61,6 +61,9 @@ class KeypointAlgo():
         # get keypoints and descriptors
         ref_kp, ref_desc = self._detect_features(ref_img, feat, nfeats=4500)
         
+        # AKAZE is truly scale invariant (couldnt get ORB to work as good)
+        near_range = False if feat==self.AKAZE else near_range
+        
         ok = False
         for i in range(self.MAX_SCENE_SCALE_STEPS):
             try:
@@ -313,7 +316,7 @@ class KeypointAlgo():
     
     def _set_sc_from_ast_rot_and_trans(self, rvec, tvec, rotate_sc=False):
         sm = self.system_model
-
+        
         # rotate to gl frame from opencv camera frame
         gl2cv_q = sm.frm_conv_q(sm.OPENGL_FRAME, sm.OPENCV_FRAME)
         sm.spacecraft_pos = tools.q_times_v(gl2cv_q, tvec)
@@ -322,19 +325,13 @@ class KeypointAlgo():
         cv_cam_delta_q = tools.angleaxis_to_q(rvec)
         
         if rotate_sc:
-            # from opencv cam frame to spacecraft cam frame
             sc2cv_q = sm.frm_conv_q(sm.SPACECRAFT_FRAME, sm.OPENCV_FRAME)
             sc_delta_q =  sc2cv_q * cv_cam_delta_q * sc2cv_q.conj()
             sm.rotate_spacecraft(sc_delta_q.conj())
         else:
-            # from asteroid frame to opencv cam frame
-            ast2sc_q = sm.frm_conv_q(sm.ASTEROID_FRAME, sm.SPACECRAFT_FRAME)
             sc2cv_q = sm.frm_conv_q(sm.SPACECRAFT_FRAME, sm.OPENCV_FRAME)
             sc_q = sm.spacecraft_q()
-            ast_q = sm.asteroid_q()
             
-            # -- arrived to this frame rotation formula by experimetation!
-            frame_q = ast_q.conj() * ast2sc_q * sc_q * sc2cv_q
-            
+            frame_q = sc_q * sc2cv_q
             ast_delta_q = frame_q * cv_cam_delta_q * frame_q.conj()
             sm.rotate_asteroid(ast_delta_q)

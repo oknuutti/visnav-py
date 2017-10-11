@@ -74,11 +74,15 @@ def load_image_meta(src, sm):
     # from sun to spacecraft, equatorial J2000
     sun_sc_eq_x, sun_sc_eq_y, sun_sc_eq_z = \
             -np.array(config.gettuple('meta', 'SC_SUN_POSITION_VECTOR'))
-    sc = SkyCoord(x=sun_sc_eq_x, y=sun_sc_eq_y, z=sun_sc_eq_z, unit='km', frame='icrs',
-            representation='cartesian', obstime='J2000')\
-            .transform_to('heliocentrictrueecliptic')\
-            .represent_as('cartesian')
-    sun_sc_ec_p = np.array([sc.x.value, sc.y.value, sc.z.value])
+            
+    if USE_ICRS:
+        sun_sc_ec_p = np.array([sun_sc_eq_x, sun_sc_eq_y, sun_sc_eq_z])
+    else:
+        sc = SkyCoord(x=sun_sc_eq_x, y=sun_sc_eq_y, z=sun_sc_eq_z, unit='km',
+                frame='icrs', representation='cartesian', obstime='J2000')\
+                .transform_to('heliocentrictrueecliptic')\
+                .represent_as('cartesian')
+        sun_sc_ec_p = np.array([sc.x.value, sc.y.value, sc.z.value])
     sun_sc_dist = sum(np.sqrt(sun_sc_ec_p*sun_sc_ec_p))
     
     # from spacecraft to asteroid, equatorial J2000
@@ -103,29 +107,44 @@ def load_image_meta(src, sm):
     timestamp = Time(image_time, scale='utc', format='isot').unix
     sm.time.range = (timestamp - half_range, timestamp + half_range)
     sm.time.value = timestamp
-
+    
     ## set spacecraft orientation
     ##
-    #xc, yc, zc = 0, 0 ,0
-    xc, yc, zc = -0.283, -0.127, 0     # ROS_CAM1_20150720T113057
+    xc, yc, zc = 0, 0, 0
+    #xc, yc, zc = -0.283, -0.127, 0     # ROS_CAM1_20150720T113057
     #xc, yc, zc = 0.2699, -0.09, 0  # ROS_CAM1_20150720T165249
     #xc, yc, zc = 0.09, -0.02, 0    # ROS_CAM1_20150720T064939
 
-    sc = SkyCoord(ra=sc_rot_ra*units.deg, dec=sc_rot_dec*units.deg,
-            frame='icrs', obstime='J2000')\
-            .transform_to('barycentrictrueecliptic')
-    sm.x_rot.value = sc.lat.value+xc       # axis lat
-    sm.y_rot.value = (sc.lon.value+yc+180)%360 - 180 # axis lon
-    sm.z_rot.value = (sc_rot_cnca+zc+180)%360 - 180  # rotation
+    if USE_ICRS:
+        assert sc_rot_dec+xc<90 and sc_rot_dec+xc>-90, 'bad correction'
+        sm.spacecraft_rot = (
+            sc_rot_dec+xc,                   # axis lat
+            (sc_rot_ra+yc+180)%360 - 180,    # axis lon
+            (360-sc_rot_cnca+zc)%360 - 180,  # rotation
+        )
+    else:
+        sc = SkyCoord(ra=sc_rot_ra*units.deg, dec=sc_rot_dec*units.deg,
+                      frame='icrs', obstime='J2000')
+        sc = sc.transform_to('barycentrictrueecliptic')
+        assert sc.lat.value+xc<90 and sc.lat.value+xc>-90, 'bad correction'
+        sm.spacecraft_rot = (
+            sc.lat.value+xc,                 # axis lat
+            (sc.lon.value+yc+180)%360 - 180, # axis lon
+            (sc_rot_cnca+zc+180)%360 - 180,  # rotation
+        )
+        
     sm.real_spacecraft_rot = sm.spacecraft_rot
     
     ## set spacecraft position
     ##
-    sc = SkyCoord(x=sc_ast_x, y=sc_ast_y, z=sc_ast_z, unit='km', frame='icrs',
-            representation='cartesian', obstime='J2000')\
-            .transform_to('barycentrictrueecliptic')\
-            .represent_as('cartesian')
-    sc_ast_ec_p = np.array([sc.x.value, sc.y.value, sc.z.value])
+    if USE_ICRS:
+        sc_ast_ec_p = np.array([sc_ast_x, sc_ast_y, sc_ast_z])
+    else:
+        sc = SkyCoord(x=sc_ast_x, y=sc_ast_y, z=sc_ast_z, unit='km', frame='icrs',
+                representation='cartesian', obstime='J2000')\
+                .transform_to('barycentrictrueecliptic')\
+                .represent_as('cartesian')
+        sc_ast_ec_p = np.array([sc.x.value, sc.y.value, sc.z.value])
 
     # s/c orientation
     sco = list(map(math.radians, sm.spacecraft_rot))
@@ -136,10 +155,6 @@ def load_image_meta(src, sm):
     scub = tools.q_to_unitbase(scoq * sc2gl_q)
     scub_o = tools.q_to_unitbase(scoq)
     sc_ast_p = scub.dot(sc_ast_ec_p.transpose())
-
-    # rotate these coords to default opengl -z aligned view
-    #ast_sc_p[((1, 2, 0),)
-    #ast_sc_p = tools.q_times_v(, ast_sc_p)
 
     sm.real_spacecraft_pos = sc_ast_p
     if USE_IMG_LABEL_FOR_SC_POS:
@@ -182,7 +197,7 @@ def load_image_meta(src, sm):
         
     sm.save_state('none',printout=True)
     #quit()
-
+    
     ## Impossible to calculate asteroid rotation axis based on given data!!
     ## TODO: Or is it? Can use some help data from model.AsteroidModel?
     ## These should be used: ast_sc_lat, ast_sc_lon

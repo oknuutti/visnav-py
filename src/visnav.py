@@ -226,10 +226,10 @@ class Window(QWidget):
         super(Window, self).closeEvent(evnt) 
         
     def printInfo(self):
+        print('solar elong, dir: %s'%(tuple(map(math.degrees, self.systemModel.solar_elongation())),))
         print('')
         self.systemModel.save_state('no-matter', printout=True)
         print('')
-        #print('\n%r\n' % self.systemModel)
         
 
 class GLWidget(QOpenGLWidget):
@@ -412,7 +412,9 @@ class GLWidget(QOpenGLWidget):
         rv = tools.q_to_angleaxis(qfin)
 
         # light direction, translation, rotation
-        return (m.light_rel_dir(), (x, y, z), (math.degrees(rv[0]), *rv[1:]))
+        res = (m.light_rel_dir(), (x, y, z), (math.degrees(rv[0]), *rv[1:]))
+        #print('%s'%(res,))
+        return res
         
 
     def paintGL(self):

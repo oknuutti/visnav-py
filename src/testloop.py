@@ -168,7 +168,7 @@ class TestLoop():
         start_time = dt.now()
         sm = self.window.systemModel
 
-        while True:
+        for i in range(100):
             ## sample params from suitable distributions
             ##
             # datetime dist: uniform, based on rotation period
@@ -201,12 +201,11 @@ class TestLoop():
             sc_x, sc_y, sc_z = q_times_v((sco_q * sm.sc2gl_q).conj(), sc_ast_v)
             
             # asteroid rotation axis, add zero mean gaussian with small variance
-            cq = sm.frm_conv_q(sm.SPACECRAFT_FRAME, sm.ASTEROID_FRAME)
             da = np.random.uniform(0, rad(self._noise_ast_rot_axis))
             dd = np.random.uniform(0, 2*math.pi)
             ax_lat_true = sm.asteroid.axis_latitude
             ax_lon_true = sm.asteroid.axis_longitude
-            ast_q_true = cq*sm.asteroid.rotation_q(time)*cq.conj()
+            ast_q_true = sm.asteroid.rotation_q(time)
             est_ax_lat = ax_lat_true + da*math.sin(dd)
             est_ax_lon = ax_lon_true + da*math.cos(dd)
             
@@ -218,7 +217,9 @@ class TestLoop():
             # limit elongation to always be more than set elong
             if elong > rad(self._min_elong):
                 break
-            
+        
+        if elong <= rad(self._min_elong):
+            assert False, 'probable infinite loop'
         
         ## add measurement noise to
         # - datetime (seconds)

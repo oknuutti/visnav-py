@@ -243,8 +243,13 @@ class SystemModel():
             list(map(math.degrees, tools.q_to_ypr(new_q)))
 
     def rotate_asteroid(self, q):
+        """ rotate asteroid in spacecraft frame """
+        
         ast = self.asteroid
-        new_q = ast.rotation_q(self.time.value) * q
+        sc2ast_q = SystemModel.frm_conv_q(SystemModel.SPACECRAFT_FRAME, SystemModel.ASTEROID_FRAME)
+
+        # global rotation q on asteroid in sc frame, followed by local rotation to asteroid frame
+        new_q = q * ast.rotation_q(self.time.value) * sc2ast_q
         ast.axis_latitude, ast.axis_longitude, new_theta = tools.q_to_ypr(new_q)
         
         old_theta = ast.rotation_theta(self.time.value)
@@ -258,9 +263,6 @@ class SystemModel():
                 (self.x_rot.value, self.y_rot.value, self.z_rot.value)
         )))
         
-    def asteroid_q(self):
-        return self.asteroid.rotation_q(self.time.value)
-    
     def gl_sc_asteroid_rel_q(self):
         """ rotation of asteroid relative to spacecraft in opengl coords """
         self.update_asteroid_model()
@@ -273,10 +275,7 @@ class SystemModel():
     
     def sc_asteroid_rel_q(self, time=None):
         """ rotation of asteroid relative to spacecraft in opengl coords """
-        sc2ast_q = self.frm_conv_q(self.SPACECRAFT_FRAME, self.ASTEROID_FRAME)
         ast_q = self.asteroid.rotation_q(time or self.time.value)
-        ast_q = sc2ast_q * ast_q * sc2ast_q.conj()
-        
         sc_q = self.spacecraft_q()
         return sc_q.conj() * ast_q
 
@@ -389,14 +388,18 @@ class Asteroid():
         self.orbital_period = 2355.612944885578*24*3600 # seconds
         #self.true_anomaly = math.radians(145.5260853202137 ??)
   
-        # rotation
+        # rotation period
         # from http://www.aanda.org/articles/aa/full_html/2015/11/aa26349-15/aa26349-15.html
+        #   - 12.4043h (2014 aug-oct)
+        # from http://www.sciencedirect.com/science/article/pii/S0019103516301385?via%3Dihub
+        #   - 12.4304h (19 May 2015)
+        #   - 12.305h (10 Aug 2015)
         self.rot_epoch = Time('J2000')
-        use_own = False
+
         #self.rotation_velocity = 2*math.pi/12.4043/3600 # prograde, in rad/s
         # --- above seems incorrect based on the pics, own estimate
         # based on ROS_CAM1_20150720T165249 - ROS_CAM1_20150721T075733
-        if use_own:
+        if False:
             self.rotation_velocity = 0.000203926
         else:
             self.rotation_velocity = 2*math.pi/12.4043/3600
@@ -404,22 +407,23 @@ class Asteroid():
         # will use as ecliptic longitude of
         # asteroid zero longitude (cheops) at J2000, based on 20150720T165249
         # papar had 114deg in it..
-        if use_own:
-            self.rotation_pm = math.radians(150.594)
+        if True:
+            self.rotation_pm = math.radians(154)
         else:
             self.rotation_pm = math.radians(114)
         
-        # precession cone center (J2000), paper had 69.54, 64.11, own corrected
-        # values used instead
+        # precession cone center (J2000), paper had 69.54, 64.11
         self.axis_latitude, self.axis_longitude = \
-                tools.equatorial_to_ecliptic(69.54*units.deg, 64.11*units.deg, 149e9*units.m)
+                (math.radians(69.54), math.radians(64.11)) if USE_ICRS else \
+                tools.equatorial_to_ecliptic(69.54*units.deg, 64.11*units.deg)
         
-        if use_own:
+        # own corrected values used instead
+        if False:
             self.axis_latitude += math.radians(12.93)
             self.axis_longitude += math.radians(-227.35)
         
-        self.precession_cone_radius = math.radians(0.14)
-        self.precession_period = 10.7*24*3600
+        self.precession_cone_radius = math.radians(0.14)    # other paper 0.15+-0.03 deg
+        self.precession_period = 10.7*24*3600  # other paper had 11.5+-0.5 days
         self.precession_pm = math.radians(0.288)
         
     @property
@@ -433,8 +437,13 @@ class Asteroid():
         
     def rotation_q(self, timestamp):
         theta = self.rotation_theta(timestamp)
+        
         # TODO: use precession info
-        return tools.ypr_to_q(self.axis_latitude, self.axis_longitude, theta)
+        
+        # orient z axis correctly, rotate around it
+        ast2sc_q = SystemModel.frm_conv_q(SystemModel.ASTEROID_FRAME, SystemModel.SPACECRAFT_FRAME)
+        return tools.ypr_to_q(self.axis_latitude, self.axis_longitude, theta) \
+                * ast2sc_q
     
     def position(self, timestamp):
         # from http://space.stackexchange.com/questions/8911/determining-\
@@ -468,10 +477,18 @@ class Asteroid():
         y = math.sin(W) * xtemp + math.cos(W) * y
         
         # corrections for ROS_CAM1_20150720T113057
-        if(True):
+        if(False):
             x += 1.5e9*units.m
             y += -1e9*units.m
             z += -26.55e9*units.m
         
-        return np.array([x.value, y.value, z.value])
+        v_ba = np.array([x.value, y.value, z.value])
+        if not USE_ICRS:
+            sc = SkyCoord(x=x, y=y, z=z, frame='icrs',
+                          representation='cartesian', obstime='J2000')\
+                .transform_to('heliocentrictrueecliptic')\
+                .represent_as('cartesian')
+            v_ba = np.array([sc.x.value, sc.y.value, sc.z.value])
+        
+        return v_ba
     
