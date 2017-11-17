@@ -32,10 +32,11 @@ class TestLoop():
         self._algorithm_finished = None
         
         # gaussian sd in seconds
-        self._noise_time = 30/2     # 95% within +-30s
+        self._noise_time = 20/2     # 95% within +-20s
         
         # uniform, max dev in deg
-        self._noise_ast_rot_axis = 10
+        self._noise_ast_rot_axis = 7.5
+        self._noise_ast_phase_shift = 7.5/2  # 95% within 5 deg
         
         # s/c orientation noise, gaussian sd in deg
         self._noise_sco_lat = 2/2   # 95% within 2 deg
@@ -43,7 +44,7 @@ class TestLoop():
         self._noise_sco_rot = 2/2   # 95% within 2 deg
         
         # minimum allowed elongation in deg
-        self._min_elong = 25
+        self._min_elong = 45
         
         def handle_close():
             self.exit = True
@@ -82,7 +83,7 @@ class TestLoop():
                 'lat error', 'dist error',
             ))+'\n')
 
-        ex_times, laterrs, disterrs, roterrs, fails, li = [], [], [], [], 0, 0
+        ex_times, laterrs, disterrs, roterrs, shifterrs, fails, li = [], [], [], [], [], 0, 0
         for i in range(times):
             self._maybe_exit()
             
@@ -102,11 +103,13 @@ class TestLoop():
                 lerr = math.sqrt(err[0]**2 + err[1]**2) / dist
                 derr = abs(err[2]) / dist
                 rerr = abs(err[3])
+                serr = err[4] / dist
                 laterrs.append(lerr)
                 disterrs.append(derr)
                 roterrs.append(rerr)
+                shifterrs.append(serr)
             else:
-                lerr = derr = rerr = float('nan')
+                lerr = derr = rerr = serr = float('nan')
                 fails += 1
 
             ex_times.append(etime)
@@ -115,7 +118,7 @@ class TestLoop():
             with open(logfile, 'a') as file:
                 file.write('\t'.join(map(str, (
                     i, dt.now().strftime("%Y-%m-%d %H:%M:%S"), etime,
-                    *params, *noise, *pos, *rel_rot, *err, lerr, derr
+                    *params, *noise, *pos, *rel_rot, *err, lerr, derr, serr
                 )))+'\n')
                 
             # log opt fun values in other file
@@ -129,11 +132,13 @@ class TestLoop():
         try:
             laterr_pctls = calc_prctls(laterrs)
             disterr_pctls = calc_prctls(disterrs)
+            shifterr_pctls = calc_prctls(shifterrs)
             roterr_pctls = ', '.join(['%.2f'%p for p in np.nanpercentile(roterrs, prctls)])
         except Exception as e:
             print('Error calculating quantiles: %s'%e)
             laterr_pctls = 'error'
             disterr_pctls = 'error'
+            shifterr_pctls = 'error'
             roterr_pctls = 'error'
         
         # a summary line
@@ -141,6 +146,7 @@ class TestLoop():
             '%s - t: %.1fh (%.0fs), '
             + 'Le: %.2f%% (%s), '
             + 'De: %.2f%% (%s), '
+            + 'Se: %.2f%% (%s), '
             + 'Re: %.2f° (%s), '
             + 'fail: %.1f%% \n'
         ) % (
@@ -151,6 +157,8 @@ class TestLoop():
             laterr_pctls,
             100*sum(disterrs)/len(disterrs),
             disterr_pctls,
+            100*sum(shifterrs)/len(shifterrs),
+            shifterr_pctls,
             sum(roterrs)/len(roterrs),
             roterr_pctls,
             100*fails/times,
@@ -179,7 +187,8 @@ class TestLoop():
             sc_lon = np.random.uniform(-math.pi, math.pi)
 
             # s/c distance as inverse uniform distribution
-            max_r, min_r = MAX_DISTANCE, MIN_DISTANCE
+            #max_r, min_r = MAX_DISTANCE, MIN_DISTANCE
+            max_r, min_r = MAX_MED_DISTANCE, MIN_MED_DISTANCE
             sc_r = 1/np.random.uniform(1/max_r, 1/min_r)
 
             # same in cartesian coord
@@ -200,15 +209,12 @@ class TestLoop():
             # sc_ast_p ecliptic => sc_ast_p open gl -z aligned view
             sc_x, sc_y, sc_z = q_times_v((sco_q * sm.sc2gl_q).conj(), sc_ast_v)
             
-            # asteroid rotation axis, add zero mean gaussian with small variance
-            da = np.random.uniform(0, rad(self._noise_ast_rot_axis))
-            dd = np.random.uniform(0, 2*math.pi)
+            # true asteroid rotation state not varied
             ax_lat_true = sm.asteroid.axis_latitude
             ax_lon_true = sm.asteroid.axis_longitude
+            ax_phs_true = sm.asteroid.rotation_pm
             ast_q_true = sm.asteroid.rotation_q(time)
-            est_ax_lat = ax_lat_true + da*math.sin(dd)
-            est_ax_lon = ax_lon_true + da*math.cos(dd)
-            
+
             # get asteroid position so that know where sun is
             # *actually barycenter, not sun
             as_x, as_y, as_z = as_v = sm.asteroid.position(time)
@@ -225,6 +231,13 @@ class TestLoop():
         # - datetime (seconds)
         meas_time = time + np.random.normal(0, self._noise_time)
 
+        # - asteroid state estimate
+        noise_da = np.random.uniform(0, rad(self._noise_ast_rot_axis))
+        noise_dd = np.random.uniform(0, 2*math.pi)
+        meas_ax_lat = ax_lat_true + noise_da*math.sin(noise_dd)
+        meas_ax_lon = ax_lon_true + noise_da*math.cos(noise_dd)
+        meas_ax_phs = ax_phs_true + np.random.normal(0, rad(self._noise_ast_phase_shift))
+
         # - spacecraft orientation measure
         meas_sco_lat = max(-math.pi/2, min(math.pi/2, sco_lat
                 + np.random.normal(0, rad(self._noise_sco_lat))))
@@ -232,7 +245,7 @@ class TestLoop():
                 + np.random.normal(0, rad(self._noise_sco_lon)))
         meas_sco_rot = wrap_rads(sco_rot
                 + np.random.normal(0, rad(self._noise_sco_rot)))
-
+                
         ## based on above, call VISIT to make a target image
         ##
         light = normalize_v(q_times_v(ast_q_true.conj(), np.array([as_x, as_y, as_z])))
@@ -276,23 +289,31 @@ class TestLoop():
                 ('gl_sc_ast_v', [sc_x, sc_y, sc_z]),
             )))
 
-        # save real values used for comparison
-        sm.time.real_value = time
-        sm.real_spacecraft_pos = sc_x, sc_y, sc_z
-        sm.real_spacecraft_rot = deg(sco_lat), deg(sco_lon), deg(sco_rot)
+        # put real values to model
+        sm.time.value = time
+        sm.spacecraft_pos = sc_x, sc_y, sc_z
+        sm.spacecraft_rot = (deg(sco_lat), deg(sco_lon), deg(sco_rot))
         sm.asteroid.axis_latitude = ax_lat_true
         sm.asteroid.axis_longitude = ax_lon_true
-        #sm.asteroid.rotation_pm is what it is (time counts for the random element)
+        sm.asteroid.rotation_pm = ax_phs_true
         sm.asteroid_rotation_from_model()
+
+        # get asteroid model vertices in target state
+        real_vertices = sm.sc_asteroid_vertices()
+
+        # save real values so that can compare later
+        sm.time.real_value = sm.time.value
+        sm.real_spacecraft_pos = sm.spacecraft_pos
+        sm.real_spacecraft_rot = sm.spacecraft_rot
         sm.real_asteroid_axis = sm.asteroid_axis
         
         # set datetime, spacecraft & asteroid orientation to sample values
         sm.time.value = meas_time; assert np.isclose(sm.time.value, meas_time), 'Failed to set time value'
         sm.spacecraft_pos = (0, 0, -MIN_MED_DISTANCE) # set to default value
         sm.spacecraft_rot = (deg(meas_sco_lat), deg(meas_sco_lon), deg(meas_sco_rot))
-        sm.asteroid.axis_latitude = est_ax_lat
-        sm.asteroid.axis_longitude = est_ax_lon
-        #sm.asteroid.rotation_pm is what it is
+        sm.asteroid.axis_latitude = meas_ax_lat
+        sm.asteroid.axis_longitude = meas_ax_lon
+        sm.asteroid.rotation_pm = meas_ax_phs
         sm.asteroid_rotation_from_model() # set ast rotation params
 
         # save state to file
@@ -312,15 +333,14 @@ class TestLoop():
         # assemble return values
         etime = (dt.now() - start_time).total_seconds()
         real_rel_rot = q_to_ypr(sm.real_sc_asteroid_rel_q())
-        params = (time, deg(ax_lat_true), deg(ax_lon_true),
-                deg(sm.asteroid.rotation_theta(time)),
+        params = (time, deg(ax_lat_true), deg(ax_lon_true), deg(ax_phs_true),
                 deg(sco_lat), deg(sco_lon), deg(sco_rot),
                 deg(elong), deg(direc), sc_x, sc_y, sc_z,
                 deg(real_rel_rot[0]), deg(real_rel_rot[1]), deg(real_rel_rot[2]),
                 imgfile, final_fval)
         time_noise = meas_time - time
-        ast_rot_noise = 2*math.pi * time_noise/sm.asteroid.rotation_period
-        noise = (est_ax_lat-ax_lat_true, est_ax_lon-ax_lon_true, ast_rot_noise,
+        ast_rot_noise = 2*math.pi*time_noise/sm.asteroid.rotation_period + (meas_ax_phs-ax_phs_true)
+        noise = (meas_ax_lat-ax_lat_true, meas_ax_lon-ax_lon_true, ast_rot_noise,
                 meas_sco_lat-sco_lat, meas_sco_lon-sco_lon, meas_sco_rot-sco_rot)
         dev_angle = angle_between_ypr(noise[0:3], noise[3:6])
         noise = (time_noise,) + tuple(map(deg, noise + (dev_angle,)))
@@ -333,9 +353,13 @@ class TestLoop():
         else:
             pos = sm.spacecraft_pos
             rel_rot = q_to_ypr(sm.sc_asteroid_rel_q())
+            est_vertices = sm.sc_asteroid_vertices()
+            max_shift = tools.sc_asteroid_max_shift_error(real_vertices, est_vertices)
+
             err = (
                 *np.subtract(pos, sm.real_spacecraft_pos),
                 deg(angle_between_ypr(rel_rot, real_rel_rot)),
+                max_shift,
             )
 
         return etime, params, noise, pos, map(deg, rel_rot), fvals, err

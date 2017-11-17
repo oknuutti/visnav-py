@@ -38,7 +38,7 @@ class KeypointAlgo():
         self.MAX_SCENE_SCALE_STEPS = 5 # from mid range 64km to near range 16km (64/sqrt(2)**(5-1) => 16)
 
 
-    def solve_pnp(self, orig_sce_img, feat=AKAZE, near_range=True, **kwargs):
+    def solve_pnp(self, orig_sce_img, feat=AKAZE, vary_scale=False, scale_cam_img=True, **kwargs):
         # maybe load scene image
         if isinstance(orig_sce_img, str):
             self.debug_filebase = orig_sce_img[0:-4]+self.DEBUG_IMG_POSTFIX
@@ -54,7 +54,7 @@ class KeypointAlgo():
         
         # scale to match scene image asteroid extent in pixels
         init_z = kwargs.get('init_z', render_z)
-        ref_img_sc = min(1,render_z/init_z) * CAMERA_WIDTH/VIEW_WIDTH
+        ref_img_sc = min(1,render_z/init_z) * (VIEW_WIDTH if scale_cam_img else CAMERA_WIDTH)/VIEW_WIDTH
         ref_img = cv2.resize(ref_img, None, fx=ref_img_sc, fy=ref_img_sc, 
                 interpolation=cv2.INTER_CUBIC)
         
@@ -62,12 +62,12 @@ class KeypointAlgo():
         ref_kp, ref_desc = self._detect_features(ref_img, feat, nfeats=4500)
         
         # AKAZE is truly scale invariant (couldnt get ORB to work as good)
-        near_range = False if feat==self.AKAZE else near_range
+        vary_scale = False if feat==self.AKAZE else vary_scale
         
         ok = False
         for i in range(self.MAX_SCENE_SCALE_STEPS):
             try:
-                sce_img_sc = 1/self.SCENE_SCALE_STEP**i
+                sce_img_sc = (VIEW_WIDTH if scale_cam_img else CAMERA_WIDTH)/CAMERA_WIDTH/self.SCENE_SCALE_STEP**i
                 if np.isclose(sce_img_sc, 1):
                     sce_img = orig_sce_img
                 else:
@@ -104,8 +104,6 @@ class KeypointAlgo():
                 rvec, tvec, inliers = self._solve_pnp_ransac(sce_kp_2d, ref_kp_3d)
 
                 # debug by drawing inlier matches
-                if not BATCH_MODE or DEBUG:
-                    print('inliers: %s/%s'%(len(inliers), len(matches)), flush=True)
                 self._draw_matches(sce_img, sce_img_sc, sce_kp, ref_img, ref_img_sc, ref_kp,
                                    [matches[i[0]] for i in inliers], label='inliers', pause=False)
                 
@@ -114,17 +112,28 @@ class KeypointAlgo():
                 break
             
             except PositioningException as e:
-                if not near_range:
+                if not vary_scale:
                     raise e
                 # maybe try again using scaled down scene image
                 
         if not ok:
             raise PositioningException('Not enough inliers even if tried scaling scene image down x%.1f'%(1/sce_img_sc))
-        else:
+        elif vary_scale:
             print('success at x%.1f'%(1/sce_img_sc))
         
         # set model params to solved pose & pos
         self._set_sc_from_ast_rot_and_trans(rvec, tvec)
+        if not BATCH_MODE or DEBUG:
+            rp_err = self._reprojection_error(sce_kp_2d, ref_kp_3d, inliers, rvec, tvec)
+            sh_err = self.system_model.calc_shift_err()
+
+            print('inliers: %s/%s, repr-err: %.2f, rel-rot-err: %.2f°, dist-err: %.2f%%, lat-err: %.2f%%, shift-err: %.1fm'%(
+                len(inliers), len(matches), rp_err,
+                math.degrees(self.system_model.rel_rot_err()),
+                self.system_model.dist_pos_err()*100,
+                self.system_model.lat_pos_err()*100,
+                sh_err*1000,
+            ), flush=True)
         
         if BATCH_MODE and self.debug_filebase:
             self.glWidget.saveViewToFile(self.debug_filebase+'r.png')
@@ -286,11 +295,12 @@ class KeypointAlgo():
         
         # assuming no lens distortion
         dist_coeffs = None
+        cam_mx = tools.intrinsic_camera_mx()
         ref_kp_3d = np.reshape(ref_kp_3d, (len(ref_kp_3d),1,3))
         sce_kp_2d = np.reshape(sce_kp_2d, (len(sce_kp_2d),1,2))
         
         retval, rvec, tvec, inliers = cv2.solvePnPRansac(
-                ref_kp_3d, sce_kp_2d, tools.intrinsic_camera_mx(), dist_coeffs,
+                ref_kp_3d, sce_kp_2d, cam_mx, dist_coeffs,
                 iterationsCount = self.RANSAC_ITERATIONS,
                 reprojectionError = self.RANSAC_ERROR)
         
@@ -301,6 +311,15 @@ class KeypointAlgo():
 
         return rvec, tvec, inliers
 
+    
+    def _reprojection_error(self, sce_kp_2d, ref_kp_3d, inliers, rvec, tvec):
+        dist_coeffs = None
+        cam_mx = tools.intrinsic_camera_mx()
+        ref_kp_3d = np.reshape(ref_kp_3d, (len(ref_kp_3d),1,3))
+        sce_kp_2d = np.reshape(sce_kp_2d, (len(sce_kp_2d),1,2))
+        prj_kp_2d, _ = cv2.projectPoints(ref_kp_3d, rvec, tvec, cam_mx, dist_coeffs)
+        return np.sqrt(np.mean((sce_kp_2d[inliers] - prj_kp_2d[inliers])**2))
+    
     
     def _inverse_project(self, points_2d, depths, render_z, img_sc):
         sc = img_sc * VIEW_WIDTH/CAMERA_WIDTH
@@ -319,10 +338,21 @@ class KeypointAlgo():
         
         # rotate to gl frame from opencv camera frame
         gl2cv_q = sm.frm_conv_q(sm.OPENGL_FRAME, sm.OPENCV_FRAME)
-        sm.spacecraft_pos = tools.q_times_v(gl2cv_q, tvec)
-        
+        new_sc_pos = tools.q_times_v(gl2cv_q, tvec)
+
         # camera rotation in opencv frame
         cv_cam_delta_q = tools.angleaxis_to_q(rvec)
+        
+        # solvePnPRansac has some bug that apparently randomly gives 180deg wrong answer
+        if new_sc_pos[2]>0:
+            tpos = -new_sc_pos
+            tdelta_q = cv_cam_delta_q * tools.ypr_to_q(0,math.pi,0)
+            print('Bug with solvePnPRansac, correcting:\n\t%s => %s\n\t%s => %s'%(
+                new_sc_pos, tpos, tools.q_to_ypr(cv_cam_delta_q), tools.q_to_ypr(tdelta_q)))
+            new_sc_pos = tpos
+            cv_cam_delta_q = tdelta_q
+        
+        sm.spacecraft_pos = new_sc_pos
         
         if rotate_sc:
             sc2cv_q = sm.frm_conv_q(sm.SPACECRAFT_FRAME, sm.OPENCV_FRAME)

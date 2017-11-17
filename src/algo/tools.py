@@ -26,6 +26,27 @@ def inv_intrinsic_camera_mx(w=CAMERA_WIDTH, h=CAMERA_HEIGHT):
     return np.linalg.inv(intrinsic_camera_mx(w, h))
 
 
+def sc_asteroid_max_shift_error(A, B):
+    """
+    Calculate max error between two set of vertices when projected to camera
+    """
+    
+    # a dot b vector product
+    diagAB = (A*B).sum(-1).reshape((-1,1))
+    
+    # length of a
+    normA = np.sqrt((A**2).sum(-1)).reshape((-1,1))
+    
+    # diff vector across projection
+    D = B - (diagAB / normA**2)*A
+
+    # diff vector lengths
+    normD = np.sqrt((D**2).sum(-1)).reshape((-1,1))
+    
+    # max length of diff vectors
+    return np.max(normD)
+    
+
 def calc_xy(xi, yi, z_off, width=CAMERA_WIDTH, height=CAMERA_HEIGHT):
     """ xi and yi are unaltered image coordinates, z_off is usually negative  """
     
@@ -143,6 +164,15 @@ def q_times_v(q, v):
     qv2 = q * qv * q.conj()
     return np.array([qv2.x, qv2.y, qv2.z])
 
+def q_times_mx(q, mx):
+    qqmx = q * mx2qmx(mx) * q.conj()
+    aqqmx = quaternion.as_float_array(qqmx)
+    return aqqmx[:,1:]
+
+def mx2qmx(mx):
+    qmx = np.zeros((mx.shape[0],4))
+    qmx[:,1:] = mx
+    return quaternion.as_quat_array(qmx)
 
 def normalize_v(v):
     return v/math.sqrt(sum(map(lambda x: x**2, v)))

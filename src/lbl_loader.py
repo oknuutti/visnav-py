@@ -107,6 +107,7 @@ def load_image_meta(src, sm):
     timestamp = Time(image_time, scale='utc', format='isot').unix
     sm.time.range = (timestamp - half_range, timestamp + half_range)
     sm.time.value = timestamp
+    sm.time.real_value = timestamp
     
     ## set spacecraft orientation
     ##
@@ -161,6 +162,10 @@ def load_image_meta(src, sm):
         sm.spacecraft_pos = sc_ast_p
     ##
     ## done setting spacecraft position
+    
+    # use calculated asteroid axis as real axis
+    sm.asteroid_rotation_from_model()
+    sm.real_asteroid_axis = sm.asteroid_axis
 
     if False:
         print((''

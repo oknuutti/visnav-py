@@ -274,7 +274,7 @@ class SystemModel():
     
     
     def sc_asteroid_rel_q(self, time=None):
-        """ rotation of asteroid relative to spacecraft in opengl coords """
+        """ rotation of asteroid relative to spacecraft in spacecraft coords """
         ast_q = self.asteroid.rotation_q(time or self.time.value)
         sc_q = self.spacecraft_q()
         return sc_q.conj() * ast_q
@@ -293,6 +293,27 @@ class SystemModel():
         return q_tot
     
     
+    def swap_values_with_real_vals(self):
+        for n, p in self.get_params(True):
+            assert p.real_value is not None, 'real value missing for %s'%n
+            assert p.value is not None, 'current value missing %s'%n
+            tmp = p.value
+            p.value = p.real_value
+            p.real_value = tmp
+    
+    def calc_shift_err(self):
+        est_vertices = self.sc_asteroid_vertices()
+        self.swap_values_with_real_vals()
+        target_vertices = self.sc_asteroid_vertices()
+        self.swap_values_with_real_vals()
+        return tools.sc_asteroid_max_shift_error(est_vertices, target_vertices)
+    
+    
+    def sc_asteroid_vertices(self):
+        """ asteroid vertices rotated and translated to spacecraft frame """
+        return tools.q_times_mx(self.sc_asteroid_rel_q(), self.asteroid.vertices) \
+                + tools.q_times_v(SystemModel.sc2gl_q, self.spacecraft_pos)
+    
     def light_rel_dir(self):
         """ direction of light relative to spacecraft in opengl coords """
         ast_v = tools.normalize_v(self.asteroid.position(self.time.value))
@@ -307,6 +328,22 @@ class SystemModel():
             print('elong: %.3f | dir: %.3f' % (
                 math.degrees(elong), math.degrees(direc)))
         return elong, direc
+    
+    
+    def rel_rot_err(self):
+        return tools.angle_between_q(
+            self.sc_asteroid_rel_q(),
+            self.real_sc_asteroid_rel_q())
+    
+    def lat_pos_err(self):
+        real_pos = self.real_spacecraft_pos
+        err = np.subtract(self.spacecraft_pos, real_pos)
+        return math.sqrt(err[0]**2 + err[1]**2) / abs(real_pos[2])
+
+    def dist_pos_err(self):
+        real_d = self.real_spacecraft_pos[2]
+        return abs(self.spacecraft_pos[2] - real_d) / abs(real_d)
+        
     
     def save_state(self, filename, printout=False):
         config = configparser.ConfigParser()
@@ -367,6 +404,10 @@ class Asteroid():
     def __init__(self, *args, **kwargs):
         self.name = '67P/Churyumov-Gerasimenko'
         
+        # asteroid 3d model vertices populated at visnav.py
+        #   - used to calculate positioning error impact
+        self.vertices = None
+        
         # for cross section, assume spherical object and 2km radius
         self.mean_cross_section = math.pi*2000**2
         
@@ -399,28 +440,24 @@ class Asteroid():
         #self.rotation_velocity = 2*math.pi/12.4043/3600 # prograde, in rad/s
         # --- above seems incorrect based on the pics, own estimate
         # based on ROS_CAM1_20150720T165249 - ROS_CAM1_20150721T075733
-        if False:
-            self.rotation_velocity = 0.000203926
-        else:
-            self.rotation_velocity = 2*math.pi/12.4043/3600
-        
-        # will use as ecliptic longitude of
-        # asteroid zero longitude (cheops) at J2000, based on 20150720T165249
-        # papar had 114deg in it..
         if True:
-            self.rotation_pm = math.radians(154)
+            self.rotation_velocity = 2*math.pi/12.4043/3600
         else:
-            self.rotation_pm = math.radians(114)
+            self.rotation_velocity = 0.000203926
         
-        # precession cone center (J2000), paper had 69.54, 64.11
-        self.axis_latitude, self.axis_longitude = \
-                (math.radians(69.54), math.radians(64.11)) if USE_ICRS else \
-                tools.equatorial_to_ecliptic(69.54*units.deg, 64.11*units.deg)
-        
-        # own corrected values used instead
+        # for rotation phase shift, will use as equatorial longitude of
+        #   asteroid zero longitude (cheops) at J2000, based on 20150720T165249
+        #   papar had 114deg in it
+        # for precession cone center (J2000), paper had 69.54, 64.11
         if False:
-            self.axis_latitude += math.radians(12.93)
-            self.axis_longitude += math.radians(-227.35)
+            tlat, tlon, tpm = 69.54, 64.11, 114
+        else:
+            tlat, tlon, tpm = 64.11, 69.54, 143
+        
+        self.rotation_pm = math.radians(tpm)
+        self.axis_latitude, self.axis_longitude = \
+                (math.radians(tlat), math.radians(tlon)) if USE_ICRS else \
+                tools.equatorial_to_ecliptic(tlat*units.deg, tlon*units.deg)
         
         self.precession_cone_radius = math.radians(0.14)    # other paper 0.15+-0.03 deg
         self.precession_period = 10.7*24*3600  # other paper had 11.5+-0.5 days

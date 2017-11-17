@@ -230,6 +230,7 @@ class Window(QWidget):
         print('')
         self.systemModel.save_state('no-matter', printout=True)
         print('')
+        print('shift-err: %.1fm'%(self.systemModel.calc_shift_err()*1000))
         
 
 class GLWidget(QOpenGLWidget):
@@ -643,15 +644,8 @@ class GLWidget(QOpenGLWidget):
         #self.gl.glMaterialfv(self.gl.GL_FRONT, self.gl.GL_SHININESS, (0,));
         
         model = obj_loader.OBJ(TARGET_MODEL_FILE)
-        print('x[%s, %s] y[%s, %s] z[%s, %s]'%(
-            min(v[0] for v in model.vertices),
-            max(v[0] for v in model.vertices),
-            min(v[1] for v in model.vertices),
-            max(v[1] for v in model.vertices),
-            min(v[2] for v in model.vertices),
-            max(v[2] for v in model.vertices),
-        ))
-
+        self.systemModel.asteroid.vertices = np.array(model.vertices)
+        
         for triangle in model.triangles:
             self.triangle(triangle[0], triangle[1], triangle[2])
         

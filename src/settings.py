@@ -16,7 +16,7 @@ MAX_TEST_Y_RES = 873        # visit fails to generate higher images
 
 MIN_DISTANCE = 16           # in km
 MIN_MED_DISTANCE = 64       # in km
-MAX_MED_DISTANCE = 640      # in km
+MAX_MED_DISTANCE = 280      # in km #640
 MAX_DISTANCE = 1280         # in km
 
 # from http://imagearchives.esac.esa.int/index.php?/category/167/start-224
