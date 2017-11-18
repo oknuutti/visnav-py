@@ -8,15 +8,15 @@ CAMERA_X_FOV = 5            # in deg
 CAMERA_Y_FOV = 5            # in deg
 CAMERA_WIDTH = 1024         # in pixels
 CAMERA_HEIGHT = 1024        # in pixels
-VIEW_WIDTH  = 512  #256 #384 #512 #768
-VIEW_HEIGHT = 512  #256 #384 #512 #768
+VIEW_WIDTH  = 256  #256 #384 #512 #768
+VIEW_HEIGHT = 256  #256 #384 #512 #768
 
 MAX_TEST_X_RES = 873        # 
 MAX_TEST_Y_RES = 873        # visit fails to generate higher images
 
 MIN_DISTANCE = 16           # in km
 MIN_MED_DISTANCE = 64       # in km
-MAX_MED_DISTANCE = 280      # in km #640
+MAX_MED_DISTANCE = 480      # in km #640
 MAX_DISTANCE = 1280         # in km
 
 # from http://imagearchives.esac.esa.int/index.php?/category/167/start-224

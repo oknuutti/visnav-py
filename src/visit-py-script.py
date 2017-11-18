@@ -3,6 +3,8 @@ import json
 #from multiprocessing import cpu_count
 
 def _render(params):
+    DisableRedraw()
+
     lit = GetLight(0)
     lit.type = lit.Object
     lit.direction = tuple(params['light_direction'])
@@ -28,6 +30,8 @@ def _render(params):
     s.quality = 100
     s.compression = s.None
     SetSaveWindowAttributes(s)
+    
+    RedrawWindow()
     return SaveWindow()
 
 def _receive(sock):
@@ -76,7 +80,7 @@ while True:
         csock.send(fname.encode('utf-8'))
     csock.close()
     since_reset += 1
-    if since_reset >= 335:
+    if since_reset >= 200:
         _reset()
         since_reset = 0
 

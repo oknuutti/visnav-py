@@ -35,8 +35,8 @@ class TestLoop():
         self._noise_time = 20/2     # 95% within +-20s
         
         # uniform, max dev in deg
-        self._noise_ast_rot_axis = 7.5
-        self._noise_ast_phase_shift = 7.5/2  # 95% within 5 deg
+        self._noise_ast_rot_axis = 5
+        self._noise_ast_phase_shift = 5/2  # 95% within 5 deg
         
         # s/c orientation noise, gaussian sd in deg
         self._noise_sco_lat = 2/2   # 95% within 2 deg
@@ -72,15 +72,15 @@ class TestLoop():
                 'iter', 'date', 'execution time',
                 'time', 'ast lat', 'ast lon', 'ast rot',
                 'sc lat', 'sc lon', 'sc rot', 
-                'rel yaw', 'rel pitch', 'rel roll', 
                 'sol elong', 'light dir', 'x sc pos', 'y sc pos', 'z sc pos',
+                'rel yaw', 'rel pitch', 'rel roll', 
                 'imgfile', 'optfun val',
                 'time dev', 'ast lat dev', 'ast lon dev', 'ast rot dev',
                 'sc lat dev', 'sc lon dev', 'sc rot dev', 'total dev angle',
                 'x est sc pos', 'y est sc pos', 'z est sc pos',
                 'yaw rel est', 'pitch rel est', 'roll rel est',
-                'x err sc pos', 'y err sc pos', 'z err sc pos', 'rot error',
-                'lat error', 'dist error',
+                'x err sc pos', 'y err sc pos', 'z err sc pos', 'rot error', 'shift error km',
+                'lat error', 'dist error', 'rel shift error'
             ))+'\n')
 
         ex_times, laterrs, disterrs, roterrs, shifterrs, fails, li = [], [], [], [], [], 0, 0
@@ -383,7 +383,11 @@ class TestLoop():
                     print(str(e))
             if method == 'keypoint':
                 try:
+                    # try using pympler to find memory leaks, fail: crashes always
+                    #    from pympler import tracker
+                    #    tr = tracker.SummaryTracker()
                     glWidget.parent().keypoint.solve_pnp(imgfile, **kwargs)
+                    #    tr.print_diff()
                     ok = True
                 except PositioningException as e:
                     print(str(e))
