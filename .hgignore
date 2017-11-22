@@ -5,4 +5,5 @@ data/*
 logs/*
 nbproject
 *.bat
+*.out
 ./*.png
