@@ -20,7 +20,15 @@ import algo.tools as tools
 from algo.tools import (ypr_to_q, q_to_ypr, q_times_v, q_to_unitbase, normalize_v,
                    wrap_rads, solar_elongation, angle_between_ypr)
 from algo.tools import PositioningException
-from algo.centroid import CentroidAlgo
+#from algo.centroid import CentroidAlgo
+
+#from memory_profiler import profile
+#import tracemalloc
+#import gc
+# TODO: fix suspected memory leaks at
+#   - quaternion.as_float_array (?)
+#   - cv2.solvePnPRansac (ref_kp_3d?)
+#   - astropy, many places
 
 VISIT_OUTFILE_PREFIX = "visitout"
 
@@ -32,11 +40,11 @@ class TestLoop():
         self._algorithm_finished = None
         
         # gaussian sd in seconds
-        self._noise_time = 20/2     # 95% within +-20s
+        self._noise_time = 30/2     # 95% within +-30s
         
         # uniform, max dev in deg
-        self._noise_ast_rot_axis = 5
-        self._noise_ast_phase_shift = 5/2  # 95% within 5 deg
+        self._noise_ast_rot_axis = 10
+        self._noise_ast_phase_shift = 10/2  # 95% within 10 deg
         
         # s/c orientation noise, gaussian sd in deg
         self._noise_sco_lat = 2/2   # 95% within 2 deg
@@ -58,7 +66,7 @@ class TestLoop():
             print('Exiting...')
             self._cleanup()
             quit()
-        
+
     def run(self, times, log_prefix='test-', cleanup=True, **kwargs):
         # write logfile header
         logbody = log_prefix + dt.now().strftime('%Y%m%d-%H%M%S')
@@ -84,7 +92,15 @@ class TestLoop():
             ))+'\n')
 
         ex_times, laterrs, disterrs, roterrs, shifterrs, fails, li = [], [], [], [], [], 0, 0
+        timer = tools.Stopwatch()
+        timer.start()
+#        tracemalloc.start(50)
+        
         for i in range(times):
+#            if i==1:
+#                gc.collect()
+#                snapshot1 = tracemalloc.take_snapshot()
+            
             self._maybe_exit()
             
             etime, params, noise, pos, rel_rot, fvals, err = \
@@ -125,6 +141,13 @@ class TestLoop():
             with open(fval_logfile, 'a') as file:
                 file.write('\t'.join(map(str, fvals or []))+'\n')
         
+#        gc.collect()
+#        snapshot2 = tracemalloc.take_snapshot()
+#        memdiff = snapshot2.compare_to(snapshot1, 'lineno')
+#        for s in memdiff[:10]:
+#            print(str(s))
+        #tools.display_top(memdiff)
+        
         prctls = (50, 68, 95) + ((99.7,) if times>=2000 else tuple())
         calc_prctls = lambda errs: \
                 ', '.join('%.2f' % p
@@ -141,9 +164,11 @@ class TestLoop():
             shifterr_pctls = 'error'
             roterr_pctls = 'error'
         
+        timer.stop()
+        
         # a summary line
         summary = (
-            '%s - t: %.1fh (%.0fs), '
+            '%s - t: %.1fmin (%.1fms), '
             + 'Le: %.2f%% (%s), '
             + 'De: %.2f%% (%s), '
             + 'Se: %.2f%% (%s), '
@@ -151,8 +176,8 @@ class TestLoop():
             + 'fail: %.1f%% \n'
         ) % (
             dt.now().strftime("%Y-%m-%d %H:%M:%S"),
-            sum(ex_times)/3600,
-            sum(ex_times)/times,
+            timer.elapsed/60,
+            1000*np.nanmean(ex_times),
             100*sum(laterrs)/len(laterrs),
             laterr_pctls,
             100*sum(disterrs)/len(disterrs),
@@ -171,7 +196,7 @@ class TestLoop():
         if cleanup:
             self._cleanup()
     
-
+    
     def _mainloop(self, imgdir, **kwargs):
         start_time = dt.now()
         sm = self.window.systemModel
@@ -320,7 +345,7 @@ class TestLoop():
         sm.save_state(imgfile[0:-4])
 
         # load image & run optimization algo(s)
-        ok = self._run_algo(imgfile, **kwargs)
+        ok, rtime = self._run_algo(imgfile, **kwargs)
 
         # save function values from optimization
         fvals = self.window.phasecorr.optfun_values \
@@ -331,7 +356,6 @@ class TestLoop():
         self._maybe_exit()
 
         # assemble return values
-        etime = (dt.now() - start_time).total_seconds()
         real_rel_rot = q_to_ypr(sm.real_sc_asteroid_rel_q())
         params = (time, deg(ax_lat_true), deg(ax_lon_true), deg(ax_phs_true),
                 deg(sco_lat), deg(sco_lon), deg(sco_rot),
@@ -355,14 +379,14 @@ class TestLoop():
             rel_rot = q_to_ypr(sm.sc_asteroid_rel_q())
             est_vertices = sm.sc_asteroid_vertices()
             max_shift = tools.sc_asteroid_max_shift_error(real_vertices, est_vertices)
-
+            
             err = (
                 *np.subtract(pos, sm.real_spacecraft_pos),
                 deg(angle_between_ypr(rel_rot, real_rel_rot)),
                 max_shift,
             )
-
-        return etime, params, noise, pos, map(deg, rel_rot), fvals, err
+        
+        return rtime, params, noise, pos, map(deg, rel_rot), fvals, err
     
     
     def _run_algo(self, imgfile_, **kwargs):
@@ -373,7 +397,9 @@ class TestLoop():
                 pr = cProfile.Profile()
                 pr.enable()
             
-            ok = False
+            ok, rtime = False, False
+            timer = tools.Stopwatch()
+            timer.start()
             method = kwargs.pop('method', False)
             if method == 'keypoint+':
                 try:
@@ -389,6 +415,7 @@ class TestLoop():
                     glWidget.parent().keypoint.solve_pnp(imgfile, **kwargs)
                     #    tr.print_diff()
                     ok = True
+                    rtime = glWidget.parent().keypoint.timer.elapsed
                 except PositioningException as e:
                     print(str(e))
             elif method == 'centroid':
@@ -399,13 +426,15 @@ class TestLoop():
                     print(str(e))
             elif method == 'phasecorr':
                 ok = glWidget.parent().phasecorr.findstate(imgfile, **kwargs)
+            timer.stop()
+            rtime = rtime if rtime else timer.elapsed
             self._algorithm_finished.set()
             
             if PROFILE:
                 pr.disable()
                 pr.dump_stats(PROFILE_OUT_FILE)
             
-            return ok
+            return ok, rtime
         
         self.window.tsRun.emit((
             run_this_from_qt_thread,

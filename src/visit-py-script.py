@@ -80,7 +80,7 @@ while True:
         csock.send(fname.encode('utf-8'))
     csock.close()
     since_reset += 1
-    if since_reset >= 200:
+    if since_reset >= 100:
         _reset()
         since_reset = 0
 

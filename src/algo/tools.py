@@ -1,5 +1,6 @@
 
 import math
+import time
 
 import numpy as np
 import quaternion
@@ -11,6 +12,40 @@ from settings import *
 class PositioningException(Exception):
 	pass
 
+class Stopwatch:
+    # from https://www.safaribooksonline.com/library/view/python-cookbook-3rd/9781449357337/ch13s13.html
+    
+    def __init__(self, func=time.perf_counter):
+        self.elapsed = 0.0
+        self._func = func
+        self._start = None
+
+    def start(self):
+        if self._start is not None:
+            raise RuntimeError('Already started')
+        self._start = self._func()
+
+    def stop(self):
+        if self._start is None:
+            raise RuntimeError('Not started')
+        end = self._func()
+        self.elapsed += end - self._start
+        self._start = None
+        
+    def reset(self):
+        self.elapsed = 0.0
+
+    @property
+    def running(self):
+        return self._start is not None
+
+    def __enter__(self):
+        self.start()
+        return self
+
+    def __exit__(self, *args):
+        self.stop()
+        
 
 def intrinsic_camera_mx(w=CAMERA_WIDTH, h=CAMERA_HEIGHT):
     x = w/2
@@ -181,6 +216,8 @@ def normalize_v(v):
 def wrap_rads(a):
     return (a+math.pi)%(2*math.pi)-math.pi
 
+def wrap_degs(a):
+    return (a+180)%360-180
 
 def eccentric_anomaly(eccentricity, mean_anomaly, tol=1e-6):
     # from http://www.jgiesen.de/kepler/kepler.html
@@ -373,3 +410,32 @@ def solve_q_bf(src_q, dst_q):
 #    #quat = np.array(quat).reshape(-1,).tolist()
 #    
 #    return np.quaternion(*quat)
+
+import tracemalloc
+import os
+import linecache
+
+def display_top(top_stats, key_type='lineno', limit=10):
+#    snapshot = snapshot.filter_traces((
+#        tracemalloc.Filter(False, "<frozen importlib._bootstrap>"),
+#        tracemalloc.Filter(False, "<unknown>"),
+#    ))
+#    top_stats = snapshot.statistics(key_type, cumulative=True)
+
+    print("Top %s lines" % limit)
+    for index, stat in enumerate(top_stats[:limit], 1):
+        frame = stat.traceback[0]
+        # replace "/path/to/module/file.py" with "module/file.py"
+        filename = os.sep.join(frame.filename.split(os.sep)[-2:])
+        print("#%s: %s:%s: %.1f MB (x%.0f)"
+              % (index, filename, frame.lineno, stat.size/1024/1024, stat.count))
+        line = linecache.getline(frame.filename, frame.lineno).strip()
+        if line:
+            print('    %s' % line)
+
+    other = top_stats[limit:]
+    if other:
+        size = sum(stat.size for stat in other)
+        print("%s other: %.1f MB" % (len(other), size/1024/1024))
+    total = sum(stat.size for stat in top_stats)
+    print("Total allocated size: %.1f MB" % (total/1024/1024))

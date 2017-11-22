@@ -7,11 +7,7 @@ import cv2
 
 from settings import *
 from algo import tools
-from algo.tools import PositioningException
-
-# TODO:
-#  - call solve_pnp from visnav.py (& testloop.py)
-# 
+from algo.tools import PositioningException, Stopwatch
 
 class KeypointAlgo():
     (
@@ -25,6 +21,7 @@ class KeypointAlgo():
         self.system_model = system_model
         self.glWidget = glWidget
         self.debug_filebase = None
+        self.timer = None
         
         self._latest_detector = None
         
@@ -37,13 +34,16 @@ class KeypointAlgo():
         self.SCENE_SCALE_STEP = 1.4142 # sqrt(2) scale scene image by this amount if fail
         self.MAX_SCENE_SCALE_STEPS = 5 # from mid range 64km to near range 16km (64/sqrt(2)**(5-1) => 16)
 
-
-    def solve_pnp(self, orig_sce_img, feat=AKAZE, vary_scale=False, scale_cam_img=False, **kwargs):
+        
+    def solve_pnp(self, orig_sce_img, feat=SIFT, vary_scale=False, scale_cam_img=False, **kwargs):
         # maybe load scene image
         if isinstance(orig_sce_img, str):
             self.debug_filebase = orig_sce_img[0:-4]+self.DEBUG_IMG_POSTFIX
             self.glWidget.loadTargetImage(orig_sce_img, remove_bg=False)
             orig_sce_img = self.glWidget.full_image
+
+        self.timer = Stopwatch()
+        self.timer.start()
 
         # render model image
         render_z = -MIN_MED_DISTANCE
@@ -61,8 +61,8 @@ class KeypointAlgo():
         # get keypoints and descriptors
         ref_kp, ref_desc = self._detect_features(ref_img, feat, nfeats=4500)
         
-        # AKAZE is truly scale invariant (couldnt get ORB to work as good)
-        vary_scale = False if feat==self.AKAZE else vary_scale
+        # AKAZE, SIFT, SURF are truly scale invariant, couldnt get ORB to work as good
+        vary_scale = vary_scale if feat==self.ORB else False
         
         ok = False
         for i in range(self.MAX_SCENE_SCALE_STEPS):
@@ -120,6 +120,8 @@ class KeypointAlgo():
             raise PositioningException('Not enough inliers even if tried scaling scene image down x%.1f'%(1/sce_img_sc))
         elif vary_scale:
             print('success at x%.1f'%(1/sce_img_sc))
+        
+        self.timer.stop()
         
         # set model params to solved pose & pos
         self._set_sc_from_ast_rot_and_trans(rvec, tvec)
@@ -251,6 +253,8 @@ class KeypointAlgo():
 
     
     def _draw_matches(self, img1, img1_sc, kp1, img2, img2_sc, kp2, matches, pause=True, show=True, label='matches'):
+        self.timer.stop()
+        
         matches = list([m] for m in matches)
         draw_params = {
 #            matchColor: (88, 88, 88),
@@ -289,7 +293,8 @@ class KeypointAlgo():
             cv2.imshow(label, img3)
         if pause:
             cv2.waitKey()
-    
+        
+        self.timer.start()
     
     def _solve_pnp_ransac(self, sce_kp_2d, ref_kp_3d):
         

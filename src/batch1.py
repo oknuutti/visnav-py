@@ -10,9 +10,6 @@ from scipy import optimize
 from visnav import MainThread
 from testloop import TestLoop
 
-## profile by e.g. "D:\Program Files\Anaconda3\python" -m cProfile -o profile.out src\batch1.py keypoint 10
-## then snakeviz profile.out
-
 if __name__ == '__main__':
     th1 = MainThread(1)
     th1.start()

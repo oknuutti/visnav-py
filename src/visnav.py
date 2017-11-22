@@ -1,37 +1,4 @@
 
-# TODO:
-#- nothing
-#   "test framework for vision based localization algorithms targeting an asteroid"
-#   + nothing to implement
-#   - scarce results
-#
-#- better projection (rendering, fft?)
-#   "mid-range vision based localization using phase correlation for a cubesat asteroid mission"
-#	+ fast to implement
-#	+ some science
-#
-#- landmark based (actual science)
-#   "vision based localization for a cubesat asteroid mission"
-#	+ all current methods use => good for comparision
-#	+ science & cv
-#	+ good accuracy
-#	- slow to implement
-#
-# - better centroid (gp-regression?)
-#   "cubesat-asteroid distance estimation from navcam image using gaussian process regression"
-#	+ can use previous knowledge
-#	+ fast to run
-#	+ fast to implement
-#	- bad accuracy
-#	- no science
-#
-#- nn based (wheee?!)
-#   "vision based localization using deep learning for a cubesat asteroid mission"
-#	+ new, hyped stuff
-#	+ science & cv
-#	- slow to implement
-#
-
 import sys
 import math
 import threading
@@ -96,7 +63,7 @@ class Window(QWidget):
             fun, args, kwargs = f[0], f[1] or [], f[2] or {}
             self.tsRunResult = fun(*args, **kwargs)
         self.tsRun.connect(tsRunHandler)
-        self.tsRunResult = None
+        self.tsRunResult = None, float('nan')
         
         self.sliders = dict(
             (n, self.slider(p))

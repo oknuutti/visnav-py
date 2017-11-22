@@ -34,6 +34,9 @@ LOG_DIR = os.path.join(SCRIPT_DIR, '../logs/')
 VISIT_SCRIPT_PY_FILE = os.path.join(SCRIPT_DIR, 'visit-py-script.py')
 VISIT_PORT = 8787
 
+## profile algorithm by setting PROFILE to True
+##  - profile testing setup by "D:\Program Files\Anaconda3\python" -m cProfile -o profile.out src\batch1.py keypoint 10
+## then snakeviz profile.out
 PROFILE = False
 PROFILE_OUT_FILE = os.path.join(SCRIPT_DIR, '../profile.out')
 
