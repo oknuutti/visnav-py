@@ -20,6 +20,7 @@ import algo.tools as tools
 from algo.tools import (ypr_to_q, q_to_ypr, q_times_v, q_to_unitbase, normalize_v,
                    wrap_rads, solar_elongation, angle_between_ypr)
 from algo.tools import PositioningException
+from algo.keypoint import KeypointAlgo
 #from algo.centroid import CentroidAlgo
 
 #from memory_profiler import profile
@@ -90,7 +91,16 @@ class TestLoop():
                 'x err sc pos', 'y err sc pos', 'z err sc pos', 'rot error', 'shift error km',
                 'lat error', 'dist error', 'rel shift error'
             ))+'\n')
-
+        
+        if kwargs.get('use_feature_db', False):
+            lats, lons = tools.bf_lat_lon(KeypointAlgo.FDB_TOL)
+            max_feat_mem = KeypointAlgo.FDB_MAX_MEM * len(lats) * len(lons)
+            print('Using feature DB not bigger than %.1fMB (%.0f x %.0fkB)'%(
+                    max_feat_mem/1024/1024,
+                    len(lats) * len(lons),
+                    KeypointAlgo.FDB_MAX_MEM/1024))
+            
+            
         ex_times, laterrs, disterrs, roterrs, shifterrs, fails, li = [], [], [], [], [], 0, 0
         timer = tools.Stopwatch()
         timer.start()
@@ -276,7 +286,7 @@ class TestLoop():
         light = normalize_v(q_times_v(ast_q_true.conj(), np.array([as_x, as_y, as_z])))
         focus = q_times_v(ast_q_true.conj(), np.array([sc_ex, sc_ey, sc_ez]))
         view_x, ty, view_z = q_to_unitbase(ast_q_true.conj() * sco_q)
-
+        
         # in VISIT focus & view_normal are vectors pointing out from the object,
         # light however points into the object
         view_x = -view_x

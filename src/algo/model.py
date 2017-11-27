@@ -263,14 +263,21 @@ class SystemModel():
                 (self.x_rot.value, self.y_rot.value, self.z_rot.value)
         )))
         
-    def gl_sc_asteroid_rel_q(self):
+    def gl_sc_asteroid_rel_q(self, discretize_tol=False):
         """ rotation of asteroid relative to spacecraft in opengl coords """
         self.update_asteroid_model()
-        sc_ast_rel_q = SystemModel.sc2gl_q.conj() * self.sc_asteroid_rel_q() # why cant have: * SystemModel.sc2gl_q ??
+        sc_ast_rel_q =  self.sc_asteroid_rel_q() # why cant have: * SystemModel.sc2gl_q ??
+        
+        if discretize_tol:
+            qq = tools.discretize_q(sc_ast_rel_q, discretize_tol)
+            err_q = sc_ast_rel_q*qq.conj()
+            sc_ast_rel_q = qq
+        
+        sc_ast_rel_q = SystemModel.sc2gl_q.conj()*sc_ast_rel_q
         if not BATCH_MODE and DEBUG:
             print('asteroid x-axis: %s'%tools.q_times_v(sc_ast_rel_q, np.array([1, 0, 0])))
         
-        return sc_ast_rel_q
+        return sc_ast_rel_q, err_q if discretize_tol else False
     
     
     def sc_asteroid_rel_q(self, time=None):
@@ -314,11 +321,12 @@ class SystemModel():
         return tools.q_times_mx(self.sc_asteroid_rel_q(), self.asteroid.vertices) \
                 + tools.q_times_v(SystemModel.sc2gl_q, self.spacecraft_pos)
     
-    def light_rel_dir(self):
+    def light_rel_dir(self, err_q=False):
         """ direction of light relative to spacecraft in opengl coords """
         ast_v = tools.normalize_v(self.asteroid.position(self.time.value))
         sc_q = self.spacecraft_q()
-        return tools.q_times_v(SystemModel.sc2gl_q.conj() * sc_q.conj(), ast_v)
+        err_q = (err_q or np.quaternion(1,0,0,0))
+        return tools.q_times_v(SystemModel.sc2gl_q.conj() * err_q.conj() * sc_q.conj(), ast_v)
         
     def solar_elongation(self):
         ast_v = self.asteroid.position(self.time.value)

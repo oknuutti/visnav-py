@@ -17,6 +17,9 @@ class KeypointAlgo():
         SURF,
     ) = range(4)
     
+    FDB_MAX_MEM = 192*1024      # in bytes
+    FDB_TOL = math.radians(7)   # features from db never more than 6 deg off
+    
     def __init__(self, system_model, glWidget):
         self.system_model = system_model
         self.glWidget = glWidget
@@ -35,7 +38,7 @@ class KeypointAlgo():
         self.MAX_SCENE_SCALE_STEPS = 5 # from mid range 64km to near range 16km (64/sqrt(2)**(5-1) => 16)
 
         
-    def solve_pnp(self, orig_sce_img, feat=SIFT, vary_scale=False, scale_cam_img=False, **kwargs):
+    def solve_pnp(self, orig_sce_img, feat=ORB, use_feature_db=False, scale_cam_img=False, vary_scale=False, **kwargs):
         # maybe load scene image
         if isinstance(orig_sce_img, str):
             self.debug_filebase = orig_sce_img[0:-4]+self.DEBUG_IMG_POSTFIX
@@ -43,13 +46,15 @@ class KeypointAlgo():
             orig_sce_img = self.glWidget.full_image
 
         self.timer = Stopwatch()
-        self.timer.start()
+        if not use_feature_db:
+            self.timer.start()
 
         # render model image
         render_z = -MIN_MED_DISTANCE
         orig_z = self.system_model.z_off.value
         self.system_model.z_off.value = render_z
-        ref_img, depth_result = self.glWidget.render(depth=True)
+        ref_img, depth_result = self.glWidget.render(depth=True, discretize_tol=KeypointAlgo.FDB_TOL)
+        discretization_err_q = self.glWidget.latest_discretization_err_q if use_feature_db else False
         self.system_model.z_off.value = orig_z
         
         # scale to match scene image asteroid extent in pixels
@@ -59,7 +64,18 @@ class KeypointAlgo():
                 interpolation=cv2.INTER_CUBIC)
         
         # get keypoints and descriptors
-        ref_kp, ref_desc = self._detect_features(ref_img, feat, nfeats=4500)
+        desc_max_mem = KeypointAlgo.FDB_MAX_MEM if use_feature_db else 300*1024
+        ref_kp, ref_desc = self._detect_features(ref_img, feat, maxmem=desc_max_mem) # 120kB
+        
+        if use_feature_db:
+            # if have ready calculated feature keypoints and descriptors,
+            # assume finding correct set from features db is very fast compared to
+            # the rest of the algorithm
+            self.timer.start()
+        
+        if False and DEBUG:
+            sz = self._latest_detector.descriptorSize() # in bytes
+            print('Descriptor mem use: %.0f x %.0fB => %.1f kB'%(len(ref_kp), sz, len(ref_kp)*sz/1024))
         
         # AKAZE, SIFT, SURF are truly scale invariant, couldnt get ORB to work as good
         vary_scale = vary_scale if feat==self.ORB else False
@@ -75,7 +91,7 @@ class KeypointAlgo():
                             fx=sce_img_sc, fy=sce_img_sc, 
                             interpolation=cv2.INTER_CUBIC)
                 
-                sce_kp, sce_desc = self._detect_features(sce_img, feat, nfeats=1500)
+                sce_kp, sce_desc = self._detect_features(sce_img, feat, maxmem=desc_max_mem)
 
                 # match descriptors
                 try:
@@ -124,7 +140,7 @@ class KeypointAlgo():
         self.timer.stop()
         
         # set model params to solved pose & pos
-        self._set_sc_from_ast_rot_and_trans(rvec, tvec)
+        self._set_sc_from_ast_rot_and_trans(rvec, tvec, discretization_err_q)
         if not BATCH_MODE or DEBUG:
             rp_err = self._reprojection_error(sce_kp_2d, ref_kp_3d, inliers, rvec, tvec)
             sh_err = self.system_model.calc_shift_err()
@@ -141,26 +157,31 @@ class KeypointAlgo():
             self.glWidget.saveViewToFile(self.debug_filebase+'r.png')
         
     
-    def _detect_features(self, img, feat, **kwargs):
+    def _detect_features(self, img, feat, maxmem, **kwargs):
         if feat == KeypointAlgo.ORB:
-            self._latest_detector = self._orb_detector(**kwargs)
+            nfeats = int(maxmem/32)
+            self._latest_detector = self._orb_detector(nfeats=nfeats, **kwargs)
         elif feat == KeypointAlgo.AKAZE:
-            self._latest_detector = self._akaze_detector(**kwargs)
+            nfeats = int(maxmem/61)
+            self._latest_detector = self._akaze_detector(nfeats=nfeats, **kwargs)
         elif feat == KeypointAlgo.SIFT:
-            self._latest_detector = self._sift_detector(**kwargs)
+            nfeats = int(maxmem/128)
+            self._latest_detector = self._sift_detector(nfeats=nfeats, **kwargs)
         elif feat == KeypointAlgo.SURF:
-            self._latest_detector = self._sift_detector(**kwargs)
+            nfeats = int(maxmem/64)
+            self._latest_detector = self._surf_detector(nfeats=nfeats, **kwargs)
         else:
             assert False, 'invalid feature: %s'%(feat,)
-        return self._latest_detector.detectAndCompute(img, None)
+        kp, dc = self._latest_detector.detectAndCompute(img, None)
+        return None if kp is None else kp[:nfeats], None if dc is None else dc[:nfeats]
         
     
     def _orb_detector(self, nfeats=1000):
         params = {
+            'nfeatures':nfeats,  # default: 500
             'edgeThreshold':31,  # default: 31
             'fastThreshold':20,  # default: 20
             'firstLevel':0,      # always 0
-            'nfeatures':nfeats,  # default: 500
             'nlevels':8,         # default: 8
             'patchSize':31,      # default: 31
             'scaleFactor':1.2,   # default: 1.2
@@ -175,13 +196,13 @@ class KeypointAlgo():
             'descriptor_channels':3,
             'descriptor_size':0,
             'diffusivity':cv2.KAZE_DIFF_PM_G2,
-            'threshold':0.001,
+            'threshold':0.001,      # default: 0.001
             'nOctaves':4,
             'nOctaveLayers':4,
         }
         return cv2.AKAZE_create(**params)
         
-    def _sift_detector(self, nfeats=0):
+    def _sift_detector(self, nfeats=1000):
         params = {
             'nfeatures':nfeats,
             'nOctaveLayers':3,
@@ -338,7 +359,7 @@ class KeypointAlgo():
         return points_3d
     
     
-    def _set_sc_from_ast_rot_and_trans(self, rvec, tvec, rotate_sc=False):
+    def _set_sc_from_ast_rot_and_trans(self, rvec, tvec, discretization_err_q, rotate_sc=False):
         sm = self.system_model
         
         # rotate to gl frame from opencv camera frame
@@ -359,14 +380,17 @@ class KeypointAlgo():
         
         sm.spacecraft_pos = new_sc_pos
         
+        err_q = discretization_err_q or np.quaternion(1,0,0,0)
         if rotate_sc:
             sc2cv_q = sm.frm_conv_q(sm.SPACECRAFT_FRAME, sm.OPENCV_FRAME)
-            sc_delta_q =  sc2cv_q * cv_cam_delta_q * sc2cv_q.conj()
-            sm.rotate_spacecraft(sc_delta_q.conj())
+            sc_delta_q = err_q * sc2cv_q * cv_cam_delta_q.conj() * sc2cv_q.conj()
+            sm.rotate_spacecraft(sc_delta_q)
         else:
             sc2cv_q = sm.frm_conv_q(sm.SPACECRAFT_FRAME, sm.OPENCV_FRAME)
             sc_q = sm.spacecraft_q()
             
-            frame_q = sc_q * sc2cv_q
+            frame_q = sc_q * err_q * sc2cv_q
             ast_delta_q = frame_q * cv_cam_delta_q * frame_q.conj()
-            sm.rotate_asteroid(ast_delta_q)
+            
+            err_corr_q = sc_q * err_q.conj() * sc_q.conj()
+            sm.rotate_asteroid(err_corr_q * ast_delta_q)

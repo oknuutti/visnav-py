@@ -234,6 +234,8 @@ class GLWidget(QOpenGLWidget):
         self._render = True
         self._algo_render = False
         self._center_model = False
+        self._discretize_tol = False
+        self.latest_discretization_err_q = False
         
         self._noise_image = os.path.join(SCRIPT_DIR, '../data/noise-fg.png')
         
@@ -375,16 +377,20 @@ class GLWidget(QOpenGLWidget):
             x, y = 0, 0
         
         # get object rotation and turn it a bit based on cropping effect
-        q = m.gl_sc_asteroid_rel_q()
+        q, err_q = m.gl_sc_asteroid_rel_q(self._discretize_tol)
+        if self._discretize_tol:
+            self.latest_discretization_err_q = err_q
+        
         qfin = (q * q_crop.conj())
         rv = tools.q_to_angleaxis(qfin)
 
-        # light direction, translation, rotation
-        res = (m.light_rel_dir(), (x, y, z), (math.degrees(rv[0]), *rv[1:]))
-        #print('%s'%(res,))
-        return res
+        # light direction
+        light = m.light_rel_dir(err_q)
         
-
+        res = (light, (x, y, z), (math.degrees(rv[0]),)+tuple(rv[1:]))
+        return res
+    
+    
     def paintGL(self):
         if self._algo_render:
             self.gl.glDisable(self.gl.GL_BLEND)
@@ -488,10 +494,11 @@ class GLWidget(QOpenGLWidget):
     def saveViewToFile(self, imgfile):
         cv2.imwrite(imgfile, self.render(center=False))
  
-    def render(self, center=True, depth=False):
+    def render(self, center=True, depth=False, discretize_tol=False):
         if not self._render:
             self._rendOpts()
         self._algo_render = True
+        self._discretize_tol = discretize_tol
         tmp = self._center_model
         self._center_model = center
         
@@ -501,6 +508,7 @@ class GLWidget(QOpenGLWidget):
             dr = self.saveView(depth=True)
         
         self._center_model = tmp
+        self._discretize_tol = False
         self._algo_render = False
         if not self._render:
             self._projOpts()
@@ -618,6 +626,12 @@ class GLWidget(QOpenGLWidget):
         
         self.gl.glEnd()
         self.gl.glEndList()
+        
+        if DEBUG:
+            # assume all 32bit (4B) variables, no reuse of vertices
+            # => triangle count x (3 vertices + 1 normal) x 3d vectors x bytes per variable
+            mem_needed = len(model.triangles) * 4 * 3 * 4
+            print('3D model mem use: %.0fx %.0fB => %.1fMB'%(len(model.triangles), 4*3*4, mem_needed/1024/1024))
 
         return genList
 

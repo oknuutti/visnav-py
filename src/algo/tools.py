@@ -256,18 +256,33 @@ def solar_elongation(ast_v, sc_q):
     return elong, direc
 
 
+def find_nearest(array, value):
+    idx = (np.abs(array-value)).argmin()
+    return array[idx]
+
+
+def discretize_q(q, tol):
+    """
+    simulate feature database by giving closest lat & lon with given tolerance
+    and set roll to zero as feature detectors are rotation invariant
+    """
+    
+    lat, lon, roll = q_to_ypr(q.conj())
+    
+    dblat, dblon = bf_lat_lon(tol)
+    nlat = find_nearest(dblat, lat)
+    nlon = find_nearest(dblon, lon)
+    
+    nq0 = ypr_to_q(nlat, nlon, 0).conj()
+    return nq0
+    
+
 def bf_lat_lon(tol):
     # tol**2 == (step/2)**2 + (step/2)**2   -- 7deg is quite nice in terms of len(lon)*len(lat) == 1260
     step = math.sqrt(2)*tol
-    
-    lon_steps = np.array(range(math.ceil(2*math.pi/step)))[:-1]
-    lon = (2*math.pi/(len(lon_steps)+1)) * lon_steps
-    
-    lat_steps = np.array(range(math.ceil(math.pi/step)))[:-1]
-    lat_steps = np.concatenate(-np.flip(lat_steps,0), lat_steps[1:])
-    lat = (math.pi/(len(lat_steps)+2)) * lat_steps
-    
-    return lon, lat
+    lat_steps = np.linspace(-math.pi/2, math.pi/2, num=math.ceil(math.pi/step), endpoint=False)[1:]
+    lon_steps = np.linspace(-math.pi, math.pi, num=math.ceil(2*math.pi/step), endpoint=False)
+    return lat_steps, lon_steps
 
 
 def interp2(array, x, y):

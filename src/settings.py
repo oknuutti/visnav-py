@@ -43,6 +43,6 @@ PROFILE_OUT_FILE = os.path.join(SCRIPT_DIR, '../profile.out')
 START_IN_THREAD = False
 USE_IMG_LABEL_FOR_SC_POS = True
 BATCH_MODE = False
-DEBUG = False
+DEBUG = True
 
 USE_ICRS = True # if true, use barycentric equatorial system, else heliocentric ecliptic
