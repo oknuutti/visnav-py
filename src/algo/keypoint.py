@@ -53,7 +53,7 @@ class KeypointAlgo():
         render_z = -MIN_MED_DISTANCE
         orig_z = self.system_model.z_off.value
         self.system_model.z_off.value = render_z
-        ref_img, depth_result = self.glWidget.render(depth=True, discretize_tol=KeypointAlgo.FDB_TOL)
+        ref_img, depth_result = self.glWidget.render(depth=True, discretize_tol=KeypointAlgo.FDB_TOL if use_feature_db else False)
         discretization_err_q = self.glWidget.latest_discretization_err_q if use_feature_db else False
         self.system_model.z_off.value = orig_z
         
