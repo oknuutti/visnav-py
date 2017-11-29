@@ -23,8 +23,8 @@ from algo.keypoint import KeypointAlgo
 from algo.mixed import MixedAlgo
 from algo.tools import PositioningException
 
-import obj_loader
-import lbl_loader
+from iotools import objloader
+from iotools import lblloader
 
 class MainThread(threading.Thread):
     def __init__(self, counter):
@@ -595,7 +595,7 @@ class GLWidget(QOpenGLWidget):
     def loadTargetImageMeta(self, src):
         if True:
             # FIX: currently doesnt correspond with what is shown
-            lbl_loader.load_image_meta(src, self.systemModel)
+            lblloader.load_image_meta(src, self.systemModel)
         else:
             self.systemModel.ast_x_rot.value = -83.88
             self.systemModel.ast_y_rot.value = 74.38
@@ -620,11 +620,11 @@ class GLWidget(QOpenGLWidget):
         #self.gl.glMaterialfv(self.gl.GL_FRONT, self.gl.GL_SPECULAR, (0,0,0,1));
         #self.gl.glMaterialfv(self.gl.GL_FRONT, self.gl.GL_SHININESS, (0,));
         
-        model = obj_loader.OBJ(TARGET_MODEL_FILE)
+        model = objloader.OBJ(TARGET_MODEL_FILE)
         vertices = np.array(model.vertices)
         self.systemModel.asteroid.vertices = vertices
         if ADD_SHAPE_MODEL_NOISE:
-            sup = obj_loader.OBJ(SHAPE_MODEL_NOISE_SUPPORT)
+            sup = objloader.OBJ(SHAPE_MODEL_NOISE_SUPPORT)
             vertices = tools.apply_noise(vertices,
                     support=np.array(sup.vertices),
                     len_sc=SHAPE_MODEL_NOISE_LEN_SC,

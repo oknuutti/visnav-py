@@ -26,7 +26,7 @@ def get_file(url, path):
 if __name__ == '__main__':
     base = 'https://imagearchives.esac.esa.int'
     script_dir = os.path.dirname(__file__)
-    save_dir = os.path.join(script_dir, '../data/targetimgs')
+    save_dir = os.path.join(script_dir, '../../data/targetimgs')
     cid = 63
     skip = 39+24
     pid_s = 6791+skip

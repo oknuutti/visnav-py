@@ -103,10 +103,20 @@ if __name__ == '__main__':
         settings.TARGET_MODEL_FILE = os.path.join(settings.SCRIPT_DIR, '../data/CSHP_DV_130_01_LORES_00200.obj') # _XLRES_, _LORES_        
         settings.VIEW_WIDTH = 768
         settings.VIEW_HEIGHT = 768
-    
+        
+
     from settings import *
     from visnav import MainThread
     from testloop import TestLoop
+
+    if 'fdb' in m:
+        from algo.keypoint import KeypointAlgo
+        lats, lons = tools.bf_lat_lon(KeypointAlgo.FDB_TOL)
+        max_feat_mem = KeypointAlgo.FDB_MAX_MEM * len(lats) * len(lons)
+        print('Using feature DB not bigger than %.1fMB (%.0f x %.0fkB)'%(
+                max_feat_mem/1024/1024,
+                len(lats) * len(lons),
+                KeypointAlgo.FDB_MAX_MEM/1024))    
 
     th1 = MainThread(1)
     th1.start()

@@ -5,23 +5,18 @@ from math import degrees as deg
 from math import radians as rad
 import os
 import threading
-import socket
-import json
-import time
-from subprocess import call
-#from multiprocessing import cpu_count
 from datetime import datetime as dt
 
 import numpy as np
 import quaternion
 from astropy.coordinates import spherical_to_cartesian
 
+from iotools.visitclient import VisitClient
+from algo.model import Asteroid
 import algo.tools as tools
 from algo.tools import (ypr_to_q, q_to_ypr, q_times_v, q_to_unitbase, normalize_v,
                    wrap_rads, solar_elongation, angle_between_ypr)
 from algo.tools import PositioningException
-from algo.keypoint import KeypointAlgo
-#from algo.centroid import CentroidAlgo
 
 #from memory_profiler import profile
 #import tracemalloc
@@ -31,13 +26,15 @@ from algo.keypoint import KeypointAlgo
 #   - cv2.solvePnPRansac (ref_kp_3d?)
 #   - astropy, many places
 
-VISIT_OUTFILE_PREFIX = "visitout"
+
 
 class TestLoop():
+    FILE_PREFIX = 'iteration'
+    
     def __init__(self, window):
         self.window = window
         self.exit = False
-        self._sock = None
+        self._visit_client = VisitClient()
         self._algorithm_finished = None
         
         # gaussian sd in seconds
@@ -55,6 +52,18 @@ class TestLoop():
         # minimum allowed elongation in deg
         self._min_elong = 45
         
+        # transients
+        self._imgdir = None
+        self._logfile = None
+        self._fval_logfile = None
+        self._run_times = []
+        self._laterrs = []
+        self._disterrs = []
+        self._roterrs = []
+        self._shifterrs = []
+        self._fails = 0        
+        self._timer = None
+        
         def handle_close():
             self.exit = True
             if self._algorithm_finished:
@@ -62,159 +71,63 @@ class TestLoop():
             
         self.window.closing.append(handle_close)
         
-    def _maybe_exit(self):
-        if self.exit:
-            print('Exiting...')
-            self._cleanup()
-            quit()
-
+        
+    # main method
     def run(self, times, log_prefix='test-', cleanup=True, **kwargs):
+        
         # write logfile header
-        logbody = log_prefix + dt.now().strftime('%Y%m%d-%H%M%S')
-        imgdir = os.path.join(LOG_DIR, logbody)
-        os.mkdir(imgdir)
+        self._init_log(log_prefix)
         
-        fval_logfile = LOG_DIR + logbody + '-fvals.log'
-        logfile = LOG_DIR + logbody + '.log'
-        with open(logfile, 'w') as file:
-            file.write('\t'.join((
-                'iter', 'date', 'execution time',
-                'time', 'ast lat', 'ast lon', 'ast rot',
-                'sc lat', 'sc lon', 'sc rot', 
-                'sol elong', 'light dir', 'x sc pos', 'y sc pos', 'z sc pos',
-                'rel yaw', 'rel pitch', 'rel roll', 
-                'imgfile', 'optfun val',
-                'time dev', 'ast lat dev', 'ast lon dev', 'ast rot dev',
-                'sc lat dev', 'sc lon dev', 'sc rot dev', 'total dev angle',
-                'x est sc pos', 'y est sc pos', 'z est sc pos',
-                'yaw rel est', 'pitch rel est', 'roll rel est',
-                'x err sc pos', 'y err sc pos', 'z err sc pos', 'rot error', 'shift error km',
-                'lat error', 'dist error', 'rel shift error'
-            ))+'\n')
-        
-        if kwargs.get('use_feature_db', False):
-            lats, lons = tools.bf_lat_lon(KeypointAlgo.FDB_TOL)
-            max_feat_mem = KeypointAlgo.FDB_MAX_MEM * len(lats) * len(lons)
-            print('Using feature DB not bigger than %.1fMB (%.0f x %.0fkB)'%(
-                    max_feat_mem/1024/1024,
-                    len(lats) * len(lons),
-                    KeypointAlgo.FDB_MAX_MEM/1024))
-            
-            
-        ex_times, laterrs, disterrs, roterrs, shifterrs, fails, li = [], [], [], [], [], 0, 0
-        timer = tools.Stopwatch()
-        timer.start()
-#        tracemalloc.start(50)
+        li = 0
+        sm = self.window.systemModel
         
         for i in range(times):
-#            if i==1:
-#                gc.collect()
-#                snapshot1 = tracemalloc.take_snapshot()
-            
             self._maybe_exit()
             
-            etime, params, noise, pos, rel_rot, fvals, err = \
-                    self._mainloop(imgdir, **kwargs)
+            # generate / load system state
+            self.generate_system_state(sm)
+            
+            # add noise to current state, wipe sc pos
+            initial = self.add_noise(sm)
 
-#            print('err: %s'%(err,))
+            # save state to lbl file
+            sm.save_state(self._file(i))
+
+            # render navcam image based on noiseless state
+            imgfile = self.render_image(sm)
+            imgfile = os.path.normpath(imgfile)
+            assert imgfile == self._file(i)+'.png', \
+                   'visit file mismatch:\n%s\n<>\n%s'%(imgfile, self._file(i)+'.png')
+            self._maybe_exit()
+            
+            # maybe generate new noise for shape model
+            if ADD_SHAPE_MODEL_NOISE:
+                self._run_on_qt(lambda x: x.loadObject(), self.window.glWidget)
+            
+            # run algorithm
+            ok, rtime = self._run_algo(imgfile, **kwargs)
+            
+            # calculate results
+            results = self.calculate_result(sm, i, ok, initial, **kwargs)
+            
+            # write log entry
+            self._write_log_entry(i, rtime, *results)
 
             # print out progress
             if math.floor(100*i/times) > li:
                 print('.', end='', flush=True)
                 li += 1
 
-            # calculate distance error
-            dist = abs(params[-6])
-            if not math.isnan(err[0]):
-                lerr = math.sqrt(err[0]**2 + err[1]**2) / dist
-                derr = abs(err[2]) / dist
-                rerr = abs(err[3])
-                serr = err[4] / dist
-                laterrs.append(lerr)
-                disterrs.append(derr)
-                roterrs.append(rerr)
-                shifterrs.append(serr)
-            else:
-                lerr = derr = rerr = serr = float('nan')
-                fails += 1
-
-            ex_times.append(etime)
-
-            # log all parameter values, timing & errors into a file
-            with open(logfile, 'a') as file:
-                file.write('\t'.join(map(str, (
-                    i, dt.now().strftime("%Y-%m-%d %H:%M:%S"), etime,
-                    *params, *noise, *pos, *rel_rot, *err, lerr, derr, serr
-                )))+'\n')
-                
-            # log opt fun values in other file
-            with open(fval_logfile, 'a') as file:
-                file.write('\t'.join(map(str, fvals or []))+'\n')
-        
-#        gc.collect()
-#        snapshot2 = tracemalloc.take_snapshot()
-#        memdiff = snapshot2.compare_to(snapshot1, 'lineno')
-#        for s in memdiff[:10]:
-#            print(str(s))
-        #tools.display_top(memdiff)
-        
-        prctls = (50, 68, 95) + ((99.7,) if times>=2000 else tuple())
-        calc_prctls = lambda errs: \
-                ', '.join('%.2f' % p
-                for p in 100*np.nanpercentile(errs, prctls))
-        try:
-            laterr_pctls = calc_prctls(laterrs)
-            disterr_pctls = calc_prctls(disterrs)
-            shifterr_pctls = calc_prctls(shifterrs)
-            roterr_pctls = ', '.join(['%.2f'%p for p in np.nanpercentile(roterrs, prctls)])
-        except Exception as e:
-            print('Error calculating quantiles: %s'%e)
-            laterr_pctls = 'error'
-            disterr_pctls = 'error'
-            shifterr_pctls = 'error'
-            roterr_pctls = 'error'
-        
-        timer.stop()
-        
-        # a summary line
-        summary = (
-            '%s - t: %.1fmin (%.1fms), '
-            + 'Le: %.2f%% (%s), '
-            + 'De: %.2f%% (%s), '
-            + 'Se: %.2f%% (%s), '
-            + 'Re: %.2f° (%s), '
-            + 'fail: %.1f%% \n'
-        ) % (
-            dt.now().strftime("%Y-%m-%d %H:%M:%S"),
-            timer.elapsed/60,
-            1000*np.nanmean(ex_times),
-            100*sum(laterrs)/len(laterrs),
-            laterr_pctls,
-            100*sum(disterrs)/len(disterrs),
-            disterr_pctls,
-            100*sum(shifterrs)/len(shifterrs),
-            shifterr_pctls,
-            sum(roterrs)/len(roterrs),
-            roterr_pctls,
-            100*fails/times,
-        )
-        
-        with open(logfile, 'r') as org: data = org.read()
-        with open(logfile, 'w') as mod: mod.write(summary + data)
-        print("\n" + summary)
+        self._close_log(times)
         
         if cleanup:
             self._cleanup()
     
-    
-    def _mainloop(self, imgdir, **kwargs):
-        start_time = dt.now()
-        sm = self.window.systemModel
-        
-        # generate new noise for shape model
-        if ADD_SHAPE_MODEL_NOISE:
-            self._run_on_qt(lambda x: x.loadObject(), self.window.glWidget)
 
+    def generate_system_state(self, sm):
+        # reset asteroid axis to true values
+        sm.asteroid = Asteroid()
+        
         for i in range(100):
             ## sample params from suitable distributions
             ##
@@ -246,17 +159,11 @@ class TestLoop():
             sco_q = ypr_to_q(sco_lat, sco_lon, sco_rot)
             
             # sc_ast_p ecliptic => sc_ast_p open gl -z aligned view
-            sc_x, sc_y, sc_z = q_times_v((sco_q * sm.sc2gl_q).conj(), sc_ast_v)
+            sc_pos = q_times_v((sco_q * sm.sc2gl_q).conj(), sc_ast_v)
             
-            # true asteroid rotation state not varied
-            ax_lat_true = sm.asteroid.axis_latitude
-            ax_lon_true = sm.asteroid.axis_longitude
-            ax_phs_true = sm.asteroid.rotation_pm
-            ast_q_true = sm.asteroid.rotation_q(time)
-
             # get asteroid position so that know where sun is
             # *actually barycenter, not sun
-            as_x, as_y, as_z = as_v = sm.asteroid.position(time)
+            as_v = sm.asteroid.position(time)
             elong, direc = solar_elongation(as_v, sco_q)
 
             # limit elongation to always be more than set elong
@@ -266,30 +173,73 @@ class TestLoop():
         if elong <= rad(self._min_elong):
             assert False, 'probable infinite loop'
         
+        # put real values to model
+        sm.time.value = time
+        sm.spacecraft_pos = sc_pos
+        sm.spacecraft_rot = (deg(sco_lat), deg(sco_lon), deg(sco_rot))
+
+        # save real values so that can compare later
+        sm.time.real_value = sm.time.value
+        sm.real_spacecraft_pos = sm.spacecraft_pos
+        sm.real_spacecraft_rot = sm.spacecraft_rot
+        sm.real_asteroid_axis = sm.asteroid_axis
+
+        # get real relative position of asteroid model vertices
+        sm.real_sc_ast_vertices = sm.sc_asteroid_vertices()
+        
+        
+    def add_noise(self, sm):
+        
         ## add measurement noise to
         # - datetime (seconds)
-        meas_time = time + np.random.normal(0, self._noise_time)
+        meas_time = sm.time.real_value + np.random.normal(0, self._noise_time)
+        sm.time.value = meas_time;
+        assert np.isclose(sm.time.value, meas_time), 'Failed to set time value'
 
         # - asteroid state estimate
+        ax_lat, ax_lon, ax_phs = map(rad, sm.real_asteroid_axis)
         noise_da = np.random.uniform(0, rad(self._noise_ast_rot_axis))
         noise_dd = np.random.uniform(0, 2*math.pi)
-        meas_ax_lat = ax_lat_true + noise_da*math.sin(noise_dd)
-        meas_ax_lon = ax_lon_true + noise_da*math.cos(noise_dd)
-        meas_ax_phs = ax_phs_true + np.random.normal(0, rad(self._noise_ast_phase_shift))
+        meas_ax_lat = ax_lat + noise_da*math.sin(noise_dd)
+        meas_ax_lon = ax_lon + noise_da*math.cos(noise_dd)
+        meas_ax_phs = ax_phs + np.random.normal(0, rad(self._noise_ast_phase_shift))
+        sm.asteroid_axis = map(deg, (meas_ax_lat, meas_ax_lon, meas_ax_phs))
 
         # - spacecraft orientation measure
-        meas_sco_lat = max(-math.pi/2, min(math.pi/2, sco_lat
+        sc_lat, sc_lon, sc_rot = map(rad, sm.real_spacecraft_rot)
+        meas_sc_lat = max(-math.pi/2, min(math.pi/2, sc_lat
                 + np.random.normal(0, rad(self._noise_sco_lat))))
-        meas_sco_lon = wrap_rads(sco_lon 
+        meas_sc_lon = wrap_rads(sc_lon 
                 + np.random.normal(0, rad(self._noise_sco_lon)))
-        meas_sco_rot = wrap_rads(sco_rot
+        meas_sc_rot = wrap_rads(sc_rot
                 + np.random.normal(0, rad(self._noise_sco_rot)))
-                
-        ## based on above, call VISIT to make a target image
-        ##
-        light = normalize_v(q_times_v(ast_q_true.conj(), np.array([as_x, as_y, as_z])))
-        focus = q_times_v(ast_q_true.conj(), np.array([sc_ex, sc_ey, sc_ez]))
-        view_x, ty, view_z = q_to_unitbase(ast_q_true.conj() * sco_q)
+        sm.spacecraft_rot = map(deg, (meas_sc_lat, meas_sc_lon, meas_sc_rot))
+        
+        # wipe spacecraft position clean
+        sm.spacecraft_pos = (0, 0, -MIN_MED_DISTANCE)
+
+        # return this initial state
+        return {
+            'time': sm.time.value,
+            'ast_axis': sm.asteroid_axis,
+            'sc_rot': sm.spacecraft_rot,
+        }
+
+        
+    def render_image(self, sm):
+        """ 
+        based on real system state, call VISIT to make a target image
+        """
+        
+        ast_q = sm.real_asteroid_q()
+        as_pos = sm.asteroid.position(sm.time.real_value)
+        
+        sc_q = sm.real_spacecraft_q()
+        ast_sc_v = -q_times_v((sc_q * sm.sc2gl_q), np.array(sm.real_spacecraft_pos))
+        
+        light = normalize_v(q_times_v(ast_q.conj(), np.array(as_pos)))
+        focus = q_times_v(ast_q.conj(), ast_sc_v)
+        view_x, ty, view_z = q_to_unitbase(ast_q.conj() * sc_q)
         
         # in VISIT focus & view_normal are vectors pointing out from the object,
         # light however points into the object
@@ -298,8 +248,8 @@ class TestLoop():
 
         # all params VISIT needs
         visit_params = {
-            'out_file':         VISIT_OUTFILE_PREFIX,
-            'out_dir':          imgdir.replace('\\', '\\\\'),
+            'out_file':         TestLoop.FILE_PREFIX,
+            'out_dir':          self._imgdir.replace('\\', '\\\\'),
             'view_angle':       CAMERA_Y_FOV,
             'out_width':        min(MAX_TEST_X_RES, CAMERA_WIDTH),
             'out_height':       min(MAX_TEST_Y_RES, CAMERA_HEIGHT),
@@ -311,77 +261,41 @@ class TestLoop():
         }
 
         # call VISIT
-        imgfile = self._render(visit_params)
-        self._maybe_exit()
+        return self._visit_client.render(visit_params)
 
-        if False:
-            tx, ty, tz = q_times_v((sco_q).conj(), sc_ast_v)
-            print('%s'%''.join('%s: %s\n'%(k,v) for k,v in (
-                ('ast_x_v', list(q_times_v(ast_q_true, np.array([1, 0, 0])))),
-                ('sc_lat', sc_lat),
-                ('sc_lon', sc_lon),
-                ('sco_lat', sco_lat),
-                ('sco_lon', sco_lon),
-                ('sco_rot', sco_rot),
-                ('ec_ast_sc_v', [sc_ex, sc_ey, sc_ez]),
-                ('sc_sc_ast_v', [tx, ty, tz]),
-                ('gl_sc_ast_v', [sc_x, sc_y, sc_z]),
-            )))
 
-        # put real values to model
-        sm.time.value = time
-        sm.spacecraft_pos = sc_x, sc_y, sc_z
-        sm.spacecraft_rot = (deg(sco_lat), deg(sco_lon), deg(sco_rot))
-        sm.asteroid.axis_latitude = ax_lat_true
-        sm.asteroid.axis_longitude = ax_lon_true
-        sm.asteroid.rotation_pm = ax_phs_true
-        sm.asteroid_rotation_from_model()
-
-        # get asteroid model vertices in target state
-        real_vertices = sm.sc_asteroid_vertices()
-
-        # save real values so that can compare later
-        sm.time.real_value = sm.time.value
-        sm.real_spacecraft_pos = sm.spacecraft_pos
-        sm.real_spacecraft_rot = sm.spacecraft_rot
-        sm.real_asteroid_axis = sm.asteroid_axis
-        
-        # set datetime, spacecraft & asteroid orientation to sample values
-        sm.time.value = meas_time; assert np.isclose(sm.time.value, meas_time), 'Failed to set time value'
-        sm.spacecraft_pos = (0, 0, -MIN_MED_DISTANCE) # set to default value
-        sm.spacecraft_rot = (deg(meas_sco_lat), deg(meas_sco_lon), deg(meas_sco_rot))
-        sm.asteroid.axis_latitude = meas_ax_lat
-        sm.asteroid.axis_longitude = meas_ax_lon
-        sm.asteroid.rotation_pm = meas_ax_phs
-        sm.asteroid_rotation_from_model() # set ast rotation params
-
-        # save state to file
-        sm.save_state(imgfile[0:-4])
-
-        # load image & run optimization algo(s)
-        ok, rtime = self._run_algo(imgfile, **kwargs)
-
+    def calculate_result(self, sm, i, ok, initial, **kwargs):
         # save function values from optimization
         fvals = self.window.phasecorr.optfun_values \
                 if ok and kwargs.get('method', False)=='phasecorr' \
                 else None
         final_fval = fvals[-1] if fvals else None
 
-        self._maybe_exit()
-
-        # assemble return values
         real_rel_rot = q_to_ypr(sm.real_sc_asteroid_rel_q())
-        params = (time, deg(ax_lat_true), deg(ax_lon_true), deg(ax_phs_true),
-                deg(sco_lat), deg(sco_lon), deg(sco_rot),
-                deg(elong), deg(direc), sc_x, sc_y, sc_z,
-                deg(real_rel_rot[0]), deg(real_rel_rot[1]), deg(real_rel_rot[2]),
-                imgfile, final_fval)
-        time_noise = meas_time - time
-        ast_rot_noise = 2*math.pi*time_noise/sm.asteroid.rotation_period + (meas_ax_phs-ax_phs_true)
-        noise = (meas_ax_lat-ax_lat_true, meas_ax_lon-ax_lon_true, ast_rot_noise,
-                meas_sco_lat-sco_lat, meas_sco_lon-sco_lon, meas_sco_rot-sco_rot)
-        dev_angle = angle_between_ypr(noise[0:3], noise[3:6])
-        noise = (time_noise,) + tuple(map(deg, noise + (dev_angle,)))
+        elong, direc = sm.solar_elongation(real=True)
+        r_ast_axis = sm.real_asteroid_axis
+        
+        # real system state
+        params = (sm.time.real_value, *r_ast_axis,
+                *sm.real_spacecraft_rot, deg(elong), deg(direc),
+                *sm.real_spacecraft_pos, *map(deg, real_rel_rot),
+                self._file(i), final_fval)
+        
+        # calculate added noise
+        #
+        time_noise = initial['time'] - sm.time.real_value
+        ast_rot_noise = (
+            initial['ast_axis'][0]-r_ast_axis[0],
+            initial['ast_axis'][1]-r_ast_axis[1],
+            360*time_noise/sm.asteroid.rotation_period
+                + (initial['ast_axis'][2]-r_ast_axis[2])
+        )
+        sc_rot_noise = tuple(np.subtract(initial['sc_rot'], sm.real_spacecraft_rot))
+        
+        dev_angle = deg(angle_between_ypr(map(rad, ast_rot_noise),
+                                          map(rad, sc_rot_noise)))
+        
+        noise = (time_noise,) + ast_rot_noise + sc_rot_noise + (dev_angle,)
         
         if not ok:
             pos = float('nan')*np.ones(3)
@@ -392,7 +306,8 @@ class TestLoop():
             pos = sm.spacecraft_pos
             rel_rot = q_to_ypr(sm.sc_asteroid_rel_q())
             est_vertices = sm.sc_asteroid_vertices()
-            max_shift = tools.sc_asteroid_max_shift_error(real_vertices, est_vertices)
+            max_shift = tools.sc_asteroid_max_shift_error(
+                    sm.real_sc_ast_vertices, est_vertices)
             
             err = (
                 *np.subtract(pos, sm.real_spacecraft_pos),
@@ -400,9 +315,122 @@ class TestLoop():
                 max_shift,
             )
         
-        return rtime, params, noise, pos, map(deg, rel_rot), fvals, err
+        return params, noise, pos, map(deg, rel_rot), fvals, err
     
     
+    def _init_log(self, log_prefix):
+        logbody = log_prefix + dt.now().strftime('%Y%m%d-%H%M%S')
+        self._imgdir = os.path.join(LOG_DIR, logbody)
+        os.mkdir(self._imgdir)
+        
+        self._fval_logfile = LOG_DIR + logbody + '-fvals.log'
+        self._logfile = LOG_DIR + logbody + '.log'
+        with open(self._logfile, 'w') as file:
+            file.write('\t'.join((
+                'iter', 'date', 'execution time',
+                'time', 'ast lat', 'ast lon', 'ast rot',
+                'sc lat', 'sc lon', 'sc rot', 
+                'sol elong', 'light dir', 'x sc pos', 'y sc pos', 'z sc pos',
+                'rel yaw', 'rel pitch', 'rel roll', 
+                'imgfile', 'optfun val',
+                'time dev', 'ast lat dev', 'ast lon dev', 'ast rot dev',
+                'sc lat dev', 'sc lon dev', 'sc rot dev', 'total dev angle',
+                'x est sc pos', 'y est sc pos', 'z est sc pos',
+                'yaw rel est', 'pitch rel est', 'roll rel est',
+                'x err sc pos', 'y err sc pos', 'z err sc pos', 'rot error',
+                'shift error km', 'lat error', 'dist error', 'rel shift error',
+            ))+'\n')
+            
+        self._run_times = []
+        self._laterrs = []
+        self._disterrs = []
+        self._roterrs = []
+        self._shifterrs = []
+        self._fails = 0
+        self._timer = tools.Stopwatch()
+        self._timer.start()
+        
+        
+    def _write_log_entry(self, i, rtime, params, noise, pos, rel_rot, fvals, err):
+            
+            # save execution time
+            self._run_times.append(rtime)
+
+            # calculate errors
+            dist = abs(params[-6])
+            if not math.isnan(err[0]):
+                lerr = math.sqrt(err[0]**2 + err[1]**2) / dist
+                derr = abs(err[2]) / dist
+                rerr = abs(err[3])
+                serr = err[4] / dist
+                self._laterrs.append(lerr)
+                self._disterrs.append(derr)
+                self._roterrs.append(rerr)
+                self._shifterrs.append(serr)
+            else:
+                lerr = derr = rerr = serr = float('nan')
+                self._fails += 1
+
+            # log all parameter values, timing & errors into a file
+            with open(self._logfile, 'a') as file:
+                file.write('\t'.join(map(str, (
+                    i, dt.now().strftime("%Y-%m-%d %H:%M:%S"), rtime,
+                    *params, *noise, *pos, *rel_rot, *err, lerr, derr, serr
+                )))+'\n')
+                
+            # log opt fun values in other file
+            with open(self._fval_logfile, 'a') as file:
+                file.write('\t'.join(map(str, fvals or []))+'\n')
+        
+        
+    def _close_log(self, times):
+        prctls = (50, 68, 95) + ((99.7,) if times>=2000 else tuple())
+        calc_prctls = lambda errs: \
+                ', '.join('%.2f' % p
+                for p in 100*np.nanpercentile(errs, prctls))
+        try:
+            laterr_pctls = calc_prctls(self._laterrs)
+            disterr_pctls = calc_prctls(self._disterrs)
+            shifterr_pctls = calc_prctls(self._shifterrs)
+            roterr_pctls = ', '.join(
+                    ['%.2f'%p for p in np.nanpercentile(self._roterrs, prctls)])
+        except Exception as e:
+            print('Error calculating quantiles: %s'%e)
+            laterr_pctls = 'error'
+            disterr_pctls = 'error'
+            shifterr_pctls = 'error'
+            roterr_pctls = 'error'
+        
+        self._timer.stop()
+        
+        # a summary line
+        summary = (
+            '%s - t: %.1fmin (%.1fms), '
+            + 'Le: %.2f%% (%s), '
+            + 'De: %.2f%% (%s), '
+            + 'Se: %.2f%% (%s), '
+            + 'Re: %.2f° (%s), '
+            + 'fail: %.1f%% \n'
+        ) % (
+            dt.now().strftime("%Y-%m-%d %H:%M:%S"),
+            self._timer.elapsed/60,
+            1000*np.nanmean(self._run_times),
+            100*sum(self._laterrs)/len(self._laterrs),
+            laterr_pctls,
+            100*sum(self._disterrs)/len(self._disterrs),
+            disterr_pctls,
+            100*sum(self._shifterrs)/len(self._shifterrs),
+            shifterr_pctls,
+            sum(self._roterrs)/len(self._roterrs),
+            roterr_pctls,
+            100*self._fails/times,
+        )
+        
+        with open(self._logfile, 'r') as org: data = org.read()
+        with open(self._logfile, 'w') as mod: mod.write(summary + data)
+        print("\n" + summary)
+
+
     def _run_algo(self, imgfile_, **kwargs_):
         def run_this_from_qt_thread(glWidget, imgfile, **kwargs):
             if PROFILE:
@@ -448,10 +476,11 @@ class TestLoop():
                 
             return ok, rtime
         
-        res = self._run_on_qt(run_this_from_qt_thread, self.window.glWidget, imgfile_, **kwargs_)
+        res = self._run_on_qt(run_this_from_qt_thread, 
+                              self.window.glWidget, imgfile_, **kwargs_)
         return res
-        
-        
+    
+    
     def _run_on_qt(self, target_func, *args_, **kwargs_):
         self._algorithm_finished = threading.Event()
         def runthis(*args, **kwargs):
@@ -463,78 +492,16 @@ class TestLoop():
         self._algorithm_finished.wait()
         return self.window.tsRunResult
     
+    def _file(self, i):
+        return os.path.normpath(
+                os.path.join(self._imgdir, self.FILE_PREFIX+'%04d'%i))
+    
     def _cleanup(self):
         self._send('quit')
 
-    def _render(self, params):
-        ok = False
-        for i in range(3):
-            self._send(json.dumps(params))
-            imgfile = self._receive()
-            if len(imgfile)>0:
-                break
-        
-        if len(imgfile)==0:
-            raise RuntimeError("Cant connect to VISIT")
-        
-        return imgfile
-        
+    def _maybe_exit(self):
+        if self.exit:
+            print('Exiting...')
+            self._cleanup()
+            quit()
 
-    def _connect(self):
-        if self._sock is None:
-            self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        
-        try:
-            res = self._sock.connect(('127.0.0.1', VISIT_PORT))
-        except ConnectionRefusedError:
-            self._visit_th = VisitThread()
-            self._visit_th.start()
-            
-            for i in range(12):
-                time.sleep(5)
-                try:
-                    self._sock.connect(('127.0.0.1', VISIT_PORT))
-                    ok = True
-                except ConnectionRefusedError:
-                    ok = False
-                if ok:
-                    break
-                
-            if not ok:
-                raise RuntimeError("Cant connect to VISIT")
-    
-    def _send(self, msg):
-        bmsg = msg.encode('utf-8')
-        totalsent = 0
-        while totalsent < len(bmsg):
-            sent = self._sock.send(bmsg[totalsent:]) \
-                    if self._sock is not None else 0
-            totalsent = totalsent + sent
-            if sent == 0:
-                self._connect()
-                totalsent = 0
-                
-        self._sock.shutdown(1)
-        
-    def _receive(self):
-        imgfile = self._sock.recv(256)
-        self._sock.close()
-        self._sock = None
-        return imgfile.decode('utf-8')
-
-
-class VisitThread(threading.Thread):
-    def __init__(self):
-        super(VisitThread, self).__init__()
-        self.threadID = 2
-        self.name = 'visit-thread'
-        self.counter = 2
-        self.window = None
-        
-    def run(self):
-        # -nowin crashes VISIT
-        call(['visit', '-cli', '-l', 'srun', '-np', '1',
-                '-s', VISIT_SCRIPT_PY_FILE])
-                
-#        call(['visit', '-cli', '-l', 'srun', '-np', '%d'%int(cpu_count()/2),
-#               '-s', VISIT_SCRIPT_PY_FILE]) # multiple threads seemed slower

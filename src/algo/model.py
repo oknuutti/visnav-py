@@ -118,6 +118,7 @@ class SystemModel():
     
     def __init__(self, *args, **kwargs):
         self.asteroid = Asteroid()
+        self.real_sc_ast_vertices = None
         
         # spacecraft position relative to asteroid, z towards spacecraft,
         #   x towards right when looking out from s/c camera, y up
@@ -263,6 +264,25 @@ class SystemModel():
                 (self.x_rot.value, self.y_rot.value, self.z_rot.value)
         )))
         
+    def real_spacecraft_q(self):
+        return tools.ypr_to_q(*list(map(
+                math.radians,
+                (self.x_rot.real_value, self.y_rot.real_value, self.z_rot.real_value)
+        )))
+        
+    def asteroid_q(self):
+        return self.asteroid.rotation_q(self.time.value)
+    
+    def real_asteroid_q(self):
+        org_ast_axis = self.asteroid_axis
+        self.asteroid_axis = self.real_asteroid_axis
+        
+        q = self.asteroid.rotation_q(self.time.real_value)
+        
+        self.asteroid_axis = org_ast_axis
+        return q
+    
+        
     def gl_sc_asteroid_rel_q(self, discretize_tol=False):
         """ rotation of asteroid relative to spacecraft in opengl coords """
         self.update_asteroid_model()
@@ -328,9 +348,9 @@ class SystemModel():
         err_q = (err_q or np.quaternion(1,0,0,0))
         return tools.q_times_v(SystemModel.sc2gl_q.conj() * err_q.conj() * sc_q.conj(), ast_v)
         
-    def solar_elongation(self):
-        ast_v = self.asteroid.position(self.time.value)
-        sc_q = self.spacecraft_q()
+    def solar_elongation(self, real=False):
+        ast_v = self.asteroid.position(self.time.real_value if real else self.time.value)
+        sc_q = self.real_spacecraft_q() if real else self.spacecraft_q()
         elong, direc = tools.solar_elongation(ast_v, sc_q)
         if not BATCH_MODE and DEBUG:
             print('elong: %.3f | dir: %.3f' % (
