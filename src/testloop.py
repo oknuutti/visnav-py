@@ -210,6 +210,10 @@ class TestLoop():
     def _mainloop(self, imgdir, **kwargs):
         start_time = dt.now()
         sm = self.window.systemModel
+        
+        # generate new noise for shape model
+        if ADD_SHAPE_MODEL_NOISE:
+            self._run_on_qt(lambda x: x.loadObject(), self.window.glWidget)
 
         for i in range(100):
             ## sample params from suitable distributions
@@ -399,8 +403,7 @@ class TestLoop():
         return rtime, params, noise, pos, map(deg, rel_rot), fvals, err
     
     
-    def _run_algo(self, imgfile_, **kwargs):
-        self._algorithm_finished = threading.Event()
+    def _run_algo(self, imgfile_, **kwargs_):
         def run_this_from_qt_thread(glWidget, imgfile, **kwargs):
             if PROFILE:
                 import cProfile
@@ -438,23 +441,27 @@ class TestLoop():
                 ok = glWidget.parent().phasecorr.findstate(imgfile, **kwargs)
             timer.stop()
             rtime = rtime if rtime else timer.elapsed
-            self._algorithm_finished.set()
             
             if PROFILE:
                 pr.disable()
                 pr.dump_stats(PROFILE_OUT_FILE)
-            
+                
             return ok, rtime
         
-        self.window.tsRun.emit((
-            run_this_from_qt_thread,
-            (self.window.glWidget, imgfile_),
-            kwargs
-        ))
+        res = self._run_on_qt(run_this_from_qt_thread, self.window.glWidget, imgfile_, **kwargs_)
+        return res
         
+        
+    def _run_on_qt(self, target_func, *args_, **kwargs_):
+        self._algorithm_finished = threading.Event()
+        def runthis(*args, **kwargs):
+            res = target_func(*args, **kwargs)
+            self._algorithm_finished.set()
+            return res
+        
+        self.window.tsRun.emit((runthis, args_, kwargs_))
         self._algorithm_finished.wait()
         return self.window.tsRunResult
-        
     
     def _cleanup(self):
         self._send('quit')

@@ -77,9 +77,9 @@ class OBJ:
                 self.faces.append((face, norms, texcoords, material))
                 if len(face)==3:
                     self.triangles.append((
-                        self.vertices[face[0]-1],
-                        self.vertices[face[1]-1],
-                        self.vertices[face[2]-1],
+                        face[0]-1,
+                        face[1]-1,
+                        face[2]-1,
                     ))
                 else:
                     raise Exception('Not a triangle!')

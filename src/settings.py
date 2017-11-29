@@ -29,6 +29,13 @@ TARGET_IMAGE = 'ROS_CAM1_20150720T113057'  # 141.70
 TARGET_IMAGE_FILE = os.path.join(SCRIPT_DIR, '../data/targetimgs/'+TARGET_IMAGE+'_P.png')
 TARGET_IMAGE_META_FILE = os.path.join(SCRIPT_DIR, '../data/targetimgs/'+TARGET_IMAGE+'.LBL')
 TARGET_MODEL_FILE = os.path.join(SCRIPT_DIR, '../data/CSHP_DV_130_01_XLRES_00200.obj') # _XLRES_, _LORES_
+#TARGET_MODEL_FILE = os.path.join(SCRIPT_DIR, '../data/test-ball-hires.obj')
+
+ADD_SHAPE_MODEL_NOISE = True
+SHAPE_MODEL_NOISE_SUPPORT = os.path.join(SCRIPT_DIR, '../data/CSHP_DV_130_01_X3LRES_00200.obj')
+#SHAPE_MODEL_NOISE_SUPPORT = os.path.join(SCRIPT_DIR, '../data/test-ball.obj')
+SHAPE_MODEL_NOISE_LEN_SC = 1
+SHAPE_MODEL_NOISE_LV = 0.003
 
 LOG_DIR = os.path.join(SCRIPT_DIR, '../logs/')
 VISIT_SCRIPT_PY_FILE = os.path.join(SCRIPT_DIR, 'visit-py-script.py')

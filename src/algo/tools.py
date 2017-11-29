@@ -285,6 +285,84 @@ def bf_lat_lon(tol):
     return lat_steps, lon_steps
 
 
+def apply_noise(points, support=None, len_sc=0.1, noise_lv=0.1, only_z=False):
+    from scipy.interpolate import LinearNDInterpolator, NearestNDInterpolator
+    import random
+    import time
+    
+    try:
+        from sklearn.gaussian_process import GaussianProcessRegressor
+        from sklearn.gaussian_process.kernels import Matern
+    except:
+        print('Requires scikit-learn, install using "conda install scikit-learn"')
+        sys.exit()
+    
+    if support is None:
+        support = points[random.sample(list(range(len(points))), min(3000,len(points)))]
+    
+    mean = np.mean(points,axis=0)
+    max_rng = np.max(np.ptp(points,axis=0))
+    kernel = 0.7*noise_lv*Matern(length_scale=len_sc*max_rng, nu=1.5) + 0.2*noise_lv*Matern(length_scale=0.1*len_sc*max_rng, nu=1.5)
+    gp = GaussianProcessRegressor(kernel=kernel)
+    
+    # sample gp
+    err = np.exp(gp.sample_y(support-mean, 1, int(time.time())))
+
+    if len(err) == len(points):
+        full_err = err
+        print('using orig gp sampled err')
+    else:
+        # interpolate
+        interp = LinearNDInterpolator((support-mean)*1.0015, err)
+        full_err = interp(points-mean)
+
+        # maybe extrapolate
+        nanidx = tuple(np.isnan(full_err).flat)
+        if np.any(nanidx):
+            if DEBUG or not BATCH_MODE:
+                print('%sx nans'%np.sum(nanidx))
+            naninterp = NearestNDInterpolator(support, err)
+            full_err[nanidx,] = naninterp(points[nanidx,:])
+
+    # extra high frequency noise
+    white_noise = np.random.normal(scale=0.2*noise_lv*max_rng, size=(len(full_err),1))
+
+    if only_z:
+        noisy_points = np.concatenate((points[:,0:2], (points[:,2]-mean[2])*full_err +white_noise +mean[2]))
+    else:
+        noisy_points = (points-mean)*full_err +mean +white_noise
+    
+    if DEBUG or not BATCH_MODE:
+        devs = np.sqrt(np.sum((points-noisy_points)**2,axis=-1)/np.sum(points**2,axis=-1))
+        print('noise: %.3f, %.3f; avg=%.3f'%(tuple(np.percentile(devs, (68,95)))+(np.mean(devs),)))
+    
+    if False:
+        import matplotlib.pyplot as plt
+        plt.figure(1, figsize=(8, 8))
+        #plt.plot(np.concatenate((points[:,0], err0[:,0], err[:,0], points[:,0]*err[:,0])))
+        plt.subplot(2, 2, 1)
+        plt.plot(points[:,0])
+        plt.title('original', fontsize=12)
+
+        plt.subplot(2, 2, 2)
+        plt.plot(err0[:,0])
+        plt.title('norm-err', fontsize=12)
+
+        plt.subplot(2, 2, 3)
+        plt.plot(err[:,0])
+        plt.title('exp-err', fontsize=12)
+
+        plt.subplot(2, 2, 4)
+        plt.plot(noisy_points[:,0])
+        plt.title('noisy', fontsize=12)
+
+        plt.tight_layout()
+        plt.show()
+        assert False, 'exiting'
+    
+    return noisy_points
+
+
 def interp2(array, x, y):
     assert y<array.shape[0] and x<array.shape[1], 'out of bounds %s: %s'%(array.shape, (y, x))
     

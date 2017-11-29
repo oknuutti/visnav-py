@@ -243,7 +243,7 @@ class GLWidget(QOpenGLWidget):
         self._height = None
         self._side = None
         self._gl_image = None
-        self._object = 0
+        self._object = None
         self._lastPos = QPoint()
         self._imgColor = QColor.fromRgbF(1, 1, 1, 0.4)
         self._fgColor = QColor.fromRgbF(0.6, 0.6, 0.6, 1)
@@ -275,7 +275,8 @@ class GLWidget(QOpenGLWidget):
         self.gl.initializeOpenGLFunctions()
 
         self.setClearColor(self._bgColor)
-        self._object = self.loadObject()
+        if not BATCH_MODE or not ADD_SHAPE_MODEL_NOISE:
+            self.loadObject()
 
         self.gl.glEnable(self.gl.GL_CULL_FACE)
 
@@ -414,7 +415,8 @@ class GLWidget(QOpenGLWidget):
         
         self.gl.glTranslated(*transl)
         self.gl.glRotated(*rot)
-        self.gl.glCallList(self._object)
+        if self._object is not None:
+            self.gl.glCallList(self._object)
         
         if not self._algo_render and self._gl_image is not None:
             self.gl.glLoadIdentity()
@@ -619,10 +621,19 @@ class GLWidget(QOpenGLWidget):
         #self.gl.glMaterialfv(self.gl.GL_FRONT, self.gl.GL_SHININESS, (0,));
         
         model = obj_loader.OBJ(TARGET_MODEL_FILE)
-        self.systemModel.asteroid.vertices = np.array(model.vertices)
+        vertices = np.array(model.vertices)
+        self.systemModel.asteroid.vertices = vertices
+        if ADD_SHAPE_MODEL_NOISE:
+            sup = obj_loader.OBJ(SHAPE_MODEL_NOISE_SUPPORT)
+            vertices = tools.apply_noise(vertices,
+                    support=np.array(sup.vertices),
+                    len_sc=SHAPE_MODEL_NOISE_LEN_SC,
+                    noise_lv=SHAPE_MODEL_NOISE_LV)
         
         for triangle in model.triangles:
-            self.triangle(triangle[0], triangle[1], triangle[2])
+            self.triangle(vertices[triangle[0]],
+                          vertices[triangle[1]],
+                          vertices[triangle[2]])
         
         self.gl.glEnd()
         self.gl.glEndList()
@@ -633,7 +644,7 @@ class GLWidget(QOpenGLWidget):
             mem_needed = len(model.triangles) * 4 * 3 * 4
             print('3D model mem use: %.0fx %.0fB => %.1fMB'%(len(model.triangles), 4*3*4, mem_needed/1024/1024))
 
-        return genList
+        self._object = genList
 
     def triangle(self, x1, x2, x3):
         self.gl.glNormal3f(*tools.surf_normal(x1, x2, x3))

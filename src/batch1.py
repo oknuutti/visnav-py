@@ -13,6 +13,9 @@ if __name__ == '__main__':
     method = sys.argv[1] if len(sys.argv)>1 else 'keypoint'
     count = int(sys.argv[2]) if len(sys.argv)>2 else 100
     
+    m = method.split('+')
+    method=m[0]
+    
     if False:
         count = 10
         kwargs = {
@@ -67,10 +70,10 @@ if __name__ == '__main__':
                 },
             }
         }
+    elif 'keypoint' in m and 'centroid' in m:
+        kwargs = {'method':'keypoint+'}
     elif method=='centroid':
         kwargs = {'method':'centroid'}
-    elif method=='keypoint+':
-        kwargs = {'method':'keypoint+'}
     elif method=='keypoint':
         kwargs = {'method':'keypoint'}
     elif method=='orb':
@@ -81,14 +84,6 @@ if __name__ == '__main__':
         kwargs = {'method':'keypoint', 'feat':2}
     elif method=='surf':
         kwargs = {'method':'keypoint', 'feat':3}
-    elif method=='orb+fdb':
-        kwargs = {'method':'keypoint', 'feat':0, 'use_feature_db':True}
-    elif method=='akaze+fdb':
-        kwargs = {'method':'keypoint', 'feat':1, 'use_feature_db':True}
-    elif method=='sift+fdb':
-        kwargs = {'method':'keypoint', 'feat':2, 'use_feature_db':True}
-    elif method=='surf+fdb':
-        kwargs = {'method':'keypoint', 'feat':3, 'use_feature_db':True}
     else:
         assert False, 'Invalid method "%s"'%method
 
@@ -96,12 +91,18 @@ if __name__ == '__main__':
     kwargs0.update(kwargs)
     kwargs = kwargs0
     
-    if kwargs.get('use_feature_db', False):
+    # shape model noise
+    settings.ADD_SHAPE_MODEL_NOISE = ('smn' in m or 'smn_' in m)
+
+    if 'smn_' in m:
+        settings.SHAPE_MODEL_NOISE_LV = 0.01
+
+    # feature db
+    if 'fdb' in m:
+        kwargs['use_feature_db'] = True
+        settings.TARGET_MODEL_FILE = os.path.join(settings.SCRIPT_DIR, '../data/CSHP_DV_130_01_LORES_00200.obj') # _XLRES_, _LORES_        
         settings.VIEW_WIDTH = 768
         settings.VIEW_HEIGHT = 768
-        settings.TARGET_MODEL_FILE = os.path.join(settings.SCRIPT_DIR, '../data/CSHP_DV_130_01_LORES_00200.obj') # _XLRES_, _LORES_        
-#        settings.VIEW_WIDTH = 512
-#        settings.VIEW_HEIGHT = 512
     
     from settings import *
     from visnav import MainThread

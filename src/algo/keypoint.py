@@ -73,7 +73,7 @@ class KeypointAlgo():
             # the rest of the algorithm
             self.timer.start()
         
-        if False and DEBUG:
+        if True and DEBUG:
             sz = self._latest_detector.descriptorSize() # in bytes
             print('Descriptor mem use: %.0f x %.0fB => %.1f kB'%(len(ref_kp), sz, len(ref_kp)*sz/1024))
         
