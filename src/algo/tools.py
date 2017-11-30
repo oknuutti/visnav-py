@@ -332,8 +332,8 @@ def apply_noise(points, support=None, len_sc=0.1, noise_lv=0.1, only_z=False):
     else:
         noisy_points = (points-mean)*full_err +mean +white_noise
     
+    devs = np.sqrt(np.sum((points-noisy_points)**2,axis=-1)/np.sum(points**2,axis=-1))
     if DEBUG or not BATCH_MODE:
-        devs = np.sqrt(np.sum((points-noisy_points)**2,axis=-1)/np.sum(points**2,axis=-1))
         print('noise: %.3f, %.3f; avg=%.3f'%(tuple(np.percentile(devs, (68,95)))+(np.mean(devs),)))
     
     if False:
@@ -360,7 +360,7 @@ def apply_noise(points, support=None, len_sc=0.1, noise_lv=0.1, only_z=False):
         plt.show()
         assert False, 'exiting'
     
-    return noisy_points
+    return noisy_points, np.mean(devs)
 
 
 def interp2(array, x, y):

@@ -118,6 +118,7 @@ class SystemModel():
     
     def __init__(self, *args, **kwargs):
         self.asteroid = Asteroid()
+        self.real_shape_model = None
         self.real_sc_ast_vertices = None
         
         # spacecraft position relative to asteroid, z towards spacecraft,
@@ -336,10 +337,13 @@ class SystemModel():
         return tools.sc_asteroid_max_shift_error(est_vertices, target_vertices)
     
     
-    def sc_asteroid_vertices(self):
+    def sc_asteroid_vertices(self, real=False):
         """ asteroid vertices rotated and translated to spacecraft frame """
-        return tools.q_times_mx(self.sc_asteroid_rel_q(), self.asteroid.vertices) \
-                + tools.q_times_v(SystemModel.sc2gl_q, self.spacecraft_pos)
+        sc_ast_q = self.real_sc_asteroid_rel_q() if real else self.sc_asteroid_rel_q()
+        sc_pos = self.real_spacecraft_pos if real else self.spacecraft_pos
+        
+        return tools.q_times_mx(sc_ast_q, np.array(self.real_shape_model.vertices)) \
+                + tools.q_times_v(SystemModel.sc2gl_q, sc_pos)
     
     def light_rel_dir(self, err_q=False):
         """ direction of light relative to spacecraft in opengl coords """
@@ -391,19 +395,27 @@ class SystemModel():
         else:
             config.write(sys.stdout)
     
-    def load_state(self, filename):
+    def load_state(self, filename, sc_ast_vertices=False):
+        if not os.path.isfile(filename):
+            raise FileNotFoundError(filename)
+        
         config = configparser.ConfigParser()
         filename = filename+('.lbl' if len(filename)<5 or filename[-4:]!='.lbl' else '')
         config.read(filename)
         
         for n, p in self.get_params(all=True):
-            p.value = float(config.get('main').get(n))
-            if config.get('real').get(n, None) is not None:
-                p.real_value = float(config.get('real').get(n, None))
+            p.value = float(config.get('main', n))
+            if config.get('real', n, fallback=None) is not None:
+                p.real_value = float(config.get('real', n))
         
+        assert np.isclose(self.time.value, float(config.get('main', 'time'))), \
+               'Failed to set time value'
+               
         self.update_asteroid_model()
-        assert np.isclose(self.time.value, time), 'Failed to set time value'
-    
+        
+        if sc_ast_vertices:
+            # get real relative position of asteroid model vertices
+            self.real_sc_ast_vertices = self.sc_asteroid_vertices(real=True)
     
     @staticmethod
     def frm_conv_q(fsrc, fdst):
@@ -431,10 +443,6 @@ class SystemModel():
 class Asteroid():
     def __init__(self, *args, **kwargs):
         self.name = '67P/Churyumov-Gerasimenko'
-        
-        # asteroid 3d model vertices populated at visnav.py
-        #   - used to calculate positioning error impact
-        self.vertices = None
         
         # for cross section, assume spherical object and 2km radius
         self.mean_cross_section = math.pi*2000**2

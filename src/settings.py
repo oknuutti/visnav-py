@@ -4,6 +4,7 @@ import os
 SCRIPT_DIR = os.path.dirname(__file__)
 BASE_DIR = os.path.join(SCRIPT_DIR, '..')
 LOG_DIR = os.path.join(SCRIPT_DIR, '../logs/')
+CACHE_DIR = os.path.join(SCRIPT_DIR, '../cache/')
 
 CAMERA_X_FOV = 5            # in deg
 CAMERA_Y_FOV = 5            # in deg
@@ -41,7 +42,7 @@ SHAPE_MODEL_NOISE_LV = 0.003
 ## profile algorithm by setting PROFILE to True
 ##  - profile testing setup by "D:\Program Files\Anaconda3\python" -m cProfile -o profile.out src\batch1.py keypoint 10
 ## then snakeviz profile.out
-PROFILE = False
+PROFILE = True
 PROFILE_OUT_FILE = os.path.join(SCRIPT_DIR, '../profile.out')
 
 START_IN_THREAD = False

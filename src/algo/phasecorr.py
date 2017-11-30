@@ -159,7 +159,8 @@ class PhaseCorrelationAlgo():
         return tuple(c/wg.im_scale + o for c, o in
                     ((cx, wg.im_xoff), (cy, wg.im_yoff)))
 
-    def findstate(self, imgfile, min_options={}, **kwargs):
+    def findstate(self, imgfile, outfile, min_options={}, **kwargs):
+        self.debug_filebase = outfile        
         min_options = dict(min_options)
         
         if self.glWidget.image_file != imgfile:
@@ -252,7 +253,6 @@ class PhaseCorrelationAlgo():
                 
         elif method=='two-step-brute':
             min_opts = dict(min_options)
-            self.debug_filebase = imgfile[0:-4]+'r1'
             
             ## PHASE I
             ## >> 
@@ -305,7 +305,7 @@ class PhaseCorrelationAlgo():
                 ))
             
             if True:
-                self.debug_filebase = imgfile[0:-4]+'r2'
+                self.debug_filebase = outfile+'r2'
                 
                 # limit distance range
                 self.system_model.z_off.range = (-max_dist, -min_dist)

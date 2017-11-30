@@ -275,8 +275,7 @@ class GLWidget(QOpenGLWidget):
         self.gl.initializeOpenGLFunctions()
 
         self.setClearColor(self._bgColor)
-        if not BATCH_MODE or not ADD_SHAPE_MODEL_NOISE:
-            self.loadObject()
+        self.loadObject()
 
         self.gl.glEnable(self.gl.GL_CULL_FACE)
 
@@ -611,7 +610,7 @@ class GLWidget(QOpenGLWidget):
 
         self.update()
 
-    def loadObject(self):
+    def loadObject(self, noisy_vertices=None):
         genList = self.gl.glGenLists(1)
         self.gl.glNewList(genList, self.gl.GL_COMPILE)
         self.gl.glBegin(self.gl.GL_TRIANGLES) # GL_POLYGON?
@@ -620,17 +619,23 @@ class GLWidget(QOpenGLWidget):
         #self.gl.glMaterialfv(self.gl.GL_FRONT, self.gl.GL_SPECULAR, (0,0,0,1));
         #self.gl.glMaterialfv(self.gl.GL_FRONT, self.gl.GL_SHININESS, (0,));
         
-        model = objloader.OBJ(TARGET_MODEL_FILE)
-        vertices = np.array(model.vertices)
-        self.systemModel.asteroid.vertices = vertices
-        if ADD_SHAPE_MODEL_NOISE:
+        if self.systemModel.real_shape_model is None:
+            sm = self.systemModel.real_shape_model = objloader.OBJ(TARGET_MODEL_FILE)
+        else:
+            sm = self.systemModel.real_shape_model
+        
+        if noisy_vertices is not None:
+            vertices = noisy_vertices
+        elif ADD_SHAPE_MODEL_NOISE and not BATCH_MODE:
             sup = objloader.OBJ(SHAPE_MODEL_NOISE_SUPPORT)
-            vertices = tools.apply_noise(vertices,
+            vertices, noise = tools.apply_noise(np.array(sm.vertices),
                     support=np.array(sup.vertices),
                     len_sc=SHAPE_MODEL_NOISE_LEN_SC,
                     noise_lv=SHAPE_MODEL_NOISE_LV)
+        else:
+            vertices = sm.vertices
         
-        for triangle in model.triangles:
+        for triangle in sm.triangles:
             self.triangle(vertices[triangle[0]],
                           vertices[triangle[1]],
                           vertices[triangle[2]])
@@ -641,8 +646,8 @@ class GLWidget(QOpenGLWidget):
         if DEBUG:
             # assume all 32bit (4B) variables, no reuse of vertices
             # => triangle count x (3 vertices + 1 normal) x 3d vectors x bytes per variable
-            mem_needed = len(model.triangles) * 4 * 3 * 4
-            print('3D model mem use: %.0fx %.0fB => %.1fMB'%(len(model.triangles), 4*3*4, mem_needed/1024/1024))
+            mem_needed = len(sm.triangles) * 4 * 3 * 4
+            print('3D model mem use: %.0fx %.0fB => %.1fMB'%(len(sm.triangles), 4*3*4, mem_needed/1024/1024))
 
         self._object = genList
 

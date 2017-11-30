@@ -38,10 +38,10 @@ class KeypointAlgo():
         self.MAX_SCENE_SCALE_STEPS = 5 # from mid range 64km to near range 16km (64/sqrt(2)**(5-1) => 16)
 
         
-    def solve_pnp(self, orig_sce_img, feat=ORB, use_feature_db=False, scale_cam_img=False, vary_scale=False, **kwargs):
+    def solve_pnp(self, orig_sce_img, outfile, feat=ORB, use_feature_db=False, scale_cam_img=False, vary_scale=False, **kwargs):
         # maybe load scene image
         if isinstance(orig_sce_img, str):
-            self.debug_filebase = orig_sce_img[0:-4]+self.DEBUG_IMG_POSTFIX
+            self.debug_filebase = outfile+self.DEBUG_IMG_POSTFIX
             self.glWidget.loadTargetImage(orig_sce_img, remove_bg=False)
             orig_sce_img = self.glWidget.full_image
 

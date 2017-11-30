@@ -4,6 +4,8 @@ import math
 from math import degrees as deg
 from math import radians as rad
 import os
+import shutil
+import pickle
 import threading
 from datetime import datetime as dt
 
@@ -12,6 +14,8 @@ import quaternion
 from astropy.coordinates import spherical_to_cartesian
 
 from iotools.visitclient import VisitClient
+from iotools import objloader
+
 from algo.model import Asteroid
 import algo.tools as tools
 from algo.tools import (ypr_to_q, q_to_ypr, q_times_v, q_to_unitbase, normalize_v,
@@ -53,7 +57,8 @@ class TestLoop():
         self._min_elong = 45
         
         # transients
-        self._imgdir = None
+        self._smn_cache_id = ''
+        self._iter_dir = None
         self._logfile = None
         self._fval_logfile = None
         self._run_times = []
@@ -74,7 +79,8 @@ class TestLoop():
         
     # main method
     def run(self, times, log_prefix='test-', cleanup=True, **kwargs):
-        
+        self._smn_cache_id = kwargs.pop('smn_type', '')
+
         # write logfile header
         self._init_log(log_prefix)
         
@@ -82,36 +88,52 @@ class TestLoop():
         sm = self.window.systemModel
         
         for i in range(times):
-            self._maybe_exit()
-            
-            # generate / load system state
-            self.generate_system_state(sm)
-            
-            # add noise to current state, wipe sc pos
-            initial = self.add_noise(sm)
-
-            # save state to lbl file
-            sm.save_state(self._file(i))
-
-            # render navcam image based on noiseless state
-            imgfile = self.render_image(sm)
-            imgfile = os.path.normpath(imgfile)
-            assert imgfile == self._file(i)+'.png', \
-                   'visit file mismatch:\n%s\n<>\n%s'%(imgfile, self._file(i)+'.png')
-            self._maybe_exit()
-            
             # maybe generate new noise for shape model
+            sm_noise = 0
             if ADD_SHAPE_MODEL_NOISE:
-                self._run_on_qt(lambda x: x.loadObject(), self.window.glWidget)
+                sm_noise = self.load_noisy_shape_model(sm, i)
+                if sm_noise is None:
+                    if DEBUG:
+                        print('generating new noisy shape model')
+                    sm_noise = self.generate_noisy_shape_model(sm, i)
+                    self._maybe_exit()
+
+            # try to load system state
+            initial = self.load_state(sm, i)
+            if initial is None:
+                if DEBUG:
+                    print('generating new state')
+                
+                # generate system state
+                self.generate_system_state(sm)
+
+                # add noise to current state, wipe sc pos
+                initial = self.add_noise(sm)
+
+                # save state to lbl file
+                sm.save_state(self._cache_file(i))
+                imgfile = None
+            else:
+                # successfully loaded system state,
+                # try to load related navcam image
+                imgfile = self.load_navcam_image(i)
+            
+            # maybe new system state or no previous image, if so, render
+            if imgfile is None:
+                if DEBUG:
+                    print('generating new navcam image')
+                imgfile = self.render_navcam_image(sm, i)
+                self._maybe_exit()
             
             # run algorithm
-            ok, rtime = self._run_algo(imgfile, **kwargs)
+            ok, rtime = self._run_algo(imgfile, self._iter_file(i), **kwargs)
             
             # calculate results
             results = self.calculate_result(sm, i, ok, initial, **kwargs)
             
             # write log entry
-            self._write_log_entry(i, rtime, *results)
+            self._write_log_entry(i, rtime, sm_noise, *results)
+            self._maybe_exit()
 
             # print out progress
             if math.floor(100*i/times) > li:
@@ -127,6 +149,7 @@ class TestLoop():
     def generate_system_state(self, sm):
         # reset asteroid axis to true values
         sm.asteroid = Asteroid()
+        sm.asteroid_rotation_from_model()
         
         for i in range(100):
             ## sample params from suitable distributions
@@ -219,14 +242,58 @@ class TestLoop():
         sm.spacecraft_pos = (0, 0, -MIN_MED_DISTANCE)
 
         # return this initial state
+        return self._initial_state(sm)
+        
+    def _initial_state(self, sm):
         return {
             'time': sm.time.value,
             'ast_axis': sm.asteroid_axis,
             'sc_rot': sm.spacecraft_rot,
         }
-
+    
+    def load_state(self, sm, i):
+        try:
+            sm.load_state(self._cache_file(i)+'.lbl', sc_ast_vertices=True)
+            initial = self._initial_state(sm)
+        except FileNotFoundError:
+            initial = None
+        return initial
         
-    def render_image(self, sm):
+        
+    def generate_noisy_shape_model(self, sm, i):
+        sup = objloader.OBJ(SHAPE_MODEL_NOISE_SUPPORT)
+        noisy_vertices, sm_noise = tools.apply_noise(
+                np.array(sm.real_shape_model.vertices),
+                support=np.array(sup.vertices),
+                len_sc=SHAPE_MODEL_NOISE_LEN_SC,
+                noise_lv=SHAPE_MODEL_NOISE_LV)
+        
+        prefix = 'shapemodel_'+self._smn_cache_id
+        fname = self._cache_file(i, prefix=prefix)+'.nsm'
+        with open(fname, 'wb') as fh:
+            pickle.dump((noisy_vertices, sm_noise), fh, -1)
+        
+        self._widget_load_obj(noisy_vertices)
+        return sm_noise
+    
+    def load_noisy_shape_model(self, sm, i):
+        try:
+            prefix = 'shapemodel_'+self._smn_cache_id
+            fname = self._cache_file(i, prefix=prefix)+'.nsm'
+            with open(fname, 'rb') as fh:
+                noisy_vertices, sm_noise = pickle.load(fh)
+            self._widget_load_obj(noisy_vertices)
+        except FileNotFoundError:
+            sm_noise = None
+        return sm_noise
+        
+    def _widget_load_obj(self, noisy_vertices):
+        self._run_on_qt(
+                lambda x, y: x.loadObject(noisy_vertices=y),
+                self.window.glWidget, noisy_vertices)
+    
+    
+    def render_navcam_image(self, sm, i):
         """ 
         based on real system state, call VISIT to make a target image
         """
@@ -245,11 +312,11 @@ class TestLoop():
         # light however points into the object
         view_x = -view_x
         focus += -23*view_x     # 23km bias in view_normal direction?!
-
+        
         # all params VISIT needs
         visit_params = {
-            'out_file':         TestLoop.FILE_PREFIX,
-            'out_dir':          self._imgdir.replace('\\', '\\\\'),
+            'out_file':         'visitout',
+            'out_dir':          self._iter_dir.replace('\\', '\\\\'),
             'view_angle':       CAMERA_Y_FOV,
             'out_width':        min(MAX_TEST_X_RES, CAMERA_WIDTH),
             'out_height':       min(MAX_TEST_Y_RES, CAMERA_HEIGHT),
@@ -261,7 +328,14 @@ class TestLoop():
         }
 
         # call VISIT
-        return self._visit_client.render(visit_params)
+        imgfile = self._visit_client.render(visit_params)
+        cache_file = self._cache_file(i)+'.png'
+        shutil.move(imgfile, cache_file)
+        return cache_file
+
+    def load_navcam_image(self, i):
+        fname = self._cache_file(i)+'.png'
+        return fname if os.path.isfile(fname) else None
 
 
     def calculate_result(self, sm, i, ok, initial, **kwargs):
@@ -279,7 +353,7 @@ class TestLoop():
         params = (sm.time.real_value, *r_ast_axis,
                 *sm.real_spacecraft_rot, deg(elong), deg(direc),
                 *sm.real_spacecraft_pos, *map(deg, real_rel_rot),
-                self._file(i), final_fval)
+                self._iter_file(i), final_fval)
         
         # calculate added noise
         #
@@ -319,9 +393,12 @@ class TestLoop():
     
     
     def _init_log(self, log_prefix):
+        os.makedirs(LOG_DIR, exist_ok=True)
+        os.makedirs(CACHE_DIR, exist_ok=True)
+        
         logbody = log_prefix + dt.now().strftime('%Y%m%d-%H%M%S')
-        self._imgdir = os.path.join(LOG_DIR, logbody)
-        os.mkdir(self._imgdir)
+        self._iter_dir = os.path.join(LOG_DIR, logbody)
+        os.mkdir(self._iter_dir)
         
         self._fval_logfile = LOG_DIR + logbody + '-fvals.log'
         self._logfile = LOG_DIR + logbody + '.log'
@@ -332,7 +409,7 @@ class TestLoop():
                 'sc lat', 'sc lon', 'sc rot', 
                 'sol elong', 'light dir', 'x sc pos', 'y sc pos', 'z sc pos',
                 'rel yaw', 'rel pitch', 'rel roll', 
-                'imgfile', 'optfun val',
+                'imgfile', 'optfun val', 'shape model noise',
                 'time dev', 'ast lat dev', 'ast lon dev', 'ast rot dev',
                 'sc lat dev', 'sc lon dev', 'sc rot dev', 'total dev angle',
                 'x est sc pos', 'y est sc pos', 'z est sc pos',
@@ -351,7 +428,7 @@ class TestLoop():
         self._timer.start()
         
         
-    def _write_log_entry(self, i, rtime, params, noise, pos, rel_rot, fvals, err):
+    def _write_log_entry(self, i, rtime, sm_noise, params, noise, pos, rel_rot, fvals, err):
             
             # save execution time
             self._run_times.append(rtime)
@@ -374,8 +451,8 @@ class TestLoop():
             # log all parameter values, timing & errors into a file
             with open(self._logfile, 'a') as file:
                 file.write('\t'.join(map(str, (
-                    i, dt.now().strftime("%Y-%m-%d %H:%M:%S"), rtime,
-                    *params, *noise, *pos, *rel_rot, *err, lerr, derr, serr
+                    i, dt.now().strftime("%Y-%m-%d %H:%M:%S"), rtime, *params,
+                    sm_noise, *noise, *pos, *rel_rot, *err, lerr, derr, serr
                 )))+'\n')
                 
             # log opt fun values in other file
@@ -431,20 +508,15 @@ class TestLoop():
         print("\n" + summary)
 
 
-    def _run_algo(self, imgfile_, **kwargs_):
-        def run_this_from_qt_thread(glWidget, imgfile, **kwargs):
-            if PROFILE:
-                import cProfile
-                pr = cProfile.Profile()
-                pr.enable()
-            
+    def _run_algo(self, imgfile_, outfile_, **kwargs_):
+        def run_this_from_qt_thread(glWidget, imgfile, outfile, **kwargs):
             ok, rtime = False, False
             timer = tools.Stopwatch()
             timer.start()
             method = kwargs.pop('method', False)
             if method == 'keypoint+':
                 try:
-                    glWidget.parent().mixed.run(imgfile, **kwargs)
+                    glWidget.parent().mixed.run(imgfile, outfile, **kwargs)
                     ok = True
                 except PositioningException as e:
                     print(str(e))
@@ -453,7 +525,7 @@ class TestLoop():
                     # try using pympler to find memory leaks, fail: crashes always
                     #    from pympler import tracker
                     #    tr = tracker.SummaryTracker()
-                    glWidget.parent().keypoint.solve_pnp(imgfile, **kwargs)
+                    glWidget.parent().keypoint.solve_pnp(imgfile, outfile, **kwargs)
                     #    tr.print_diff()
                     ok = True
                     rtime = glWidget.parent().keypoint.timer.elapsed
@@ -461,30 +533,38 @@ class TestLoop():
                     print(str(e))
             elif method == 'centroid':
                 try:
-                    glWidget.parent().centroid.adjust_iteratively(imgfile, **kwargs)
+                    glWidget.parent().centroid.adjust_iteratively(imgfile, outfile, **kwargs)
                     ok = True
                 except PositioningException as e:
                     print(str(e))
             elif method == 'phasecorr':
-                ok = glWidget.parent().phasecorr.findstate(imgfile, **kwargs)
+                ok = glWidget.parent().phasecorr.findstate(imgfile, outfile, **kwargs)
             timer.stop()
             rtime = rtime if rtime else timer.elapsed
-            
-            if PROFILE:
-                pr.disable()
-                pr.dump_stats(PROFILE_OUT_FILE)
-                
             return ok, rtime
         
         res = self._run_on_qt(run_this_from_qt_thread, 
-                              self.window.glWidget, imgfile_, **kwargs_)
+                              self.window.glWidget, imgfile_, outfile_, **kwargs_)
         return res
     
     
     def _run_on_qt(self, target_func, *args_, **kwargs_):
         self._algorithm_finished = threading.Event()
         def runthis(*args, **kwargs):
+            if PROFILE:
+                import cProfile
+                pr = cProfile.Profile()
+                pr.enable()
+            
             res = target_func(*args, **kwargs)
+            
+            if PROFILE:
+                pr.disable()
+                for i in range(100):
+                    if not os.path.isfile(PROFILE_OUT_FILE+str(i)):
+                        break
+                pr.dump_stats(PROFILE_OUT_FILE+str(i))
+            
             self._algorithm_finished.set()
             return res
         
@@ -492,9 +572,13 @@ class TestLoop():
         self._algorithm_finished.wait()
         return self.window.tsRunResult
     
-    def _file(self, i):
+    def _iter_file(self, i, prefix=FILE_PREFIX):
         return os.path.normpath(
-                os.path.join(self._imgdir, self.FILE_PREFIX+'%04d'%i))
+                os.path.join(self._iter_dir, prefix+'%04d'%i))
+    
+    def _cache_file(self, i, prefix=FILE_PREFIX):
+        return os.path.normpath(
+                os.path.join(CACHE_DIR, prefix+'%04d'%i))
     
     def _cleanup(self):
         self._send('quit')

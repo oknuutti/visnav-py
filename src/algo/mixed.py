@@ -17,10 +17,10 @@ class MixedAlgo():
         self._centroid = centroid
         self._keypoint = keypoint
 
-    def run(self, sce_img, **kwargs):
+    def run(self, sce_img, outfile, **kwargs):
         centroid_result = None
         try:
-            self._centroid.adjust_iteratively(sce_img, **kwargs)
+            self._centroid.adjust_iteratively(sce_img, outfile, **kwargs)
             sc_r = self.system_model.spacecraft_rot
             centroid_result = self.system_model.spacecraft_pos
             kwargs['init_z'] = centroid_result[2]
@@ -31,7 +31,7 @@ class MixedAlgo():
                 print('Centroid algo failed with: %s'%(e,))
 
         try:
-            self._keypoint.solve_pnp(sce_img, **kwargs)
+            self._keypoint.solve_pnp(sce_img, outfile, **kwargs)
             ok = True
         except PositioningException as e:
             if centroid_result and kwargs.get('centroid_fallback', True) and centroid_result[2] < -MIN_MED_DISTANCE:

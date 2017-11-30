@@ -3,7 +3,8 @@ syntax: glob
 __pycache__
 data/*
 logs/*
+cache/*
 nbproject
 *.bat
-*.out
+*.out*
 ./*.png

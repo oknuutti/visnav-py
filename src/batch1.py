@@ -92,10 +92,15 @@ if __name__ == '__main__':
     kwargs = kwargs0
     
     # shape model noise
-    settings.ADD_SHAPE_MODEL_NOISE = ('smn' in m or 'smn_' in m)
-
+    settings.ADD_SHAPE_MODEL_NOISE = False
     if 'smn_' in m:
+        settings.ADD_SHAPE_MODEL_NOISE = True
         settings.SHAPE_MODEL_NOISE_LV = 0.01
+        kwargs['smn_type'] = 'hi'
+    elif 'smn' in m:
+        settings.ADD_SHAPE_MODEL_NOISE = True
+        settings.SHAPE_MODEL_NOISE_LV = 0.003
+        kwargs['smn_type'] = 'lo'
 
     # feature db
     if 'fdb' in m:

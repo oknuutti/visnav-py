@@ -13,9 +13,8 @@ class CentroidAlgo():
         self.system_model = system_model
         self.glWidget = glWidget
         
-        self.debug_filebase = kwargs.get('debug_filebase', None)
         self.bg_threshold = kwargs.get('bg_threshold', None)
-        
+        self.debug_filebase = None
         self._ref_img = None
         
         self.DEBUG_IMG_POSTFIX = 'c'            # fi batch mode, save result image in a file ending like this
@@ -29,7 +28,8 @@ class CentroidAlgo():
         self.MIN_RESULT_XCORR = 0.3             # if result xcorr with scene is less than this, fail
     
     
-    def adjust_iteratively(self, sce_img, **kwargs):
+    def adjust_iteratively(self, sce_img, outfile, **kwargs):
+        self.debug_filebase = outfile
         sce_img = self.maybe_load_scene_image(sce_img)
         
         self.system_model.spacecraft_pos = (0, 0, -MIN_MED_DISTANCE)
