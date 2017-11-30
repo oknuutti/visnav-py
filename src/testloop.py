@@ -261,19 +261,18 @@ class TestLoop():
         
         
     def generate_noisy_shape_model(self, sm, i):
-        sup = objloader.OBJ(SHAPE_MODEL_NOISE_SUPPORT)
-        noisy_vertices, sm_noise = tools.apply_noise(
-                np.array(sm.real_shape_model.vertices),
-                support=np.array(sup.vertices),
-                len_sc=SHAPE_MODEL_NOISE_LEN_SC,
-                noise_lv=SHAPE_MODEL_NOISE_LV)
+        sup = objloader.ShapeModel(fname=SHAPE_MODEL_NOISE_SUPPORT)
+        noisy_model, sm_noise = tools.apply_noise(sm.real_shape_model,
+                                                  support=np.array(sup.vertices),
+                                                  len_sc=SHAPE_MODEL_NOISE_LEN_SC,
+                                                  noise_lv=SHAPE_MODEL_NOISE_LV)
         
         prefix = 'shapemodel_'+self._smn_cache_id
         fname = self._cache_file(i, prefix=prefix)+'.nsm'
         with open(fname, 'wb') as fh:
-            pickle.dump((noisy_vertices, sm_noise), fh, -1)
+            pickle.dump((noisy_model.as_dict(), sm_noise), fh, -1)
         
-        self._widget_load_obj(noisy_vertices)
+        self._widget_load_obj(noisy_model)
         return sm_noise
     
     def load_noisy_shape_model(self, sm, i):
@@ -281,16 +280,16 @@ class TestLoop():
             prefix = 'shapemodel_'+self._smn_cache_id
             fname = self._cache_file(i, prefix=prefix)+'.nsm'
             with open(fname, 'rb') as fh:
-                noisy_vertices, sm_noise = pickle.load(fh)
-            self._widget_load_obj(noisy_vertices)
+                noisy_model, sm_noise = pickle.load(fh)
+            self._widget_load_obj(objloader.ShapeModel(data=noisy_model))
         except FileNotFoundError:
             sm_noise = None
         return sm_noise
         
-    def _widget_load_obj(self, noisy_vertices):
+    def _widget_load_obj(self, noisy_model):
         self._run_on_qt(
-                lambda x, y: x.loadObject(noisy_vertices=y),
-                self.window.glWidget, noisy_vertices)
+                lambda x, y: x.loadObject(noisy_model=y),
+                self.window.glWidget, noisy_model)
     
     
     def render_navcam_image(self, sm, i):

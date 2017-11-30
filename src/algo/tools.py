@@ -285,10 +285,13 @@ def bf_lat_lon(tol):
     return lat_steps, lon_steps
 
 
-def apply_noise(points, support=None, len_sc=0.1, noise_lv=0.1, only_z=False):
+def apply_noise(model, support=None, len_sc=SHAPE_MODEL_NOISE_LEN_SC, 
+                noise_lv=SHAPE_MODEL_NOISE_LV, only_z=False):
+    
     from scipy.interpolate import LinearNDInterpolator, NearestNDInterpolator
     import random
     import time
+    from iotools import objloader
     
     try:
         from sklearn.gaussian_process import GaussianProcessRegressor
@@ -297,6 +300,7 @@ def apply_noise(points, support=None, len_sc=0.1, noise_lv=0.1, only_z=False):
         print('Requires scikit-learn, install using "conda install scikit-learn"')
         sys.exit()
     
+    points = np.array(model.vertices)
     if support is None:
         support = points[random.sample(list(range(len(points))), min(3000,len(points)))]
     
@@ -360,7 +364,11 @@ def apply_noise(points, support=None, len_sc=0.1, noise_lv=0.1, only_z=False):
         plt.show()
         assert False, 'exiting'
     
-    return noisy_points, np.mean(devs)
+    data = model.as_dict()
+    data['vertices'] = noisy_points
+    noisy_model = objloader.ShapeModel(data=data)
+    noisy_model.recalc_norms()
+    return noisy_model, np.mean(devs)
 
 
 def interp2(array, x, y):

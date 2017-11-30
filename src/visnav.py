@@ -610,7 +610,7 @@ class GLWidget(QOpenGLWidget):
 
         self.update()
 
-    def loadObject(self, noisy_vertices=None):
+    def loadObject(self, noisy_model=None):
         genList = self.gl.glGenLists(1)
         self.gl.glNewList(genList, self.gl.GL_COMPILE)
         self.gl.glBegin(self.gl.GL_TRIANGLES) # GL_POLYGON?
@@ -620,25 +620,23 @@ class GLWidget(QOpenGLWidget):
         #self.gl.glMaterialfv(self.gl.GL_FRONT, self.gl.GL_SHININESS, (0,));
         
         if self.systemModel.real_shape_model is None:
-            sm = self.systemModel.real_shape_model = objloader.OBJ(TARGET_MODEL_FILE)
+            rsm = self.systemModel.real_shape_model = objloader.ShapeModel(fname=TARGET_MODEL_FILE)
         else:
-            sm = self.systemModel.real_shape_model
+            rsm = self.systemModel.real_shape_model
         
-        if noisy_vertices is not None:
-            vertices = noisy_vertices
+        if noisy_model is not None:
+            sm = noisy_model
         elif ADD_SHAPE_MODEL_NOISE and not BATCH_MODE:
-            sup = objloader.OBJ(SHAPE_MODEL_NOISE_SUPPORT)
-            vertices, noise = tools.apply_noise(np.array(sm.vertices),
-                    support=np.array(sup.vertices),
-                    len_sc=SHAPE_MODEL_NOISE_LEN_SC,
-                    noise_lv=SHAPE_MODEL_NOISE_LV)
+            sup = objloader.ShapeModel(fname=SHAPE_MODEL_NOISE_SUPPORT)
+            sm, noise = tools.apply_noise(rsm, support=np.array(sup.vertices))
         else:
-            vertices = sm.vertices
+            sm = rsm
         
-        for triangle in sm.triangles:
-            self.triangle(vertices[triangle[0]],
-                          vertices[triangle[1]],
-                          vertices[triangle[2]])
+        for triangle, norm in sm.faces:
+            self.triangle(sm.vertices[triangle[0]],
+                          sm.vertices[triangle[1]],
+                          sm.vertices[triangle[2]],
+                          norm)
         
         self.gl.glEnd()
         self.gl.glEndList()
@@ -646,16 +644,16 @@ class GLWidget(QOpenGLWidget):
         if DEBUG:
             # assume all 32bit (4B) variables, no reuse of vertices
             # => triangle count x (3 vertices + 1 normal) x 3d vectors x bytes per variable
-            mem_needed = len(sm.triangles) * 4 * 3 * 4
-            print('3D model mem use: %.0fx %.0fB => %.1fMB'%(len(sm.triangles), 4*3*4, mem_needed/1024/1024))
+            mem_needed = len(sm.faces) * 4 * 3 * 4
+            print('3D model mem use: %.0fx %.0fB => %.1fMB'%(len(sm.faces), 4*3*4, mem_needed/1024/1024))
 
         self._object = genList
 
-    def triangle(self, x1, x2, x3):
-        self.gl.glNormal3f(*tools.surf_normal(x1, x2, x3))
-        self.gl.glVertex3f(x1[0], x1[1], x1[2])
-        self.gl.glVertex3f(x2[0], x2[1], x2[2])
-        self.gl.glVertex3f(x3[0], x3[1], x3[2])
+    def triangle(self, x1, x2, x3, n):
+        self.gl.glNormal3f(*n)
+        self.gl.glVertex3f(*x1)
+        self.gl.glVertex3f(*x2)
+        self.gl.glVertex3f(*x3)
 
     def setClearColor(self, c):
         self.gl.glClearColor(c.redF(), c.greenF(), c.blueF(), c.alphaF())

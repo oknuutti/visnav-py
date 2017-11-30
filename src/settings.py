@@ -33,7 +33,7 @@ TARGET_IMAGE_META_FILE = os.path.join(SCRIPT_DIR, '../data/targetimgs/'+TARGET_I
 TARGET_MODEL_FILE = os.path.join(SCRIPT_DIR, '../data/CSHP_DV_130_01_XLRES_00200.obj') # _XLRES_, _LORES_
 #TARGET_MODEL_FILE = os.path.join(SCRIPT_DIR, '../data/test-ball-hires.obj')
 
-ADD_SHAPE_MODEL_NOISE = True
+ADD_SHAPE_MODEL_NOISE = False
 SHAPE_MODEL_NOISE_SUPPORT = os.path.join(SCRIPT_DIR, '../data/CSHP_DV_130_01_X3LRES_00200.obj')
 #SHAPE_MODEL_NOISE_SUPPORT = os.path.join(SCRIPT_DIR, '../data/test-ball.obj')
 SHAPE_MODEL_NOISE_LEN_SC = 1
