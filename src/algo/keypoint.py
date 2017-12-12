@@ -26,6 +26,7 @@ class KeypointAlgo():
         self.debug_filebase = None
         self.timer = None
         
+        self._shape_model_rng = None
         self._latest_detector = None
         
         self.DEBUG_IMG_POSTFIX = 'k'   # fi batch mode, save result image in a file ending like this
@@ -37,13 +38,18 @@ class KeypointAlgo():
         self.SCENE_SCALE_STEP = 1.4142 # sqrt(2) scale scene image by this amount if fail
         self.MAX_SCENE_SCALE_STEPS = 5 # from mid range 64km to near range 16km (64/sqrt(2)**(5-1) => 16)
 
+
+    def solve_pnp(self, orig_sce_img, outfile, feat=ORB, use_feature_db=False, 
+            add_noise=False, scale_cam_img=False, vary_scale=False, **kwargs):
         
-    def solve_pnp(self, orig_sce_img, outfile, feat=ORB, use_feature_db=False, scale_cam_img=False, vary_scale=False, **kwargs):
         # maybe load scene image
         if isinstance(orig_sce_img, str):
             self.debug_filebase = outfile+self.DEBUG_IMG_POSTFIX
             self.glWidget.loadTargetImage(orig_sce_img, remove_bg=False)
             orig_sce_img = self.glWidget.full_image
+
+        if add_noise:
+            self._shape_model_rng = np.max(np.ptp(self.system_model.real_shape_model.vertices, axis=0))
 
         self.timer = Stopwatch()
         if not use_feature_db:
@@ -110,7 +116,12 @@ class KeypointAlgo():
                     raise error
 
                 # get feature 3d points using 3d model
-                ref_kp_3d = self._inverse_project([ref_kp[m.trainIdx].pt for m in matches], depth_result, render_z, ref_img_sc)
+                if use_feature_db:
+                    self.timer.stop()
+                ref_kp_3d = self._inverse_project([ref_kp[m.trainIdx].pt for m in matches], depth_result, render_z, ref_img_sc, add_noise)
+                if use_feature_db:
+                    self.timer.start()
+                
                 sce_kp_2d = np.array([tuple(np.divide(sce_kp[m.queryIdx].pt, sce_img_sc)) for m in matches], dtype='float')
 
                 #if DEBUG:
@@ -347,7 +358,7 @@ class KeypointAlgo():
         return np.sqrt(np.mean((sce_kp_2d[inliers] - prj_kp_2d[inliers])**2))
     
     
-    def _inverse_project(self, points_2d, depths, render_z, img_sc):
+    def _inverse_project(self, points_2d, depths, render_z, img_sc, add_noise=False):
         sc = img_sc * VIEW_WIDTH/CAMERA_WIDTH
         
         def invproj(xi, yi):
@@ -356,6 +367,12 @@ class KeypointAlgo():
             return x, -y, -(z-render_z) # same as rotate using cv2gl_q
         
         points_3d = np.array([invproj(pt[0], pt[1]) for pt in points_2d])
+        if add_noise:
+            try:
+                points_3d, avg_noise, L = tools.points_with_noise(points_3d, max_rng=self._shape_model_rng)
+            except np.linalg.linalg.LinAlgError as e:
+                print('%s, points_3d.shape:%s'%(e,points_3d.shape))
+        
         return points_3d
     
     

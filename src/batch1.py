@@ -107,7 +107,10 @@ if __name__ == '__main__':
         settings.TARGET_MODEL_FILE = os.path.join(settings.SCRIPT_DIR, '../data/CSHP_DV_130_01_LORES_00200.obj') # _XLRES_, _LORES_        
         settings.VIEW_WIDTH = 768
         settings.VIEW_HEIGHT = 768
-        
+        noise = kwargs.pop('smn_type',False)
+        settings.ADD_SHAPE_MODEL_NOISE = False
+        if noise:
+            kwargs['add_noise'] = True
 
     from settings import *
     from visnav import MainThread

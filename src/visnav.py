@@ -628,7 +628,7 @@ class GLWidget(QOpenGLWidget):
             sm = noisy_model
         elif ADD_SHAPE_MODEL_NOISE and not BATCH_MODE:
             sup = objloader.ShapeModel(fname=SHAPE_MODEL_NOISE_SUPPORT)
-            sm, noise = tools.apply_noise(rsm, support=np.array(sup.vertices))
+            sm, noise, L = tools.apply_noise(rsm, support=np.array(sup.vertices))
         else:
             sm = rsm
         

@@ -285,36 +285,95 @@ def bf_lat_lon(tol):
     return lat_steps, lon_steps
 
 
-def apply_noise(model, support=None, len_sc=SHAPE_MODEL_NOISE_LEN_SC, 
+def mv_normal(mean, cov=None, L=None, size=None):
+    if size is None:
+        final_shape = []
+    elif isinstance(size, (int, np.integer)):
+        final_shape = [size]
+    else:
+        final_shape = size
+    final_shape = list(final_shape[:])
+    final_shape.append(mean.shape[0])
+    
+    if L is None and cov is None \
+          or L is not None and cov is not None:
+        raise ValueError("you must provide either cov or L (cholesky decomp result)")
+    if len(mean.shape) != 1:
+        raise ValueError("mean must be 1 dimensional")
+    
+    if L is not None:
+        if (len(L.shape) != 2) or (L.shape[0] != L.shape[1]):
+            raise ValueError("L must be 2 dimensional and square")
+        if mean.shape[0] != L.shape[0]:
+            raise ValueError("mean and L must have same length")
+
+    if cov is not None:
+        if (len(cov.shape) != 2) or (cov.shape[0] != cov.shape[1]):
+            raise ValueError("cov must be 2 dimensional and square")
+        if mean.shape[0] != cov.shape[0]:
+            raise ValueError("mean and cov must have same length")
+        L = np.linalg.cholesky(cov)
+
+    from numpy.random import standard_normal
+    z = standard_normal(final_shape).reshape(mean.shape[0],-1)
+    
+    x = L.dot(z).T
+    x += mean
+    x.shape = tuple(final_shape)
+    
+    return x, L
+    
+
+def apply_noise(model, support=None, L=None, len_sc=SHAPE_MODEL_NOISE_LEN_SC, 
                 noise_lv=SHAPE_MODEL_NOISE_LV, only_z=False):
+    
+    noisy_points, avg_dev, L = points_with_noise(points=np.array(model.vertices),
+            support=support, L=L, len_sc=len_sc, noise_lv=noise_lv, only_z=only_z)
+                
+    data = model.as_dict()
+    data['vertices'] = noisy_points
+    from iotools import objloader
+    noisy_model = objloader.ShapeModel(data=data)
+    noisy_model.recalc_norms()
+    
+    return noisy_model, avg_dev, L
+    
+
+def points_with_noise(points, support=None, L=None, len_sc=SHAPE_MODEL_NOISE_LEN_SC, 
+                noise_lv=SHAPE_MODEL_NOISE_LV, max_rng=None, only_z=False):
     
     from scipy.interpolate import LinearNDInterpolator, NearestNDInterpolator
     import random
     import time
-    from iotools import objloader
     
     try:
-        from sklearn.gaussian_process import GaussianProcessRegressor
-        from sklearn.gaussian_process.kernels import Matern
+        from sklearn.gaussian_process.kernels import Matern, WhiteKernel
     except:
         print('Requires scikit-learn, install using "conda install scikit-learn"')
         sys.exit()
     
-    points = np.array(model.vertices)
     if support is None:
-        support = points[random.sample(list(range(len(points))), min(3000,len(points)))]
+        support = points #[random.sample(list(range(len(points))), min(3000,len(points)))]
     
+    n = len(support)
     mean = np.mean(points,axis=0)
-    max_rng = np.max(np.ptp(points,axis=0))
-    kernel = 0.7*noise_lv*Matern(length_scale=len_sc*max_rng, nu=1.5) + 0.2*noise_lv*Matern(length_scale=0.1*len_sc*max_rng, nu=1.5)
-    gp = GaussianProcessRegressor(kernel=kernel)
+    max_rng = np.max(np.ptp(points,axis=0)) if max_rng is None else max_rng
     
+    y_cov = None
+    if L is None:
+        kernel = 0.7*noise_lv*Matern(length_scale=len_sc*max_rng, nu=1.5) \
+               + 0.2*noise_lv*Matern(length_scale=0.1*len_sc*max_rng, nu=1.5) \
+               + WhiteKernel(noise_level=0.02*noise_lv*max_rng)
+        y_cov = kernel(support-mean)
+
     # sample gp
-    err = np.exp(gp.sample_y(support-mean, 1, int(time.time())))
+    e0, L = mv_normal(np.zeros(n), cov=y_cov, L=L)
+    err = np.exp(e0).reshape((-1,1))
 
     if len(err) == len(points):
         full_err = err
-        print('using orig gp sampled err')
+        if DEBUG:
+            print('using orig gp sampled err')
     else:
         # interpolate
         interp = LinearNDInterpolator((support-mean)*1.0015, err)
@@ -326,7 +385,10 @@ def apply_noise(model, support=None, len_sc=SHAPE_MODEL_NOISE_LEN_SC,
             if DEBUG or not BATCH_MODE:
                 print('%sx nans'%np.sum(nanidx))
             naninterp = NearestNDInterpolator(support, err)
-            full_err[nanidx,] = naninterp(points[nanidx,:])
+            try:
+                full_err[nanidx,] = naninterp(points[nanidx,:])
+            except IndexError as e:
+                raise IndexError('%s,%s,%s'%(err.shape, full_err.shape, points.shape)) from e
 
     # extra high frequency noise
     white_noise = np.random.normal(scale=0.2*noise_lv*max_rng, size=(len(full_err),1))
@@ -364,11 +426,7 @@ def apply_noise(model, support=None, len_sc=SHAPE_MODEL_NOISE_LEN_SC,
         plt.show()
         assert False, 'exiting'
     
-    data = model.as_dict()
-    data['vertices'] = noisy_points
-    noisy_model = objloader.ShapeModel(data=data)
-    noisy_model.recalc_norms()
-    return noisy_model, np.mean(devs)
+    return noisy_points, np.mean(devs), L
 
 
 def interp2(array, x, y):

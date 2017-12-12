@@ -69,6 +69,7 @@ class TestLoop():
         self._shifterrs = []
         self._fails = 0        
         self._timer = None
+        self._L = None
         
         def handle_close():
             self.exit = True
@@ -81,7 +82,7 @@ class TestLoop():
     # main method
     def run(self, times, log_prefix='test-', cleanup=True, **kwargs):
         self._smn_cache_id = kwargs.pop('smn_type', '')
-
+        
         # write logfile header
         self._init_log(log_prefix)
         
@@ -263,10 +264,12 @@ class TestLoop():
         
     def generate_noisy_shape_model(self, sm, i):
         sup = objloader.ShapeModel(fname=SHAPE_MODEL_NOISE_SUPPORT)
-        noisy_model, sm_noise = tools.apply_noise(sm.real_shape_model,
-                                                  support=np.array(sup.vertices),
-                                                  len_sc=SHAPE_MODEL_NOISE_LEN_SC,
-                                                  noise_lv=SHAPE_MODEL_NOISE_LV)
+        noisy_model, sm_noise, self._L = \
+                tools.apply_noise(sm.real_shape_model,
+                                  support=np.array(sup.vertices),
+                                  L=self._L,
+                                  len_sc=SHAPE_MODEL_NOISE_LEN_SC,
+                                  noise_lv=SHAPE_MODEL_NOISE_LV)
         
         prefix = 'shapemodel_'+self._smn_cache_id
         fname = self._cache_file(i, prefix=prefix)+'.nsm'
