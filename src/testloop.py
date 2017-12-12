@@ -4,6 +4,7 @@ import math
 from math import degrees as deg
 from math import radians as rad
 import os
+import sys
 import shutil
 import pickle
 import threading
@@ -402,7 +403,7 @@ class TestLoop():
         self._fval_logfile = LOG_DIR + logbody + '-fvals.log'
         self._logfile = LOG_DIR + logbody + '.log'
         with open(self._logfile, 'w') as file:
-            file.write('\t'.join((
+            file.write(' '.join(sys.argv)+'\n'+ '\t'.join((
                 'iter', 'date', 'execution time',
                 'time', 'ast lat', 'ast lon', 'ast rot',
                 'sc lat', 'sc lon', 'sc rot', 

@@ -1,7 +1,6 @@
 import settings
 settings.BATCH_MODE = True
 
-import math
 import sys
 import os
 sys.tracebacklimit = 10
@@ -10,10 +9,10 @@ from scipy import optimize
 
 
 if __name__ == '__main__':
-    method = sys.argv[1] if len(sys.argv)>1 else 'keypoint'
-    count = int(sys.argv[2]) if len(sys.argv)>2 else 100
+    full_method = sys.argv[1] if len(sys.argv)>1 else 'keypoint'
+    count = int(sys.argv[2]) if len(sys.argv)>2 else 10
     
-    m = method.split('+')
+    m = full_method.split('+')
     method=m[0]
     
     if False:
@@ -116,6 +115,7 @@ if __name__ == '__main__':
 
     if 'fdb' in m:
         from algo.keypoint import KeypointAlgo
+        from algo import tools
         lats, lons = tools.bf_lat_lon(KeypointAlgo.FDB_TOL)
         max_feat_mem = KeypointAlgo.FDB_MAX_MEM * len(lats) * len(lons)
         print('Using feature DB not bigger than %.1fMB (%.0f x %.0fkB)'%(
@@ -128,6 +128,6 @@ if __name__ == '__main__':
     th1.wait_until_ready()
 
     tl = TestLoop(th1.window)
-    tl.run(count, **kwargs)
+    tl.run(count, log_prefix=full_method+'-', **kwargs)
     
     th1.app.quit()
