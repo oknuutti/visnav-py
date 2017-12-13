@@ -363,7 +363,7 @@ def points_with_noise(points, support=None, L=None, len_sc=SHAPE_MODEL_NOISE_LEN
     if L is None:
         kernel = 0.7*noise_lv*Matern(length_scale=len_sc*max_rng, nu=1.5) \
                + 0.2*noise_lv*Matern(length_scale=0.1*len_sc*max_rng, nu=1.5) \
-               + WhiteKernel(noise_level=0.02*noise_lv*max_rng)
+               + WhiteKernel(noise_level=1e-6*noise_lv*max_rng) # white noise for positive definite covariance matrix only
         y_cov = kernel(support-mean)
 
     # sample gp
