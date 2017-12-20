@@ -243,7 +243,6 @@ class CentroidAlgo():
 
     def maybe_load_scene_image(self, sce_img):
         if isinstance(sce_img, str):
-            self.debug_filebase = sce_img[0:-4]+self.DEBUG_IMG_POSTFIX
             self.glWidget.loadTargetImage(sce_img, remove_bg=True)
             sce_img = self.glWidget.full_image
             self.bg_threshold = self.glWidget.image_bg_threshold

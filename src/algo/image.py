@@ -26,6 +26,24 @@ class ImageProc():
                         None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
         
     @staticmethod
+    def equalize_brightness(image, ref_image, percentile=98):
+        ip = np.percentile(image, percentile)
+        rp = np.percentile(ref_image, percentile)
+        return cv2.convertScaleAbs(image, None, rp/ip, 0)
+    
+    @staticmethod
+    def adjust_gamma(image, gamma):
+        # build a lookup table mapping the pixel values [0, 255] to
+        # their adjusted gamma values
+        invGamma = 1.0 / gamma
+        table = np.array([((i / 255.0) ** invGamma) * 255
+            for i in np.arange(0, 256)]).astype("uint8")
+
+        # apply gamma correction using the lookup table
+        return cv2.LUT(image, table)
+    
+        
+    @staticmethod
     def process_target_image(image_src):
         hist = cv2.calcHist([image_src],[0],None,[256],[0,256])
         if False:

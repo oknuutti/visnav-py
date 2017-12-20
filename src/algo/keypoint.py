@@ -8,6 +8,7 @@ import cv2
 from settings import *
 from algo import tools
 from algo.tools import PositioningException, Stopwatch
+from algo.image import ImageProc
 
 class KeypointAlgo():
     (
@@ -17,8 +18,8 @@ class KeypointAlgo():
         SURF,
     ) = range(4)
     
-    FDB_MAX_MEM = 192*1024      # in bytes
-    FDB_TOL = math.radians(7)   # features from db never more than 6 deg off
+    FDB_MAX_MEM = 192*1024      # in bytes, default 192
+    FDB_TOL = math.radians(7)   # features from db never more than 7 deg off
     
     def __init__(self, system_model, glWidget):
         self.system_model = system_model
@@ -26,14 +27,16 @@ class KeypointAlgo():
         self.debug_filebase = None
         self.timer = None
         
+        self.sm_noise = 0
+        
         self._shape_model_rng = None
         self._latest_detector = None
         
         self.DEBUG_IMG_POSTFIX = 'k'   # fi batch mode, save result image in a file ending like this
         
-        self.MIN_FEATURES = 12         # fail if less inliers at the end
-        self.LOWE_METHOD_COEF = 0.75   # default 0.7
-        self.RANSAC_ITERATIONS = 1000  # default 100
+        self.MIN_FEATURES = 10          # fail if less inliers at the end
+        self.LOWE_METHOD_COEF = 0.80   # default 0.7
+        self.RANSAC_ITERATIONS = 10000  # default 100
         self.RANSAC_ERROR = 8.0        # default 8.0
         self.SCENE_SCALE_STEP = 1.4142 # sqrt(2) scale scene image by this amount if fail
         self.MAX_SCENE_SCALE_STEPS = 5 # from mid range 64km to near range 16km (64/sqrt(2)**(5-1) => 16)
@@ -60,6 +63,9 @@ class KeypointAlgo():
         orig_z = self.system_model.z_off.value
         self.system_model.z_off.value = render_z
         ref_img, depth_result = self.glWidget.render(depth=True, discretize_tol=KeypointAlgo.FDB_TOL if use_feature_db else False)
+        #ref_img = ImageProc.equalize_brightness(ref_img, orig_sce_img)
+        #orig_sce_img = ImageProc.adjust_gamma(orig_sce_img, 0.5)
+        #ref_img = ImageProc.adjust_gamma(ref_img, 0.5)
         discretization_err_q = self.glWidget.latest_discretization_err_q if use_feature_db else False
         self.system_model.z_off.value = orig_z
         
@@ -362,14 +368,15 @@ class KeypointAlgo():
         sc = img_sc * VIEW_WIDTH/CAMERA_WIDTH
         
         def invproj(xi, yi):
-            z = -tools.interp2(depths, xi/img_sc, yi/img_sc)
+            z = -tools.interp2(depths, xi/img_sc, yi/img_sc, max_val=MAX_DISTANCE-3)
             x, y = tools.calc_xy(xi/sc, yi/sc, z, width=CAMERA_WIDTH, height=CAMERA_HEIGHT)
             return x, -y, -(z-render_z) # same as rotate using cv2gl_q
         
         points_3d = np.array([invproj(pt[0], pt[1]) for pt in points_2d])
         if add_noise:
             try:
-                points_3d, avg_noise, L = tools.points_with_noise(points_3d, max_rng=self._shape_model_rng)
+                points_3d, self.sm_noise, L = tools.points_with_noise(points_3d,
+                        only_z=True, max_rng=self._shape_model_rng)
             except np.linalg.linalg.LinAlgError as e:
                 print('%s, points_3d.shape:%s'%(e,points_3d.shape))
         

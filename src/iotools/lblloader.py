@@ -3,6 +3,9 @@ import re
 from configparser import ConfigParser
 from ast import literal_eval
 
+from decimal import *
+getcontext().prec = 6
+
 import numpy as np
 import quaternion
 from astropy.coordinates import SkyCoord
@@ -108,7 +111,7 @@ def load_image_meta(src, sm):
     sm.time.range = (timestamp - half_range, timestamp + half_range)
     sm.time.value = timestamp
     sm.time.real_value = timestamp
-    
+     
     ## set spacecraft orientation
     ##
     xc, yc, zc = 0, 0, 0
@@ -135,7 +138,7 @@ def load_image_meta(src, sm):
         )
         
     sm.real_spacecraft_rot = sm.spacecraft_rot
-    
+
     ## set spacecraft position
     ##
     if USE_ICRS:
@@ -150,7 +153,7 @@ def load_image_meta(src, sm):
     # s/c orientation
     sco = list(map(math.radians, sm.spacecraft_rot))
     scoq = tools.ypr_to_q(*sco)
-
+    
     # project old position to new base vectors
     sc2gl_q = sm.frm_conv_q(sm.SPACECRAFT_FRAME, sm.OPENGL_FRAME)
     scub = tools.q_to_unitbase(scoq * sc2gl_q)
@@ -162,10 +165,17 @@ def load_image_meta(src, sm):
         sm.spacecraft_pos = sc_ast_p
     ##
     ## done setting spacecraft position
-    
+
     # use calculated asteroid axis as real axis
     sm.asteroid_rotation_from_model()
     sm.real_asteroid_axis = sm.asteroid_axis
+
+    sm.real_sc_ast_vertices = sm.sc_asteroid_vertices(real=True)
+
+    if not np.isclose(float(Decimal(sm.time.value) - Decimal(sm.time.real_value)), 0):
+        sm.time.real_value = sm.time.value
+        if DEBUG:
+            print('Strange Python problem where float memory values get corrupted a little in random places of code')
 
     if False:
         print((''
@@ -184,7 +194,7 @@ def load_image_meta(src, sm):
             sc_ast_p,
         ))
     
-    if True:
+    if DEBUG:
         lbl_sun_ast_v = (sun_sc_ec_p+sc_ast_ec_p)*1e3
         lbl_se, lbl_dir = tools.solar_elongation(lbl_sun_ast_v, scoq)
         
@@ -200,7 +210,7 @@ def load_image_meta(src, sm):
             lbl_sun_ast_v*1e-9, (mastp)*1e-9,
         ))
         
-    sm.save_state('none',printout=True)
+        sm.save_state('none',printout=True)
     #quit()
     
     ## Impossible to calculate asteroid rotation axis based on given data!!

@@ -9,6 +9,7 @@ import shutil
 import pickle
 import threading
 from datetime import datetime as dt
+from decimal import *
 
 import numpy as np
 import quaternion
@@ -16,6 +17,7 @@ from astropy.coordinates import spherical_to_cartesian
 
 from iotools.visitclient import VisitClient
 from iotools import objloader
+from iotools import lblloader
 
 from algo.model import Asteroid
 import algo.tools as tools
@@ -70,6 +72,8 @@ class TestLoop():
         self._fails = 0        
         self._timer = None
         self._L = None
+        self._state_list = None
+        self._rotation_noise = None
         
         def handle_close():
             self.exit = True
@@ -80,8 +84,20 @@ class TestLoop():
         
         
     # main method
-    def run(self, times, log_prefix='test-', cleanup=True, **kwargs):
-        self._smn_cache_id = kwargs.pop('smn_type', '')
+    def run(self, times, log_prefix='test-', cleanup=True, smn_type='', 
+            state_db_path=None, rotation_noise=True, **kwargs):
+        self._smn_cache_id = smn_type
+        self._state_db_path = state_db_path
+        self._rotation_noise = rotation_noise
+        
+        skip = 0
+        if ':' in times:
+            skip, times = map(int, times.split(':'))
+        
+        if state_db_path is not None:
+            self.window.glWidget.add_image_noise = False
+            n = self._init_state_db()
+            times = min(n, times)
         
         # write logfile header
         self._init_log(log_prefix)
@@ -89,7 +105,9 @@ class TestLoop():
         li = 0
         sm = self.window.systemModel
         
-        for i in range(times):
+        for i in range(skip, times):
+            #print('%s'%self._state_list[i])
+            
             # maybe generate new noise for shape model
             sm_noise = 0
             if ADD_SHAPE_MODEL_NOISE:
@@ -101,24 +119,27 @@ class TestLoop():
                     self._maybe_exit()
 
             # try to load system state
-            initial = self.load_state(sm, i)
+            initial = self.load_state(sm, i) if self._rotation_noise else None
+            if initial or self._state_list:
+                # successfully loaded system state,
+                # try to load related navcam image
+                imgfile = self.load_navcam_image(i)
+            else:
+                imgfile = None
+
             if initial is None:
                 if DEBUG:
                     print('generating new state')
                 
                 # generate system state
-                self.generate_system_state(sm)
+                self.generate_system_state(sm, i)
 
                 # add noise to current state, wipe sc pos
                 initial = self.add_noise(sm)
 
                 # save state to lbl file
-                sm.save_state(self._cache_file(i))
-                imgfile = None
-            else:
-                # successfully loaded system state,
-                # try to load related navcam image
-                imgfile = self.load_navcam_image(i)
+                if self._rotation_noise:
+                    sm.save_state(self._cache_file(i))
             
             # maybe new system state or no previous image, if so, render
             if imgfile is None:
@@ -130,28 +151,36 @@ class TestLoop():
             # run algorithm
             ok, rtime = self._run_algo(imgfile, self._iter_file(i), **kwargs)
             
+            if kwargs.get('use_feature_db', False) and kwargs.get('add_noise', False):
+                sm_noise = self.window.keypoint.sm_noise
+            
             # calculate results
-            results = self.calculate_result(sm, i, ok, initial, **kwargs)
+            results = self.calculate_result(sm, i, imgfile, ok, initial, **kwargs)
             
             # write log entry
             self._write_log_entry(i, rtime, sm_noise, *results)
             self._maybe_exit()
 
             # print out progress
-            if math.floor(100*i/times) > li:
+            if math.floor(100*i/(times - skip)) > li:
                 print('.', end='', flush=True)
                 li += 1
 
-        self._close_log(times)
+        self._close_log(times-skip)
         
         if cleanup:
             self._cleanup()
     
 
-    def generate_system_state(self, sm):
+    def generate_system_state(self, sm, i):
         # reset asteroid axis to true values
         sm.asteroid = Asteroid()
         sm.asteroid_rotation_from_model()
+        
+        if self._state_list is not None:
+            lblloader.load_image_meta(
+                os.path.join(self._state_db_path, self._state_list[i]+'.LBL'), sm)
+            return
         
         for i in range(100):
             ## sample params from suitable distributions
@@ -214,12 +243,14 @@ class TestLoop():
         
         
     def add_noise(self, sm):
+        rotation_noise = True if self._state_list is None else self._rotation_noise
         
         ## add measurement noise to
         # - datetime (seconds)
-        meas_time = sm.time.real_value + np.random.normal(0, self._noise_time)
-        sm.time.value = meas_time;
-        assert np.isclose(sm.time.value, meas_time), 'Failed to set time value'
+        if rotation_noise:
+            meas_time = sm.time.real_value + np.random.normal(0, self._noise_time)
+            sm.time.value = meas_time;
+            assert np.isclose(sm.time.value, meas_time), 'Failed to set time value'
 
         # - asteroid state estimate
         ax_lat, ax_lon, ax_phs = map(rad, sm.real_asteroid_axis)
@@ -228,7 +259,8 @@ class TestLoop():
         meas_ax_lat = ax_lat + noise_da*math.sin(noise_dd)
         meas_ax_lon = ax_lon + noise_da*math.cos(noise_dd)
         meas_ax_phs = ax_phs + np.random.normal(0, rad(self._noise_ast_phase_shift))
-        sm.asteroid_axis = map(deg, (meas_ax_lat, meas_ax_lon, meas_ax_phs))
+        if rotation_noise:
+            sm.asteroid_axis = map(deg, (meas_ax_lat, meas_ax_lon, meas_ax_phs))
 
         # - spacecraft orientation measure
         sc_lat, sc_lon, sc_rot = map(rad, sm.real_spacecraft_rot)
@@ -238,7 +270,8 @@ class TestLoop():
                 + np.random.normal(0, rad(self._noise_sco_lon)))
         meas_sc_rot = wrap_rads(sc_rot
                 + np.random.normal(0, rad(self._noise_sco_rot)))
-        sm.spacecraft_rot = map(deg, (meas_sc_lat, meas_sc_lon, meas_sc_rot))
+        if rotation_noise:
+            sm.spacecraft_rot = map(deg, (meas_sc_lat, meas_sc_lon, meas_sc_rot))
         
         # wipe spacecraft position clean
         sm.spacecraft_pos = (0, 0, -MIN_MED_DISTANCE)
@@ -292,8 +325,8 @@ class TestLoop():
         
     def _widget_load_obj(self, noisy_model):
         self._run_on_qt(
-                lambda x, y: x.loadObject(noisy_model=y),
-                self.window.glWidget, noisy_model)
+            lambda x, y: x.loadObject(noisy_model=y),
+            self.window.glWidget, noisy_model)
     
     
     def render_navcam_image(self, sm, i):
@@ -337,11 +370,14 @@ class TestLoop():
         return cache_file
 
     def load_navcam_image(self, i):
-        fname = self._cache_file(i)+'.png'
+        if self._state_list is None:
+            fname = self._cache_file(i)+'.png'
+        else:
+            fname = os.path.join(self._state_db_path, self._state_list[i]+'_P.png')
         return fname if os.path.isfile(fname) else None
 
 
-    def calculate_result(self, sm, i, ok, initial, **kwargs):
+    def calculate_result(self, sm, i, imgfile, ok, initial, **kwargs):
         # save function values from optimization
         fvals = self.window.phasecorr.optfun_values \
                 if ok and kwargs.get('method', False)=='phasecorr' \
@@ -356,11 +392,13 @@ class TestLoop():
         params = (sm.time.real_value, *r_ast_axis,
                 *sm.real_spacecraft_rot, deg(elong), deg(direc),
                 *sm.real_spacecraft_pos, *map(deg, real_rel_rot),
-                self._iter_file(i), final_fval)
+                imgfile, final_fval)
         
         # calculate added noise
         #
-        time_noise = initial['time'] - sm.time.real_value
+        getcontext().prec = 6
+        time_noise = float(Decimal(initial['time']) - Decimal(sm.time.real_value))
+        
         ast_rot_noise = (
             initial['ast_axis'][0]-r_ast_axis[0],
             initial['ast_axis'][1]-r_ast_axis[1],
@@ -393,6 +431,17 @@ class TestLoop():
             )
         
         return params, noise, pos, map(deg, rel_rot), fvals, err
+    
+    
+    def _init_state_db(self):
+        try:
+            with open(os.path.join(self._state_db_path, 'ignore_these.txt'), 'rb') as fh:
+                ignore = tuple(l.decode('utf-8').strip() for l in fh)
+        except FileNotFoundError:
+            ignore = tuple()
+        self._state_list = sorted([f[:-4] for f in os.listdir(self._state_db_path)
+                                          if f[-4:]=='.LBL' and f[:-4] not in ignore])
+        return len(self._state_list)
     
     
     def _init_log(self, log_prefix):
@@ -432,58 +481,72 @@ class TestLoop():
         
         
     def _write_log_entry(self, i, rtime, sm_noise, params, noise, pos, rel_rot, fvals, err):
-            
-            # save execution time
-            self._run_times.append(rtime)
 
-            # calculate errors
-            dist = abs(params[-6])
-            if not math.isnan(err[0]):
-                lerr = math.sqrt(err[0]**2 + err[1]**2) / dist
-                derr = abs(err[2]) / dist
-                rerr = abs(err[3])
-                serr = err[4] / dist
-                self._laterrs.append(lerr)
-                self._disterrs.append(derr)
-                self._roterrs.append(rerr)
-                self._shifterrs.append(serr)
-            else:
-                lerr = derr = rerr = serr = float('nan')
-                self._fails += 1
+        # save execution time
+        self._run_times.append(rtime)
 
-            # log all parameter values, timing & errors into a file
-            with open(self._logfile, 'a') as file:
-                file.write('\t'.join(map(str, (
-                    i, dt.now().strftime("%Y-%m-%d %H:%M:%S"), rtime, *params,
-                    sm_noise, *noise, *pos, *rel_rot, *err, lerr, derr, serr
-                )))+'\n')
-                
-            # log opt fun values in other file
+        # calculate errors
+        dist = abs(params[-6])
+        if not math.isnan(err[0]):
+            lerr = math.sqrt(err[0]**2 + err[1]**2) / dist
+            derr = abs(err[2]) / dist
+            rerr = abs(err[3])
+            serr = err[4] / dist
+            self._laterrs.append(lerr)
+            self._disterrs.append(derr)
+            self._roterrs.append(rerr)
+            self._shifterrs.append(serr)
+        else:
+            lerr = derr = rerr = serr = float('nan')
+            self._fails += 1
+
+        # log all parameter values, timing & errors into a file
+        with open(self._logfile, 'a') as file:
+            file.write('\t'.join(map(str, (
+                i, dt.now().strftime("%Y-%m-%d %H:%M:%S"), rtime, *params,
+                sm_noise, *noise, *pos, *rel_rot, *err, lerr, derr, serr
+            )))+'\n')
+
+        # log opt fun values in other file
+        if fvals:
             with open(self._fval_logfile, 'a') as file:
-                file.write('\t'.join(map(str, fvals or []))+'\n')
+                file.write('\t'.join(map(str, fvals))+'\n')
         
         
     def _close_log(self, times):
-        prctls = (50, 68, 95) + ((99.7,) if times>=2000 else tuple())
-        calc_prctls = lambda errs: \
-                ', '.join('%.2f' % p
-                for p in 100*np.nanpercentile(errs, prctls))
-        try:
-            laterr_pctls = calc_prctls(self._laterrs)
-            disterr_pctls = calc_prctls(self._disterrs)
-            shifterr_pctls = calc_prctls(self._shifterrs)
-            roterr_pctls = ', '.join(
-                    ['%.2f'%p for p in np.nanpercentile(self._roterrs, prctls)])
-        except Exception as e:
-            print('Error calculating quantiles: %s'%e)
-            laterr_pctls = 'error'
-            disterr_pctls = 'error'
-            shifterr_pctls = 'error'
-            roterr_pctls = 'error'
+        if len(self._laterrs):
+            prctls = (50, 68, 95) + ((99.7,) if times>=2000 else tuple())
+            calc_prctls = lambda errs: \
+                    ', '.join('%.2f' % p
+                    for p in 100*np.nanpercentile(errs, prctls))
+            try:
+                laterr_pctls = calc_prctls(self._laterrs)
+                disterr_pctls = calc_prctls(self._disterrs)
+                shifterr_pctls = calc_prctls(self._shifterrs)
+                roterr_pctls = ', '.join(
+                        ['%.2f'%p for p in np.nanpercentile(self._roterrs, prctls)])
+            except Exception as e:
+                print('Error calculating quantiles: %s'%e)
+                laterr_pctls = 'error'
+                disterr_pctls = 'error'
+                shifterr_pctls = 'error'
+                roterr_pctls = 'error'
+
+            # a summary line
+            summary_data = (
+                100*sum(self._laterrs)/len(self._laterrs),
+                laterr_pctls,
+                100*sum(self._disterrs)/len(self._disterrs),
+                disterr_pctls,
+                100*sum(self._shifterrs)/len(self._shifterrs),
+                shifterr_pctls,
+                sum(self._roterrs)/len(self._roterrs),
+                roterr_pctls,
+            )
+        else:
+            summary_data = tuple(np.ones(8)*float('nan'))
         
         self._timer.stop()
-        
-        # a summary line
         summary = (
             '%s - t: %.1fmin (%.1fms), '
             + 'Le: %.2f%% (%s), '
@@ -494,15 +557,8 @@ class TestLoop():
         ) % (
             dt.now().strftime("%Y-%m-%d %H:%M:%S"),
             self._timer.elapsed/60,
-            1000*np.nanmean(self._run_times),
-            100*sum(self._laterrs)/len(self._laterrs),
-            laterr_pctls,
-            100*sum(self._disterrs)/len(self._disterrs),
-            disterr_pctls,
-            100*sum(self._shifterrs)/len(self._shifterrs),
-            shifterr_pctls,
-            sum(self._roterrs)/len(self._roterrs),
-            roterr_pctls,
+            1000*np.nanmean(self._run_times) if len(self._run_times) else float('nan'),            
+            *summary_data,
             100*self._fails/times,
         )
         
@@ -581,7 +637,8 @@ class TestLoop():
     
     def _cache_file(self, i, prefix=FILE_PREFIX):
         return os.path.normpath(
-                os.path.join(CACHE_DIR, prefix+'%04d'%i))
+            os.path.join(CACHE_DIR, (prefix+'%04d'%i) if self._state_list is None
+                                    else self._state_list[i]))
     
     def _cleanup(self):
         self._send('quit')

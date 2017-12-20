@@ -31,8 +31,8 @@ class Parameter():
     @range.setter
     def range(self, range):
         min_val, max_val = range
-        if not np.isclose(self._min_val, min_val, rtol=1e-12) \
-                or not np.isclose(self._max_val, max_val, rtol=1e-12):
+        if not np.isclose(self._min_val, min_val, rtol=1e-11) \
+                or not np.isclose(self._max_val, max_val, rtol=1e-11):
             self._min_val = min_val
             self._max_val = max_val
             if self.fire_change_events:
@@ -61,7 +61,7 @@ class Parameter():
     
     @value.setter
     def value(self, value):
-        if not np.isclose(self._value, value, rtol=1e-12):
+        if not np.isclose(self._value, value, rtol=1e-11):
             self._value = value
             if self.fire_change_events:
                 try:
@@ -90,12 +90,11 @@ class Parameter():
         return self._value >= self._min_val and self._value < self._max_val
     
     def __str__(self):
-        return '%.2f in [%.2f, %.2f]' % (self._value, self._min_val, self._max_val)
-    
-    def __repr__(self):
-        return 'value %s (%s), [%s, %s], def: %s, sc: %s'%(
-            self._value, self.nvalue, self._min_val, self._max_val,
-            self.def_val, self.scale,
+        return '%.2f (%.2f) in [%.2f, %.2f]' % (
+            self._value,
+            self.real_value if self.real_value is not None else float('nan'),
+            self._min_val,
+            self._max_val,
         )
     
 
@@ -404,12 +403,18 @@ class SystemModel():
         config.read(filename)
         
         for n, p in self.get_params(all=True):
-            p.value = float(config.get('main', n))
-            if config.get('real', n, fallback=None) is not None:
-                p.real_value = float(config.get('real', n))
+            v = float(config.get('main', n))
+            if n == 'time':
+                rp = self.asteroid.rotation_period
+                p.range = (v-rp/2, v+rp/2)
+            p.value = v
+            
+            rv = config.get('real', n, fallback=None)
+            if rv is not None:
+                p.real_value = float(rv)
         
         assert np.isclose(self.time.value, float(config.get('main', 'time'))), \
-               'Failed to set time value'
+               'Failed to set time value: %s vs %s'%(self.time.value, float(config.get('main', 'time')))
                
         self.update_asteroid_model()
         
@@ -476,11 +481,12 @@ class Asteroid():
         #self.rotation_velocity = 2*math.pi/12.4043/3600 # prograde, in rad/s
         # --- above seems incorrect based on the pics, own estimate
         # based on ROS_CAM1_20150720T165249 - ROS_CAM1_20150721T075733
-        if True:
+        if False:
             self.rotation_velocity = 2*math.pi/12.4043/3600
         else:
-            self.rotation_velocity = 0.000203926
-        
+            # 2014-08-01 - 2014-09-02: 0.4/25
+            self.rotation_velocity = 2*math.pi/12.4043/3600 -math.radians(0.4/25)/24/3600  #0.3754
+       
         # for rotation phase shift, will use as equatorial longitude of
         #   asteroid zero longitude (cheops) at J2000, based on 20150720T165249
         #   papar had 114deg in it
@@ -488,7 +494,8 @@ class Asteroid():
         if False:
             tlat, tlon, tpm = 69.54, 64.11, 114
         else:
-            tlat, tlon, tpm = 64.11, 69.54, 143
+            # pm: 2014-08-01 - 2014-09-02: -9; 2015-06-13: -143
+            tlat, tlon, tpm = 64.11, 69.54, -9
         
         self.rotation_pm = math.radians(tpm)
         self.axis_latitude, self.axis_longitude = \

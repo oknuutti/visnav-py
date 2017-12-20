@@ -121,7 +121,7 @@ class Window(QWidget):
         
         def testfun1():
             try:
-                self.centroid.adjust_iteratively(self.glWidget.image_file)
+                self.centroid.adjust_iteratively(self.glWidget.image_file, LOG_DIR)
             except PositioningException as e:
                 print('algorithm failed: %s' % e)
         self.test1 = QPushButton('T1', self)
@@ -132,7 +132,7 @@ class Window(QWidget):
             #self.glWidget.saveViewToFile('testimg.png')
             try:
                 init_z = self.systemModel.z_off.value
-                self.keypoint.solve_pnp(self.glWidget.image_file, init_z=init_z)
+                self.keypoint.solve_pnp(self.glWidget.image_file, LOG_DIR, init_z=init_z)
             except PositioningException as e:
                 print('algorithm failed: %s' % e)
         self.test2 = QPushButton('T2', self)
@@ -237,6 +237,7 @@ class GLWidget(QOpenGLWidget):
         self._discretize_tol = False
         self.latest_discretization_err_q = False
         
+        self.add_image_noise = True
         self._noise_image = os.path.join(SCRIPT_DIR, '../data/noise-fg.png')
         
         self._width = None
@@ -252,10 +253,6 @@ class GLWidget(QOpenGLWidget):
         self._frustum_near = 0.1
         self._frustum_far = MAX_DISTANCE
         self._expire=0
-
-        if not BATCH_MODE:
-            self.loadTargetImageMeta(TARGET_IMAGE_META_FILE)
-
 
     def minimumSizeHint(self):
         return QSize(VIEW_WIDTH, VIEW_HEIGHT)
@@ -276,6 +273,8 @@ class GLWidget(QOpenGLWidget):
 
         self.setClearColor(self._bgColor)
         self.loadObject()
+        if not BATCH_MODE:
+            self.loadTargetImageMeta(TARGET_IMAGE_META_FILE)        
 
         self.gl.glEnable(self.gl.GL_CULL_FACE)
 
@@ -576,7 +575,7 @@ class GLWidget(QOpenGLWidget):
                             fy=CAMERA_HEIGHT/tmp.shape[0],
                             interpolation=cv2.INTER_CUBIC)
 
-        if BATCH_MODE and self._noise_image:
+        if BATCH_MODE and self.add_image_noise and self._noise_image:
             tmp = ImageProc.add_noise_to_image(tmp, self._noise_image)
             
         self.image_file = src

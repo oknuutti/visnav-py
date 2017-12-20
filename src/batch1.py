@@ -10,7 +10,7 @@ from scipy import optimize
 
 if __name__ == '__main__':
     full_method = sys.argv[1] if len(sys.argv)>1 else 'keypoint'
-    count = int(sys.argv[2]) if len(sys.argv)>2 else 10
+    count = sys.argv[2] if len(sys.argv)>2 else 10
     
     m = full_method.split('+')
     method=m[0]
@@ -111,6 +111,12 @@ if __name__ == '__main__':
         settings.ADD_SHAPE_MODEL_NOISE = False
         if noise:
             kwargs['add_noise'] = True
+    
+    if 'real' in m:
+        kwargs['state_db_path'] = settings.IMAGE_DB_PATH
+        #kwargs['scale_cam_img'] = True
+        #kwargs['rotation_noise'] = False
+        
 
     from settings import *
     from visnav import MainThread
@@ -124,7 +130,7 @@ if __name__ == '__main__':
         print('Using feature DB not bigger than %.1fMB (%.0f x %.0fkB)'%(
                 max_feat_mem/1024/1024,
                 len(lats) * len(lons),
-                KeypointAlgo.FDB_MAX_MEM/1024))    
+                KeypointAlgo.FDB_MAX_MEM/1024))
 
     th1 = MainThread(1)
     th1.start()

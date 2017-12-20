@@ -363,7 +363,7 @@ def points_with_noise(points, support=None, L=None, len_sc=SHAPE_MODEL_NOISE_LEN
     if L is None:
         kernel = 0.7*noise_lv*Matern(length_scale=len_sc*max_rng, nu=1.5) \
                + 0.2*noise_lv*Matern(length_scale=0.1*len_sc*max_rng, nu=1.5) \
-               + WhiteKernel(noise_level=1e-6*noise_lv*max_rng) # white noise for positive definite covariance matrix only
+               + WhiteKernel(noise_level=1e-4*noise_lv*max_rng) # white noise for positive definite covariance matrix only
         y_cov = kernel(support-mean)
 
     # sample gp
@@ -391,14 +391,17 @@ def points_with_noise(points, support=None, L=None, len_sc=SHAPE_MODEL_NOISE_LEN
                 raise IndexError('%s,%s,%s'%(err.shape, full_err.shape, points.shape)) from e
 
     # extra high frequency noise
-    white_noise = np.random.normal(scale=0.2*noise_lv*max_rng, size=(len(full_err),1))
+    white_noise = np.exp(np.random.normal(scale=0.2*noise_lv*max_rng, size=(len(full_err),1)))
 
     if only_z:
-        noisy_points = np.concatenate((points[:,0:2], (points[:,2]-mean[2])*full_err +white_noise +mean[2]))
+        add_err_z = (max_rng/2)*(full_err*white_noise - 1)
+        add_err = np.concatenate((np.zeros((len(full_err),2)), add_err_z), axis=1)
+        noisy_points = points + add_err
+        devs = np.sqrt((points[:,2]-noisy_points[:,2])**2)/(max_rng/2)
     else:
-        noisy_points = (points-mean)*full_err +mean +white_noise
+        noisy_points = (points-mean)*full_err*white_noise +mean
+        devs = np.sqrt(np.sum((points-noisy_points)**2, axis=-1)/np.sum(points**2, axis=-1))
     
-    devs = np.sqrt(np.sum((points-noisy_points)**2,axis=-1)/np.sum(points**2,axis=-1))
     if DEBUG or not BATCH_MODE:
         print('noise: %.3f, %.3f; avg=%.3f'%(tuple(np.percentile(devs, (68,95)))+(np.mean(devs),)))
     
@@ -429,7 +432,7 @@ def points_with_noise(points, support=None, L=None, len_sc=SHAPE_MODEL_NOISE_LEN
     return noisy_points, np.mean(devs), L
 
 
-def interp2(array, x, y):
+def interp2(array, x, y, max_val=None, max_dist=10):
     assert y<array.shape[0] and x<array.shape[1], 'out of bounds %s: %s'%(array.shape, (y, x))
     
     v = array[int(y):int(y)+2, int(x):int(x)+2]
@@ -439,9 +442,34 @@ def interp2(array, x, y):
         ((1-yf)*(1-xf), (1-yf)*xf),
         (yf*(1-xf),     yf*xf),
     ))
-    w = w/np.sum(w)
-    return np.sum(w*v)
     
+    # ignore background depths
+    if max_val is not None:
+        idx = v.reshape(1,-1)<max_val
+    else:
+        idx = ~np.isnan(v.reshape(1,-1))
+    
+    w_sum = np.sum(w.reshape(1,-1)[idx])
+    if w_sum>0:
+        # ignore background values
+        val = np.sum(w.reshape(1,-1)[idx] * v.reshape(1,-1)[idx]) / w_sum
+    else:
+        # no foreground values in 2x2 matrix, find nearest foreground value
+        iy, ix = np.where(array < max_val)
+        idxs = np.concatenate(((iy,),(ix,)), axis=0).T
+        fallback = len(idxs)==0
+        if not fallback:
+            dist = np.sum((idxs - np.array((y,x)).reshape(1,2))**2, axis=1)
+            i = np.argmin(dist)
+            val = array[idxs[i,0],idxs[i,1]]
+            #print('\n%s, %s, %s, %s, %s, %s, %s'%(v, x,y,dist[i],idxs[i,1],idxs[i,0],val))
+            fallback = dist[i] > max_dist**2
+            
+        if fallback:
+            val = np.sum(w*v)/np.sum(w)
+        
+    return val
+
 
 def solve_rotation(src_q, dst_q):
     """ q*src_q*q.conj() == dst_q, solve for q """
