@@ -91,8 +91,11 @@ class TestLoop():
         self._rotation_noise = rotation_noise
         
         skip = 0
-        if ':' in times:
-            skip, times = map(int, times.split(':'))
+        if isinstance(times, str):
+            if ':' in times:
+                skip, times = map(int, times.split(':'))
+            else:
+                times = int(times)
         
         if state_db_path is not None:
             self.window.glWidget.add_image_noise = False
@@ -319,7 +322,7 @@ class TestLoop():
             with open(fname, 'rb') as fh:
                 noisy_model, sm_noise = pickle.load(fh)
             self._widget_load_obj(objloader.ShapeModel(data=noisy_model))
-        except FileNotFoundError:
+        except (FileNotFoundError, EOFError):
             sm_noise = None
         return sm_noise
         

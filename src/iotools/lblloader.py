@@ -86,7 +86,7 @@ def load_image_meta(src, sm):
                 .transform_to('heliocentrictrueecliptic')\
                 .represent_as('cartesian')
         sun_sc_ec_p = np.array([sc.x.value, sc.y.value, sc.z.value])
-    sun_sc_dist = sum(np.sqrt(sun_sc_ec_p*sun_sc_ec_p))
+    sun_sc_dist = np.sqrt(np.sum(sun_sc_ec_p**2))
     
     # from spacecraft to asteroid, equatorial J2000
     sc_ast_x, sc_ast_y, sc_ast_z = \
@@ -149,6 +149,8 @@ def load_image_meta(src, sm):
                 .transform_to('barycentrictrueecliptic')\
                 .represent_as('cartesian')
         sc_ast_ec_p = np.array([sc.x.value, sc.y.value, sc.z.value])
+
+    sm.asteroid.real_position = sun_sc_ec_p + sc_ast_ec_p
 
     # s/c orientation
     sco = list(map(math.radians, sm.spacecraft_rot))

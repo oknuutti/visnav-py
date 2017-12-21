@@ -388,6 +388,9 @@ class SystemModel():
             if p.real_value is not None:
                 config.set('real', n, str(p.real_value))
 
+        if self.asteroid.real_position is not None:
+            config.set('real', 'sun_asteroid_pos', str(self.asteroid.real_position))
+
         if not printout:
             with open(filename, 'w') as f:
                 config.write(f)
@@ -412,6 +415,10 @@ class SystemModel():
             rv = config.get('real', n, fallback=None)
             if rv is not None:
                 p.real_value = float(rv)
+        
+        rv = config.get('real', 'sun_asteroid_pos', fallback=None)
+        if rv is not None:
+            self.asteroid.real_position = np.fromstring(rv[1:-1], dtype=np.float, sep=' ')
         
         assert np.isclose(self.time.value, float(config.get('main', 'time'))), \
                'Failed to set time value: %s vs %s'%(self.time.value, float(config.get('main', 'time')))
@@ -448,6 +455,8 @@ class SystemModel():
 class Asteroid():
     def __init__(self, *args, **kwargs):
         self.name = '67P/Churyumov-Gerasimenko'
+        
+        self.real_position = None
         
         # for cross section, assume spherical object and 2km radius
         self.mean_cross_section = math.pi*2000**2
@@ -526,6 +535,9 @@ class Asteroid():
                 * ast2sc_q
     
     def position(self, timestamp):
+        if self.real_position is not None:
+            return self.real_position
+        
         # from http://space.stackexchange.com/questions/8911/determining-\
         #                           orbital-position-at-a-future-point-in-time
         

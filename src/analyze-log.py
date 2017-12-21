@@ -1,5 +1,6 @@
 import sys
 import csv
+import math
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -12,25 +13,38 @@ except:
     print('Requires scikit-learn, install using "conda install scikit-learn"')
     sys.exit()
 
+from settings import *
 from algo import tools
 
 
 # read logfiles
 def read_data(logfile, predictors, target):
     X, y = [], []
+    
     with open(logfile, newline='') as csvfile:
+        diam = 2 # avg diam 2km for asteroid
         data = csv.reader(csvfile, delimiter='\t')
         first = True
         for row in data:
             if len(row)>10:
                 if first:
                     first = False
-                    prd_i = [row.index(p) for p in predictors if p != 'distance']
+                    prd_i = [row.index(p) for p in predictors if p not in ('distance', 'visible')]
                     trg_i = row.index(target)
-                    d = [row.index(p+' sc pos') for p in ('x','y','z')]
+                    pos_i = [row.index(p+' sc pos') for p in ('x','y','z')]
                 else:
                     row = np.array(row)
-                    X.append(np.concatenate((row[prd_i].astype(np.float), [np.sqrt(np.sum(row[d].astype(np.float)**2))])))
+                    pos = row[pos_i].astype(np.float)
+                    xt = pos[2]*math.tan(CAMERA_X_FOV/2)
+                    yt = pos[2]*math.tan(CAMERA_Y_FOV/2)
+                    xm = np.clip((xt - (abs(pos[0])-diam/2))/diam, 0, 1)
+                    ym = np.clip((yt - (abs(pos[1])-diam/2))/diam, 0, 1)
+                    
+                    X.append(np.concatenate((
+                        row[prd_i].astype(np.float),
+                        [np.sqrt(np.sum(pos**2))],
+                        [xm*ym],
+                    )))
                     y.append(row[trg_i].astype(np.float))
     
     X = np.array(X)
@@ -55,7 +69,7 @@ if __name__ == '__main__':
         'sol elong',    # solar elongation
         'total dev angle',  # total angle between initial estimate and actual relative orientation
         'distance',    # distance of object
-#        'margin',      # esimate of % visible because of camera view edge
+        'visible',      # esimate of % visible because of camera view edge
     )
     target = 'shift error km'
     
@@ -63,16 +77,20 @@ if __name__ == '__main__':
     X, yc, yr = read_data(logfile, predictors, target)
     X[:,1] = np.abs(tools.wrap_degs(X[:,1]))
     
-    pairs = ((0,1),(0,2),(1,2))
+    pairs = (
+        (0,1),(0,2),(0,3),
+        (1,2),(1,3),(2,3),
+    )
     for pair in pairs:
         xmin, xmax = np.min(X[:,pair[0]]), np.max(X[:,pair[0]])
         ymin, ymax = np.min(X[:,pair[1]]), np.max(X[:,pair[1]])
         xx, yy = np.meshgrid(np.linspace(xmin, xmax, 50), np.linspace(ymin, ymax, 50))
         
-        kernel = 1.0*RBF(length_scale=(xmax-xmin, ymax-ymin)) + 1.0*WhiteKernel(noise_level=0.1)
+        kernel = 1.0*RBF(length_scale=(xmax-xmin, ymax-ymin))
         if True:
             y=yc
             # fit hyper parameters
+            kernel += WhiteKernel(noise_level=0.1)
             gpc = GaussianProcessClassifier(kernel=kernel, warm_start=True).fit(X[:,pair], yc)
             # hyper parameter results
             res = gpc.kernel_, gpc.log_marginal_likelihood(gpc.kernel_.theta)
@@ -81,6 +99,7 @@ if __name__ == '__main__':
         else:
             y = yr
             # fit hyper parameters
+            kernel += WhiteKernel(noise_level=0.001)
             gpr = GaussianProcessRegressor(kernel=kernel, alpha=0, normalize_y=True).fit(X[:,pair], yr)
             # hyper parameter results
             res = gpr.kernel_, gpr.log_marginal_likelihood(gpr.kernel_.theta)
