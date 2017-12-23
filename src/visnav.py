@@ -547,13 +547,15 @@ class GLWidget(QOpenGLWidget):
         self._image_h = self.image.shape[0]
         self._image_w = self.image.shape[1]
         
-        # form _gl_image that is used for rendering
-        # black => 0 alpha, non-black => white => .5 alpha
-        im = self.image.copy()
-        alpha = np.zeros(im.shape, im.dtype)
-        #im[im > 0] = 255
-        alpha[im > 0] = 128
-        self._gl_image = np.flipud(cv2.merge((im, im, im, alpha))).tobytes()
+        if SHOW_TARGET_IMAGE:
+            # form _gl_image that is used for rendering
+            # black => 0 alpha, non-black => white => .5 alpha
+            im = self.image.copy()
+            alpha = np.zeros(im.shape, im.dtype)
+            #im[im > 0] = 255
+            alpha[im > 0] = 128
+            self._gl_image = np.flipud(cv2.merge((im, im, im, alpha))).tobytes()        
+        
         self.updateFrustum()
         
         # WORK-AROUND: for some reason wont use new frustum if window not resized

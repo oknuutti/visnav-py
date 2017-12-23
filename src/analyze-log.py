@@ -35,8 +35,8 @@ def read_data(logfile, predictors, target):
                 else:
                     row = np.array(row)
                     pos = row[pos_i].astype(np.float)
-                    xt = pos[2]*math.tan(CAMERA_X_FOV/2)
-                    yt = pos[2]*math.tan(CAMERA_Y_FOV/2)
+                    xt = abs(pos[2])*math.tan(math.radians(CAMERA_X_FOV)/2)
+                    yt = abs(pos[2])*math.tan(math.radians(CAMERA_Y_FOV)/2)
                     xm = np.clip((xt - (abs(pos[0])-diam/2))/diam, 0, 1)
                     ym = np.clip((yt - (abs(pos[1])-diam/2))/diam, 0, 1)
                     
