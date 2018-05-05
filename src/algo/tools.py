@@ -63,17 +63,20 @@ def inv_intrinsic_camera_mx(w=CAMERA_WIDTH, h=CAMERA_HEIGHT):
 
 def sc_asteroid_max_shift_error(A, B):
     """
-    Calculate max error between two set of vertices when projected to camera
+    Calculate max error between two set of vertices when projected to camera,
+    A = estimated vertex positions
+    B = true vertex positions
+    Error is a vector perpendicular to B, i.e. A - A||
     """
     
-    # a dot b vector product
+    # (length of b)**2
+    normB2 = (B**2).sum(-1).reshape((-1,1))
+
+    # a dot b vector product (project a on b but also times length of b)
     diagAB = (A*B).sum(-1).reshape((-1,1))
     
-    # length of a
-    normA = np.sqrt((A**2).sum(-1)).reshape((-1,1))
-    
-    # diff vector across projection
-    D = B - (diagAB / normA**2)*A
+    # diff vector across projection (projection = a dot b/||b|| * b/||b||)
+    D = A - (diagAB / normB2)*B
 
     # diff vector lengths
     normD = np.sqrt((D**2).sum(-1)).reshape((-1,1))
@@ -187,7 +190,7 @@ def ypr_to_q(lat, lon, roll):
     
 def q_to_ypr(q):
     # from https://math.stackexchange.com/questions/687964/getting-euler-tait-bryan-angles-from-quaternion-representation
-    q0,q1,q2,q3 = quaternion.as_float_array(q)[0]
+    q0,q1,q2,q3 = quaternion.as_float_array(q)
     roll = np.arctan2(q2*q3+q0*q1, .5-q1**2-q2**2)
     lat = -np.arcsin(-2*(q1*q3-q0*q2))
     lon  = np.arctan2(q1*q2+q0*q3, .5-q2**2-q3**2)

@@ -4,6 +4,7 @@ __pycache__
 data/*
 logs/*
 cache/*
+.idea
 nbproject
 *.bat
 *.out*

@@ -31,8 +31,8 @@ class Parameter():
     @range.setter
     def range(self, range):
         min_val, max_val = range
-        if not np.isclose(self._min_val, min_val, rtol=1e-11) \
-                or not np.isclose(self._max_val, max_val, rtol=1e-11):
+        if not np.isclose(self._min_val, min_val, rtol=1e-8) \
+                or not np.isclose(self._max_val, max_val, rtol=1e-8):
             self._min_val = min_val
             self._max_val = max_val
             if self.fire_change_events:
@@ -61,7 +61,7 @@ class Parameter():
     
     @value.setter
     def value(self, value):
-        if not np.isclose(self._value, value, rtol=1e-11):
+        if not np.isclose(self._value, value, rtol=1e-8):
             self._value = value
             if self.fire_change_events:
                 try:

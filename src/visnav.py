@@ -26,6 +26,7 @@ from algo.tools import PositioningException
 from iotools import objloader
 from iotools import lblloader
 
+
 class MainThread(threading.Thread):
     def __init__(self, counter):
         super(MainThread, self).__init__()

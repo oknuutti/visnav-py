@@ -18,7 +18,8 @@ class KeypointAlgo():
         SURF,
     ) = range(4)
     
-    FDB_MAX_MEM = 192*1024      # in bytes, default 192
+    FDB_MAX_MEM = 192*1024      # in bytes per scene, default 228kB
+    MAX_WORK_MEM = 512*1024     # in bytes, usable for both ref and scene features, default 512kB
     FDB_TOL = math.radians(7)   # features from db never more than 7 deg off
     
     def __init__(self, system_model, glWidget):
@@ -44,7 +45,13 @@ class KeypointAlgo():
 
     def solve_pnp(self, orig_sce_img, outfile, feat=ORB, use_feature_db=False, 
             add_noise=False, scale_cam_img=False, vary_scale=False, **kwargs):
-        
+
+        # set max mem usable by features
+        ref_max_mem = KeypointAlgo.FDB_MAX_MEM if use_feature_db else KeypointAlgo.MAX_WORK_MEM/2
+        sce_max_mem = KeypointAlgo.MAX_WORK_MEM - KeypointAlgo.FDB_MAX_MEM \
+                      if use_feature_db\
+                      else KeypointAlgo.MAX_WORK_MEM/2
+
         # maybe load scene image
         if isinstance(orig_sce_img, str):
             self.debug_filebase = outfile+self.DEBUG_IMG_POSTFIX
@@ -76,8 +83,7 @@ class KeypointAlgo():
                 interpolation=cv2.INTER_CUBIC)
         
         # get keypoints and descriptors
-        desc_max_mem = KeypointAlgo.FDB_MAX_MEM if use_feature_db else 300*1024
-        ref_kp, ref_desc = self._detect_features(ref_img, feat, maxmem=desc_max_mem) # 120kB
+        ref_kp, ref_desc = self.detect_features(ref_img, feat, maxmem=ref_max_mem, for_ref=True)
         
         if use_feature_db:
             # if have ready calculated feature keypoints and descriptors,
@@ -102,8 +108,8 @@ class KeypointAlgo():
                     sce_img = cv2.resize(orig_sce_img, None,
                             fx=sce_img_sc, fy=sce_img_sc, 
                             interpolation=cv2.INTER_CUBIC)
-                
-                sce_kp, sce_desc = self._detect_features(sce_img, feat, maxmem=desc_max_mem)
+
+                sce_kp, sce_desc = self.detect_features(sce_img, feat, maxmem=sce_max_mem)
 
                 # match descriptors
                 try:
@@ -174,68 +180,75 @@ class KeypointAlgo():
             self.glWidget.saveViewToFile(self.debug_filebase+'r.png')
         
     
-    def _detect_features(self, img, feat, maxmem, **kwargs):
+    def detect_features(self, img, feat, maxmem, for_ref=False, **kwargs):
+        # extra bytes needed for keypoints (only coordinates (float32), the rest not used)
+        nb = 4*(3 if for_ref else 2)
+
         if feat == KeypointAlgo.ORB:
-            nfeats = int(maxmem/32)
+            nfeats = kwargs.pop('nfeats', int(maxmem/(32+nb)))
             self._latest_detector = self._orb_detector(nfeats=nfeats, **kwargs)
         elif feat == KeypointAlgo.AKAZE:
-            nfeats = int(maxmem/61)
+            nfeats = kwargs.pop('nfeats', int(maxmem/(61+nb)))
             self._latest_detector = self._akaze_detector(nfeats=nfeats, **kwargs)
         elif feat == KeypointAlgo.SIFT:
-            nfeats = int(maxmem/128)
+            nfeats = kwargs.pop('nfeats', int(maxmem/(128+nb)))
             self._latest_detector = self._sift_detector(nfeats=nfeats, **kwargs)
         elif feat == KeypointAlgo.SURF:
-            nfeats = int(maxmem/64)
+            nfeats = kwargs.pop('nfeats', int(maxmem/(64+nb)))
             self._latest_detector = self._surf_detector(nfeats=nfeats, **kwargs)
         else:
             assert False, 'invalid feature: %s'%(feat,)
         kp, dc = self._latest_detector.detectAndCompute(img, None)
-        return None if kp is None else kp[:nfeats], None if dc is None else dc[:nfeats]
+        if kp is None:
+            return None
+
+        idxs = np.argsort([-p.response for p in kp])
+        return [kp[i] for i in idxs[:nfeats]], [dc[i] for i in idxs[:nfeats]]
         
     
     def _orb_detector(self, nfeats=1000):
         params = {
-            'nfeatures':nfeats,  # default: 500
-            'edgeThreshold':31,  # default: 31
-            'fastThreshold':20,  # default: 20
-            'firstLevel':0,      # always 0
-            'nlevels':8,         # default: 8
-            'patchSize':31,      # default: 31
-            'scaleFactor':1.2,   # default: 1.2
+            'nfeatures':nfeats,         # default: 500
+            'edgeThreshold':31,         # default: 31
+            'fastThreshold':20,         # default: 20
+            'firstLevel':0,             # always 0
+            'nlevels':8,                # default: 8
+            'patchSize':31,             # default: 31
+            'scaleFactor':1.2,          # default: 1.2
             'scoreType':cv2.ORB_HARRIS_SCORE,  # default ORB_HARRIS_SCORE, other: ORB_FAST_SCORE
-            'WTA_K':2,           # default: 2
+            'WTA_K':2,                  # default: 2
         }
         return cv2.ORB_create(**params)
     
     def _akaze_detector(self, nfeats=1000):
         params = {
-            'descriptor_type':cv2.AKAZE_DESCRIPTOR_MLDB,
-            'descriptor_channels':3,
-            'descriptor_size':0,
-            'diffusivity':cv2.KAZE_DIFF_PM_G2,
-            'threshold':0.001,      # default: 0.001
-            'nOctaves':4,
-            'nOctaveLayers':4,
+            'descriptor_type':cv2.AKAZE_DESCRIPTOR_MLDB, # default: cv2.AKAZE_DESCRIPTOR_MLDB
+            'descriptor_channels':3,    # default: 3
+            'descriptor_size':0,        # default: 0
+            'diffusivity':cv2.KAZE_DIFF_PM_G2, # default: cv2.KAZE_DIFF_PM_G2
+            'threshold':0.001,          # default: 0.001
+            'nOctaves':4,               # default: 4
+            'nOctaveLayers':4,          # default: 4
         }
         return cv2.AKAZE_create(**params)
         
     def _sift_detector(self, nfeats=1000):
         params = {
             'nfeatures':nfeats,
-            'nOctaveLayers':3,
-            'contrastThreshold':0.04,
-            'edgeThreshold':10,
-            'sigma':1.6,
+            'nOctaveLayers':3,          # default: 3
+            'contrastThreshold':0.04,   # default: 0.04
+            'edgeThreshold':10,         # default: 10
+            'sigma':1.6,                # default: 1.6
         }
         return cv2.xfeatures2d.SIFT_create(**params)
     
     def _surf_detector(self, nfeats=1000):
         params = {
-            'hessianThreshold':100.0,
-            'nOctaves':4,
-            'nOctaveLayers':3,
-            'extended':False,
-            'upright':False,
+            'hessianThreshold':100.0,   # default: 100.0
+            'nOctaves':4,               # default: 4
+            'nOctaveLayers':3,          # default: 3
+            'extended':False,           # default: False
+            'upright':False,            # default: False
         }
         return cv2.xfeatures2d.SURF_create(**params)
     
@@ -267,12 +280,12 @@ class KeypointAlgo():
         elif method == 'brute':
             matcher = cv2.BFMatcher(self._latest_detector.defaultNorm(), symmetry_test)
         else:
-            assert False, 'unknown method %s'%mathod
+            assert False, 'unknown method %s'%method
             
         if ratio_test:
-            matches = matcher.knnMatch(desc1, desc2, k=2)
+            matches = matcher.knnMatch(np.array(desc1), np.array(desc2), 2)
         else:
-            matches = matcher.match(desc1, desc2)
+            matches = matcher.match([desc1, desc2])
 
         if len(matches)<self.MIN_FEATURES:
             raise PositioningException('Not enough features matched')
@@ -397,8 +410,8 @@ class KeypointAlgo():
         if new_sc_pos[2]>0:
             tpos = -new_sc_pos
             tdelta_q = cv_cam_delta_q * tools.ypr_to_q(0,math.pi,0)
-            print('Bug with solvePnPRansac, correcting:\n\t%s => %s\n\t%s => %s'%(
-                new_sc_pos, tpos, tools.q_to_ypr(cv_cam_delta_q), tools.q_to_ypr(tdelta_q)))
+            # print('Bug with solvePnPRansac, correcting:\n\t%s => %s\n\t%s => %s'%(
+            #     new_sc_pos, tpos, tools.q_to_ypr(cv_cam_delta_q), tools.q_to_ypr(tdelta_q)))
             new_sc_pos = tpos
             cv_cam_delta_q = tdelta_q
         

@@ -425,7 +425,7 @@ class TestLoop():
             rel_rot = q_to_ypr(sm.sc_asteroid_rel_q())
             est_vertices = sm.sc_asteroid_vertices()
             max_shift = tools.sc_asteroid_max_shift_error(
-                    sm.real_sc_ast_vertices, est_vertices)
+                    est_vertices, sm.real_sc_ast_vertices)
             
             err = (
                 *np.subtract(pos, sm.real_spacecraft_pos),
