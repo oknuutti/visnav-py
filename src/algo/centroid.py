@@ -3,22 +3,26 @@ import math
 import numpy as np
 import cv2
 
+from algo.base import AlgorithmBase
+from algo.model import SystemModel
+from iotools import lblloader
+from render.render import RenderEngine
 from settings import *
 from algo import tools
 from algo.image import ImageProc
 from algo.tools import PositioningException
 
-class CentroidAlgo():
-    def __init__(self, system_model, glWidget, **kwargs):
-        self.system_model = system_model
-        self.glWidget = glWidget
-        
-        self.bg_threshold = kwargs.get('bg_threshold', None)
-        self.debug_filebase = None
+
+class CentroidAlgo(AlgorithmBase):
+    def __init__(self, system_model, render_engine, obj_idx, **kwargs):
+        super(CentroidAlgo, self).__init__(system_model, render_engine, obj_idx)
+
+        self._bg_threshold = None
         self._ref_img = None
         
         self.DEBUG_IMG_POSTFIX = 'c'            # fi batch mode, save result image in a file ending like this
-        
+
+        self.RENDER_SHADOWS = True
         self.MIN_PIXELS_FOR_DETECTION = 30      # fail if less pixels lit
         self.ASTEROID_MIN_BORDER_MARGIN = 0.04  # if less than margin at both extrames, astroid too close
         self.ASTEROID_MAX_SPAN = 0.85           # if asteroid spans more than this, it's too close
@@ -28,8 +32,9 @@ class CentroidAlgo():
         self.MIN_RESULT_XCORR = 0.3             # if result xcorr with scene is less than this, fail
     
     
-    def adjust_iteratively(self, sce_img, outfile, **kwargs):
+    def adjust_iteratively(self, sce_img, outfile=None, **kwargs):
         self.debug_filebase = outfile
+        self._bg_threshold = kwargs.get('bg_threshold', self._bg_threshold)
         sce_img = self.maybe_load_scene_image(sce_img)
         
         self.system_model.spacecraft_pos = (0, 0, -MIN_MED_DISTANCE)
@@ -46,7 +51,8 @@ class CentroidAlgo():
                     print(str(e))
                     break
                 finally:
-                    cv2.imshow('rendered img i=%d'%i, self._ref_img)
+                    cv2.imshow('rendered img', self._ref_img)
+                    cv2.waitKey()
             
             nx, ny, nz = self.system_model.spacecraft_pos
             ch = math.sqrt((nx-ox)**2 + (ny-oy)**2 + (nz-oz)**2)
@@ -61,8 +67,9 @@ class CentroidAlgo():
                 raise PositioningException('Result failed quality test with score: %.3f'%(result_quality,))
         
         if BATCH_MODE and self.debug_filebase:
-            self.glWidget.saveViewToFile(self.debug_filebase+'r.png')
-        
+            img = self.render(shadows=self.RENDER_SHADOWS)
+            cv2.imwrite(self.debug_filebase+'r.png', img)
+
         if DEBUG:
             cv2.waitKey()
             cv2.destroyAllWindows()
@@ -73,8 +80,8 @@ class CentroidAlgo():
         
         if not simple:
             if ref_img is None:
-                ref_img = self.glWidget.render(center=False)
-                th, ref_img = cv2.threshold(ref_img, self.bg_threshold, 255, cv2.THRESH_TOZERO)
+                ref_img = self.render(shadows=self.RENDER_SHADOWS)
+                th, ref_img = cv2.threshold(ref_img, self._bg_threshold, 255, cv2.THRESH_TOZERO)
                 ref_img = np.atleast_3d(ref_img)
                 self._ref_img = ref_img
                 
@@ -105,17 +112,29 @@ class CentroidAlgo():
         old_x = self.system_model.x_off.value
         old_y = self.system_model.y_off.value
         old_z = self.system_model.z_off.value
-        
-        # estimate distance first
-        new_z =  old_z * math.sqrt(ref_px/sce_px)
-        
+
+        # when adjusting for distance, remember to adjust all coordinates, try to first adjust laterally
+        new_z = old_z * (math.sqrt(ref_px/sce_px) ** .2)
+        err_d_x = old_x * (1 - new_z/old_z)
+        err_d_y = old_y * (1 - new_z/old_z)
+
         # calculate brightness centroid coordinates
-        ref_cx, ref_cy = tools.calc_xy(ref_icx, ref_icy, new_z)
-        sce_cx, sce_cy = tools.calc_xy(sce_icx, sce_icy, new_z)
+        ref_cx, ref_cy = tools.calc_xy(ref_icx, ref_icy, max(old_z, new_z))  # use max so that wont move out of view
+        sce_cx, sce_cy = tools.calc_xy(sce_icx, sce_icy, max(old_z, new_z))  # use max so that wont move out of view
+
+        # lateral errors
+        err_x = ref_cx - sce_cx
+        err_y = ref_cy - sce_cy
+
+        # try to first adjust laterally
+        if abs(err_x) + abs(err_y) > .2:
+            new_z = old_z
+            err_d_x = 0
+            err_d_y = 0
 
         # move x_off & y_off by centroid error
-        new_x = old_x - (ref_cx - sce_cx)
-        new_y = old_y - (ref_cy - sce_cy)
+        new_x = old_x - err_x - err_d_x
+        new_y = old_y - err_y - err_d_y
         
         # return new location
         return (new_x, new_y, new_z)
@@ -241,14 +260,14 @@ class CentroidAlgo():
         return (x_off, y_off, -dist)
         
 
-    def maybe_load_scene_image(self, sce_img):
+    def maybe_load_scene_image(self, sce_img, detect_asteroid=False):
         if isinstance(sce_img, str):
-            self.glWidget.loadTargetImage(sce_img, remove_bg=True)
-            sce_img = self.glWidget.full_image
-            self.bg_threshold = self.glWidget.image_bg_threshold
-            self.detect_asteroid(sce_img)
+            img = self.load_target_image(sce_img)
+            sce_img, self._bg_threshold = self.remove_background(img)
+            if detect_asteroid:
+                self.detect_asteroid(sce_img)
             if DEBUG:
-                cv2.imshow('scene th=%d'%self.bg_threshold, sce_img)
+                cv2.imshow('scene th=%d'%self._bg_threshold, sce_img)
             
         return np.atleast_3d(sce_img)
 
@@ -273,3 +292,14 @@ class CentroidAlgo():
         vr = math.sqrt(m['mu02']/m['m00']) if m['mu02']>0 else 1
         
         return icx, icy, brightness, hr, vr
+
+
+if __name__ == '__main__':
+    sm = SystemModel()
+    lblloader.load_image_meta(TARGET_IMAGE_META_FILE, sm)
+    re = RenderEngine(VIEW_WIDTH, VIEW_HEIGHT)
+    obj_idx = re.load_object(sm.real_shape_model)
+
+    DEBUG = True
+    algo = CentroidAlgo(sm, re, obj_idx)
+    algo.adjust_iteratively(TARGET_IMAGE_FILE, None)

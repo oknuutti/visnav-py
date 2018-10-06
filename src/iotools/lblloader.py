@@ -111,7 +111,7 @@ def load_image_meta(src, sm):
     sm.time.range = (timestamp - half_range, timestamp + half_range)
     sm.time.value = timestamp
     sm.time.real_value = timestamp
-     
+
     ## set spacecraft orientation
     ##
     xc, yc, zc = 0, 0, 0

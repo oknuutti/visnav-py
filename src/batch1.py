@@ -69,8 +69,6 @@ if __name__ == '__main__':
                 },
             }
         }
-    elif 'keypoint' in m and 'centroid' in m:
-        kwargs = {'method':'keypoint+'}
     elif method=='centroid':
         kwargs = {'method':'centroid'}
     elif method=='keypoint':
@@ -86,7 +84,10 @@ if __name__ == '__main__':
     else:
         assert False, 'Invalid method "%s"'%method
 
-    kwargs0 = {'cleanup':False, 'min_options':{}}
+    if kwargs['method'] == 'keypoint' and 'centroid' in m:
+        kwargs['method'] = 'keypoint+'
+
+    kwargs0 = {'min_options':{}}
     kwargs0.update(kwargs)
     kwargs = kwargs0
     
@@ -94,11 +95,11 @@ if __name__ == '__main__':
     settings.ADD_SHAPE_MODEL_NOISE = False
     if 'smn_' in m:
         settings.ADD_SHAPE_MODEL_NOISE = True
-        settings.SHAPE_MODEL_NOISE_LV = 0.01
+        settings.SHAPE_MODEL_NOISE_LV = 0.03
         kwargs['smn_type'] = 'hi'
     elif 'smn' in m:
         settings.ADD_SHAPE_MODEL_NOISE = True
-        settings.SHAPE_MODEL_NOISE_LV = 0.003
+        settings.SHAPE_MODEL_NOISE_LV = 0.01
         kwargs['smn_type'] = 'lo'
 
     # feature db
@@ -119,7 +120,6 @@ if __name__ == '__main__':
         
 
     from settings import *
-    from visnav import MainThread
     from testloop import TestLoop
 
     if 'fdb' in m:
@@ -132,11 +132,5 @@ if __name__ == '__main__':
                 len(lats) * len(lons),
                 KeypointAlgo.FDB_MAX_MEM/1024))
 
-    th1 = MainThread(1)
-    th1.start()
-    th1.wait_until_ready()
-
-    tl = TestLoop(th1.window)
+    tl = TestLoop(far=(method == 'centroid'))
     tl.run(count, log_prefix=full_method+'-', **kwargs)
-    
-    th1.app.quit()

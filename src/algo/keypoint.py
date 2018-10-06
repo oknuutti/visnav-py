@@ -5,12 +5,14 @@ import numpy as np
 import quaternion
 import cv2
 
+from algo.base import AlgorithmBase
 from settings import *
 from algo import tools
 from algo.tools import PositioningException, Stopwatch
 from algo.image import ImageProc
 
-class KeypointAlgo():
+
+class KeypointAlgo(AlgorithmBase):
     (
         ORB,
         AKAZE,
@@ -22,29 +24,32 @@ class KeypointAlgo():
     MAX_WORK_MEM = 512*1024     # in bytes, usable for both ref and scene features, default 512kB
     FDB_TOL = math.radians(7)   # features from db never more than 7 deg off
     
-    def __init__(self, system_model, glWidget):
-        self.system_model = system_model
-        self.glWidget = glWidget
-        self.debug_filebase = None
-        self.timer = None
-        
+    def __init__(self, system_model, render_engine, obj_idx):
+        super(KeypointAlgo, self).__init__(system_model, render_engine, obj_idx)
+
         self.sm_noise = 0
         
         self._shape_model_rng = None
         self._latest_detector = None
         
-        self.DEBUG_IMG_POSTFIX = 'k'   # fi batch mode, save result image in a file ending like this
-        
-        self.MIN_FEATURES = 10          # fail if less inliers at the end
-        self.LOWE_METHOD_COEF = 0.80   # default 0.7
+        self.DEBUG_IMG_POSTFIX = 'k'    # if batch mode, save result image in a file ending like this
+
+        # if want that mask radius is x when res 1024x1024 and ast dist 64km => coef = 64*x/1024
+        self.MATCH_MASK_COEF = 10     # 6.25, used only when running centroid algo before this one, didnt work so well..
+        self.RENDER_SHADOWS = True
+        self.MIN_FEATURES = 10         # fail if less inliers at the end
+        self.LOWE_METHOD_COEF = 0.85   # default 0.7 (0.8)  # 0.825 vs 0.8 => less fails, worse accuracy
         self.RANSAC_ITERATIONS = 10000  # default 100
-        self.RANSAC_ERROR = 8.0        # default 8.0
-        self.SCENE_SCALE_STEP = 1.4142 # sqrt(2) scale scene image by this amount if fail
-        self.MAX_SCENE_SCALE_STEPS = 5 # from mid range 64km to near range 16km (64/sqrt(2)**(5-1) => 16)
+        self.RANSAC_ERROR = 16.0        # default 8.0
+        self.SCENE_SCALE_STEP = 1.4142  # sqrt(2) scale scene image by this amount if fail
+        self.MAX_SCENE_SCALE_STEPS = 5  # from mid range 64km to near range 16km (64/sqrt(2)**(5-1) => 16)
+
+        # (SOLVEPNP_ITERATIVE), SOLVEPNP_P3P, SOLVEPNP_AP3P, SOLVEPNP_EPNP, ?SOLVEPNP_UPNP, ?SOLVEPNP_DLS
+        self.RANSAC_KERNEL = cv2.SOLVEPNP_AP3P
 
 
     def solve_pnp(self, orig_sce_img, outfile, feat=ORB, use_feature_db=False, 
-            add_noise=False, scale_cam_img=False, vary_scale=False, **kwargs):
+            add_noise=False, scale_cam_img=False, vary_scale=False, match_mask_params=None, **kwargs):
 
         # set max mem usable by features
         ref_max_mem = KeypointAlgo.FDB_MAX_MEM if use_feature_db else KeypointAlgo.MAX_WORK_MEM/2
@@ -55,8 +60,7 @@ class KeypointAlgo():
         # maybe load scene image
         if isinstance(orig_sce_img, str):
             self.debug_filebase = outfile+self.DEBUG_IMG_POSTFIX
-            self.glWidget.loadTargetImage(orig_sce_img, remove_bg=False)
-            orig_sce_img = self.glWidget.full_image
+            orig_sce_img = self.load_target_image(orig_sce_img)
 
         if add_noise:
             self._shape_model_rng = np.max(np.ptp(self.system_model.real_shape_model.vertices, axis=0))
@@ -69,18 +73,18 @@ class KeypointAlgo():
         render_z = -MIN_MED_DISTANCE
         orig_z = self.system_model.z_off.value
         self.system_model.z_off.value = render_z
-        ref_img, depth_result = self.glWidget.render(depth=True, discretize_tol=KeypointAlgo.FDB_TOL if use_feature_db else False)
+        ref_img, depth_result = self.render(center=True, depth=True,
+                                            discretize_tol=KeypointAlgo.FDB_TOL if use_feature_db else False,
+                                            shadows=self.RENDER_SHADOWS)
         #ref_img = ImageProc.equalize_brightness(ref_img, orig_sce_img)
         #orig_sce_img = ImageProc.adjust_gamma(orig_sce_img, 0.5)
         #ref_img = ImageProc.adjust_gamma(ref_img, 0.5)
-        discretization_err_q = self.glWidget.latest_discretization_err_q if use_feature_db else False
         self.system_model.z_off.value = orig_z
         
         # scale to match scene image asteroid extent in pixels
         init_z = kwargs.get('init_z', render_z)
-        ref_img_sc = min(1,render_z/init_z) * (VIEW_WIDTH if scale_cam_img else CAMERA_WIDTH)/VIEW_WIDTH
-        ref_img = cv2.resize(ref_img, None, fx=ref_img_sc, fy=ref_img_sc, 
-                interpolation=cv2.INTER_CUBIC)
+        ref_img_sc = min(1, render_z/init_z) * (VIEW_WIDTH if scale_cam_img else CAMERA_WIDTH)/VIEW_WIDTH
+        ref_img = cv2.resize(ref_img, None, fx=ref_img_sc, fy=ref_img_sc, interpolation=cv2.INTER_CUBIC)
         
         # get keypoints and descriptors
         ref_kp, ref_desc = self.detect_features(ref_img, feat, maxmem=ref_max_mem, for_ref=True)
@@ -95,6 +99,13 @@ class KeypointAlgo():
             sz = self._latest_detector.descriptorSize() # in bytes
             print('Descriptor mem use: %.0f x %.0fB => %.1f kB'%(len(ref_kp), sz, len(ref_kp)*sz/1024))
         
+        if BATCH_MODE and self.debug_filebase:
+            # save start situation in log archive
+            self.timer.stop()
+            sce = cv2.resize(orig_sce_img, ref_img.shape)
+            cv2.imwrite(self.debug_filebase+'a.png', np.concatenate((sce, ref_img), axis=1))
+            self.timer.start()
+
         # AKAZE, SIFT, SURF are truly scale invariant, couldnt get ORB to work as good
         vary_scale = vary_scale if feat==self.ORB else False
         
@@ -106,14 +117,17 @@ class KeypointAlgo():
                     sce_img = orig_sce_img
                 else:
                     sce_img = cv2.resize(orig_sce_img, None,
-                            fx=sce_img_sc, fy=sce_img_sc, 
-                            interpolation=cv2.INTER_CUBIC)
+                                         fx=sce_img_sc, fy=sce_img_sc,
+                                         interpolation=cv2.INTER_CUBIC)
 
                 sce_kp, sce_desc = self.detect_features(sce_img, feat, maxmem=sce_max_mem)
 
                 # match descriptors
                 try:
-                    matches = self._match_features(sce_desc, ref_desc, method='brute')
+                    mask = None
+                    if match_mask_params is not None:
+                        mask = self._calc_match_mask(sce_kp, ref_kp, render_z, sce_img_sc, ref_img_sc, *match_mask_params)
+                    matches = self._match_features(sce_desc, ref_desc, mask=mask, method='brute')
                     error = None
                 except PositioningException as e:
                     matches = []
@@ -144,8 +158,11 @@ class KeypointAlgo():
 
                 # debug by drawing inlier matches
                 self._draw_matches(sce_img, sce_img_sc, sce_kp, ref_img, ref_img_sc, ref_kp,
-                                   [matches[i[0]] for i in inliers], label='inliers', pause=False)
-                
+                                   [matches[i[0]] for i in inliers], label='c) inliers', pause=False)
+
+                if len(inliers) < self.MIN_FEATURES:
+                    raise PositioningException('RANSAC algorithm was left with too few inliers')
+
                 # dont try again if found enough inliers
                 ok = True
                 break
@@ -163,7 +180,7 @@ class KeypointAlgo():
         self.timer.stop()
         
         # set model params to solved pose & pos
-        self._set_sc_from_ast_rot_and_trans(rvec, tvec, discretization_err_q)
+        self._set_sc_from_ast_rot_and_trans(rvec, tvec, self.latest_discretization_err_q)
         if not BATCH_MODE or DEBUG:
             rp_err = self._reprojection_error(sce_kp_2d, ref_kp_3d, inliers, rvec, tvec)
             sh_err = self.system_model.calc_shift_err()
@@ -177,9 +194,11 @@ class KeypointAlgo():
             ), flush=True)
         
         if BATCH_MODE and self.debug_filebase:
-            self.glWidget.saveViewToFile(self.debug_filebase+'r.png')
-        
-    
+            # save result in log archive
+            res_img = self.render(shadows=self.RENDER_SHADOWS)
+            sce_img = cv2.resize(orig_sce_img, res_img.shape)
+            cv2.imwrite(self.debug_filebase+'d.png', np.concatenate((sce_img, res_img), axis=1))
+
     def detect_features(self, img, feat, maxmem, for_ref=False, **kwargs):
         # extra bytes needed for keypoints (only coordinates (float32), the rest not used)
         nb = 4*(3 if for_ref else 2)
@@ -251,9 +270,21 @@ class KeypointAlgo():
             'upright':False,            # default: False
         }
         return cv2.xfeatures2d.SURF_create(**params)
+
+    def _calc_match_mask(self, sce_kp, ref_kp, render_z, sce_img_sc, ref_img_sc, ix_off, iy_off, ast_z):
+        n_sce_kp = (np.array([kp.pt for kp in sce_kp])
+                        - np.array([ix_off + CAMERA_WIDTH/2, iy_off + CAMERA_HEIGHT/2])*sce_img_sc
+                   ).reshape((-1, 1, 2)) * abs(ast_z)
+        n_ref_kp = (np.array([kp.pt for kp in ref_kp])
+                        - np.array([VIEW_WIDTH/2, VIEW_HEIGHT/2])*ref_img_sc
+                   ).reshape((1, -1, 2)) * abs(render_z)
+        O = np.repeat(n_sce_kp, n_ref_kp.shape[1], axis=1) - np.repeat(n_ref_kp, n_sce_kp.shape[0], axis=0)
+        D = np.linalg.norm(O, axis=2)
+
+        # in px*km, if coef=6.25, cam res 1024x1024 and asteroid distance 64km => mask circle radius is 100px
+        return (D < self.MATCH_MASK_COEF * min(CAMERA_WIDTH, CAMERA_HEIGHT)).astype('uint8')
     
-    
-    def _match_features(self, desc1, desc2, method='brute', symmetry_test=False, ratio_test=True):
+    def _match_features(self, desc1, desc2, mask=None, method='brute', symmetry_test=False, ratio_test=True):
         
         if desc1 is None or desc2 is None or len(desc1)<self.MIN_FEATURES or len(desc2)<self.MIN_FEATURES:
             raise PositioningException('Not enough features found')
@@ -281,11 +312,11 @@ class KeypointAlgo():
             matcher = cv2.BFMatcher(self._latest_detector.defaultNorm(), symmetry_test)
         else:
             assert False, 'unknown method %s'%method
-            
+
         if ratio_test:
-            matches = matcher.knnMatch(np.array(desc1), np.array(desc2), 2)
+            matches = matcher.knnMatch(np.array(desc1), np.array(desc2), 2, mask=mask)
         else:
-            matches = matcher.match([desc1, desc2])
+            matches = matcher.match(np.array(desc1), np.array(desc2), mask=mask)
 
         if len(matches)<self.MIN_FEATURES:
             raise PositioningException('Not enough features matched')
@@ -303,7 +334,7 @@ class KeypointAlgo():
         return matches
 
     
-    def _draw_matches(self, img1, img1_sc, kp1, img2, img2_sc, kp2, matches, pause=True, show=True, label='matches'):
+    def _draw_matches(self, img1, img1_sc, kp1, img2, img2_sc, kp2, matches, pause=True, show=True, label='b) matches'):
         self.timer.stop()
         
         matches = list([m] for m in matches)
@@ -342,8 +373,7 @@ class KeypointAlgo():
         
         if show:
             cv2.imshow(label, img3)
-        if pause:
-            cv2.waitKey()
+        cv2.waitKey(0 if pause else 25)
         
         self.timer.start()
     
@@ -358,12 +388,13 @@ class KeypointAlgo():
         retval, rvec, tvec, inliers = cv2.solvePnPRansac(
                 ref_kp_3d, sce_kp_2d, cam_mx, dist_coeffs,
                 iterationsCount = self.RANSAC_ITERATIONS,
-                reprojectionError = self.RANSAC_ERROR)
+                reprojectionError = self.RANSAC_ERROR,
+                flags=self.RANSAC_KERNEL)
         
         if not retval:
             raise PositioningException('RANSAC algorithm returned False')
-        if len(inliers) < self.MIN_FEATURES:
-            raise PositioningException('RANSAC algorithm was left with too few inliers')
+        if np.linalg.norm(tvec) > 1280:
+            raise PositioningException('RANSAC estimated that asteroid at %s km'%(tvec,))
 
         return rvec, tvec, inliers
 

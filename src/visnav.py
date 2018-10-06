@@ -3,6 +3,7 @@ import sys
 import math
 import threading
 
+import _thread
 import numpy as np
 import cv2
 
@@ -13,6 +14,7 @@ from PyQt5.QtCore import (pyqtSignal, QPoint, QSize, Qt, QBuffer, QIODevice,
 from PyQt5.QtWidgets import (QApplication, QHBoxLayout, QVBoxLayout,
         QOpenGLWidget, QSlider, QPushButton, QWidget)
 
+from algo.base import AlgorithmBase
 from settings import *
 from algo import tools
 from algo.model import SystemModel
@@ -139,7 +141,21 @@ class Window(QWidget):
         self.test2 = QPushButton('T2', self)
         self.test2.clicked.connect(testfun2)
         bottomLayout.addWidget(self.test2)
-        
+
+        # test lunar lambert rendering
+        ab = AlgorithmBase(self.systemModel)
+        def testfun3():
+            def testfun3i():
+                image = ab.render()
+                cv2.imshow('lunar-lambert', image)
+            try:
+                _thread.start_new_thread(testfun3i, tuple(), dict())
+            except Exception as e:
+                print('failed: %s'%e)
+        self.test3 = QPushButton('T3', self)
+        self.test3.clicked.connect(testfun3)
+        bottomLayout.addWidget(self.test3)
+
         mainLayout = QVBoxLayout()
         mainLayout.addLayout(topLayout)
         mainLayout.addLayout(bottomLayout)
@@ -502,7 +518,7 @@ class GLWidget(QOpenGLWidget):
         self._discretize_tol = discretize_tol
         tmp = self._center_model
         self._center_model = center
-        
+
         fbo = self.grabFramebuffer() # calls paintGL
         self.latest_rendered_image = rr = self.saveView(depth=False)
         if depth:
@@ -629,8 +645,9 @@ class GLWidget(QOpenGLWidget):
         if noisy_model is not None:
             sm = noisy_model
         elif ADD_SHAPE_MODEL_NOISE and not BATCH_MODE:
-            sup = objloader.ShapeModel(fname=SHAPE_MODEL_NOISE_SUPPORT)
-            sm, noise, L = tools.apply_noise(rsm, support=np.array(sup.vertices))
+            #sup = objloader.ShapeModel(fname=SHAPE_MODEL_NOISE_SUPPORT)
+            #sm, noise, L = tools.apply_noise(rsm, support=np.array(sup.vertices))
+            sm, noise, L = tools.apply_noise(rsm)
         else:
             sm = rsm
         

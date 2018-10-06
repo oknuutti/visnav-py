@@ -7,15 +7,17 @@ import cv2
 
 from PyQt5.QtCore import QCoreApplication
 
+from algo.base import AlgorithmBase
 from settings import *
 from algo import tools
 from algo.tools import PositioningException
 from algo.centroid import CentroidAlgo
 
-class PhaseCorrelationAlgo():
-    def __init__(self, system_model, glWidget):
-        self.system_model = system_model
-        self.glWidget = glWidget
+
+class PhaseCorrelationAlgo(AlgorithmBase):
+    def __init__(self, system_model, render_engine, obj_idx):
+        super(PhaseCorrelationAlgo, self).__init__(system_model, render_engine, obj_idx)
+
         self.min_options = None
         self.errval0 = None
         self.errval1 = None
@@ -23,8 +25,9 @@ class PhaseCorrelationAlgo():
         self.iter_count = 0
         self.start_time = None
         self.optfun_values = []
-        
-        self.debug_filebase = None
+
+        self._image = None
+        self._image_file = None
         self._target_image = None
         self._hannw = None
         self._render_result = None
@@ -70,7 +73,7 @@ class PhaseCorrelationAlgo():
         )
         
         if render_result is None:
-            render_result = self.glWidget.render()
+            render_result = self.render()
             #imgfile = self.debug_filebase+('i%.0f'%(self.iter_count))+'.png'
             #cv2.imwrite(imgfile, render_result)
             self._count+=1
@@ -88,16 +91,16 @@ class PhaseCorrelationAlgo():
             + 'im_width:%s, im_height:%s, im_scale:%.3f, '
             + 'vw_width:%s, vw_height:%s\n') % (
                 render_result.shape, self._target_image.shape,
-                self.glWidget.im_xoff, self.glWidget.im_yoff,
-                self.glWidget.im_width, self.glWidget.im_height, self.glWidget.im_scale,
-                self.glWidget._width, self.glWidget._height)
+                self.im_xoff, self.im_yoff,
+                self.im_width, self.im_height, self.im_scale,
+                VIEW_WIDTH, VIEW_HEIGHT)
         (tcx, tcy), pwr = cv2.phaseCorrelate(
                 np.float32(render_result), self._target_image, self._hannw)
         
         # if crop params set, compensate cx, cy
         xi, yi = self._original_image_coords(
-                tcx + self.glWidget._width/2,
-                tcy + self.glWidget._height/2)
+                tcx + VIEW_WIDTH/2,
+                tcy + VIEW_HEIGHT/2)
         
         scx, scy = tools.calc_xy(xi, yi, m.z_off.value)
         m.spacecraft_pos = (scx, scy, m.z_off.value)
@@ -122,14 +125,13 @@ class PhaseCorrelationAlgo():
         return self.errval
     
     def _get_bounds(self, img, margin, max_width):
-        wg = self.glWidget
-        
+
         # get x, y, w, h from img
         xs, ys, ws, hs = cv2.boundingRect(img)
 
         # translate to 1:1 scale, add margin
-        tmpw = round(ws/wg.im_scale) +2*margin
-        tmph = round(hs/wg.im_scale) +2*margin
+        tmpw = round(ws/self.im_scale) +2*margin
+        tmph = round(hs/self.im_scale) +2*margin
         im_width = min(CAMERA_WIDTH, max(tmpw, round(tmph * CAMERA_WIDTH/CAMERA_HEIGHT)))
         im_height = min(CAMERA_HEIGHT, max(tmph, round(tmpw * CAMERA_HEIGHT/CAMERA_WIDTH)))
         
@@ -155,24 +157,24 @@ class PhaseCorrelationAlgo():
         return im_xoff, im_yoff, im_width, im_height, im_scale
     
     def _original_image_coords(self, cx, cy):
-        wg = self.glWidget
-        return tuple(c/wg.im_scale + o for c, o in
-                    ((cx, wg.im_xoff), (cy, wg.im_yoff)))
+        return tuple(c/self.im_scale + o for c, o in
+                    ((cx, self.im_xoff), (cy, self.im_yoff)))
 
     def findstate(self, imgfile, outfile, min_options={}, **kwargs):
         self.debug_filebase = outfile        
         min_options = dict(min_options)
         
-        if self.glWidget.image_file != imgfile:
-            self.glWidget.loadTargetImage(imgfile)
+        if self._image_file != imgfile or self._image is None:
+            self._image = self.load_target_image(imgfile)
+            self._image_file = imgfile
 
-        self._target_image = np.float32(self.glWidget.image)
+        self._target_image = np.float32(self._image)
         
         # consider if useful at all
         if kwargs.pop('centroid_init', False):
             try:
                 CentroidAlgo.update_sc_pos(
-                        self.system_model, self.glWidget.image)
+                        self.system_model, self._image)
                 ok = True
             except PositioningException as e:
                 if not e.args or e.args[0] != 'No asteroid found':
@@ -258,8 +260,8 @@ class PhaseCorrelationAlgo():
             ## >> 
             first_opts = dict(min_opts.pop('first'))
 
-            im_scale = first_opts.pop('scale', self.glWidget.im_def_scale)
-            self.glWidget.setImageZoomAndResolution(im_scale=im_scale)
+            im_scale = first_opts.pop('scale', self.im_def_scale)
+            self.set_image_zoom_and_resolution(im_scale=im_scale)
 
             max_iter = first_opts.pop('max_iter', 50)
             init = list((-0.5, 0.5) for n, p in self.system_model.get_params())
@@ -275,7 +277,8 @@ class PhaseCorrelationAlgo():
             ## PHASE I
             
             QCoreApplication.processEvents()
-            self.glWidget.saveViewToFile(self.debug_filebase+'.png')
+            img = self.render()
+            cv2.imwrite(self.debug_filebase+'.png', img)
 
             if DEBUG:
                 print('Phase I: (%.3f, %.3f, %.3f)\n'%(
@@ -296,7 +299,7 @@ class PhaseCorrelationAlgo():
             max_dist = (-self.system_model.z_off.value) * (1+distance_margin)
 
             # calculate im_xoff, im_xoff, im_width, im_height
-            render_result = self.glWidget.render(center=False)
+            render_result = self.render()
             xo, yo, w, h, sc = self._get_bounds(render_result, margin, max_width)
             
             if DEBUG:
@@ -311,11 +314,12 @@ class PhaseCorrelationAlgo():
                 self.system_model.z_off.range = (-max_dist, -min_dist)
                 
                 # set cropping & zooming
-                self.glWidget.setImageZoomAndResolution(
+                self.set_image_zoom_and_resolution(
                                             im_xoff=xo, im_yoff=yo,
                                             im_width=w, im_height=h, im_scale=sc)
-                self._target_image = np.float32(self.glWidget.image)
-                self.glWidget.saveViewToFile(self.debug_filebase+'.png')
+                self._target_image = np.float32(self._image)
+                img = self.render()
+                cv2.imwrite(self.debug_filebase + '.png', img)
 
                 # set optimization params
                 max_iter = second_opts.pop('max_iter', 18)
@@ -332,8 +336,9 @@ class PhaseCorrelationAlgo():
         self.iter_count = -1;
         self.optfun(*x)
         outfile = imgfile[0:-4]+'r3'+'.png'
-        self.glWidget.saveViewToFile(outfile)
-        
+        img = self.render()
+        cv2.imwrite(outfile, img)
+
         if method=='two-step-brute':
             self.system_model.z_off.range = (-MAX_DISTANCE, -MIN_MED_DISTANCE)
             if DEBUG:
@@ -347,7 +352,7 @@ class PhaseCorrelationAlgo():
             print('%s'%res)
             print('seconds: %s'%(datetime.now()-self.start_time))
             
-        if self.glWidget.im_def_scale != self.glWidget.im_scale:
-            self.glWidget.setImageZoomAndResolution(im_scale=self.glWidget.im_def_scale)
+        if self.im_def_scale != self.im_scale:
+            self.set_image_zoom_and_resolution(im_scale=self.im_def_scale)
         
         return True

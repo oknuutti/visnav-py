@@ -8,6 +8,7 @@ from algo.keypoint import KeypointAlgo
 if __name__ == '__main__':
     if len(sys.argv) <= 2:
         print('USAGE: python %s <sift|surf|orb|akaze> <image file>'%(sys.argv[0],))
+        quit()
 
     img = cv2.imread(sys.argv[2], cv2.IMREAD_GRAYSCALE)
     img = cv2.cvtColor(cv2.resize(img, None, fx=1/2, fy=1/2, interpolation=cv2.INTER_CUBIC), cv2.COLOR_GRAY2RGB)

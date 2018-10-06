@@ -1,5 +1,6 @@
 # adapted from http://www.pygame.org/wiki/OBJFileLoader
 
+import numpy as np
 from algo import tools
 
 #def MTL(filename):
@@ -34,6 +35,7 @@ from algo import tools
 class ShapeModel:
     def __init__(self, fname=None, data=None):
         self.vertices = []
+        self.normals = []
         self.faces = []
         
         if fname is not None:
@@ -44,7 +46,7 @@ class ShapeModel:
     def from_file(self, fname, swapyz=False):
         """Loads a Wavefront OBJ file. """
         self.vertices = []
-        #self.normals = []
+        self.normals = []
         #self.texcoords = []
         self.faces = []
         #self.triangles = []
@@ -60,11 +62,10 @@ class ShapeModel:
                     v = v[0], v[2], v[1]
                 self.vertices.append(v)
             elif values[0] == 'vn':
-                pass
-#                v = list(map(float, values[1:4]))
-#                if swapyz:
-#                    v = v[0], v[2], v[1]
-#                self.normals.append(v)
+                v = list(map(float, values[1:4]))
+                if swapyz:
+                    v = v[0], v[2], v[1]
+                self.normals.append(v)
             elif values[0] == 'vt':
                 pass
 #                self.texcoords.append(map(float, values[1:3]))
@@ -95,19 +96,42 @@ class ShapeModel:
 #                    self.triangles.append(tuple(face))
                 else:
                     raise Exception('Not a triangle!')
-    
+
     def from_dict(self, data):
         self.faces = data['faces']
         self.vertices = data['vertices']
+        self.normals = data.get('normals', [])
+        if len(self.normals) == 0:
+            self.recalc_norms()
         
     def as_dict(self):
-        return {'faces':self.faces, 'vertices':self.vertices}
+        return {'faces':self.faces, 'vertices':self.vertices, 'normals':self.normals}
         
     def _calc_norm(self, face):
-        return tools.surf_normal(
-                self.vertices[face[0]],
-                self.vertices[face[1]],
-                self.vertices[face[2]])
+        n = tools.surf_normal(self.vertices[face[0]], self.vertices[face[1]], self.vertices[face[2]])
+        self.normals.append(n)
+        return len(self.normals)-1
     
     def recalc_norms(self):
+        self.normals.clear()
         self.faces = [(face, self._calc_norm(face)) for face, n in self.faces]
+
+    def export_smooth_faces(self):
+        """
+        compatible output for a moderngl ext obj
+        """
+        norms = np.zeros((len(self.vertices), 3))
+        for f, n in self.faces:
+            norms[f[0]] += self.normals[n]
+            norms[f[1]] += self.normals[n]
+            norms[f[2]] += self.normals[n]
+        norms = norms / np.linalg.norm(norms, axis=1).reshape((-1, 1))
+        faces = [(f + 1, None, f + 1) for fs, n in self.faces for f in fs]
+        return self.vertices, norms, faces
+
+    def export_angular_faces(self):
+        """
+        compatible output for a moderngl ext obj
+        """
+        faces = [(f + 1, None, n + 1) for fs, n in self.faces for f in fs]
+        return self.vertices, self.normals, faces

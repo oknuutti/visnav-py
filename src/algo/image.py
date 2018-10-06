@@ -1,5 +1,6 @@
 import math
 
+from scipy import signal
 from scipy import optimize, stats
 import numpy as np
 import cv2
@@ -41,8 +42,41 @@ class ImageProc():
 
         # apply gamma correction using the lookup table
         return cv2.LUT(image, table)
-    
-        
+
+    @staticmethod
+    def add_stars(img, mask, coef=2):
+        # add power law distributed stars to image
+        assert img.shape == img.shape[:2], 'works only with grayscale images'
+        stars = np.random.pareto(coef, img.shape)
+        # can be over 255, will clip later
+        img[mask] = np.clip(stars[mask], 0, 600)
+        return img
+
+    @staticmethod
+    def apply_point_spread_fn(img, ratio):
+        # ratio is how many % of power on central pixel
+        ratio=.2
+        sd = 1/math.sqrt(2*math.pi*ratio)
+        kernel = ImageProc.gkern2d(5, sd)
+        print('kernel: %s'%(kernel[2,2],))
+        img = signal.convolve2d(img, kernel, mode='same')
+        return img
+
+    @staticmethod
+    def gkern2d(l=5, sig=1.):
+        """
+        creates gaussian kernel with side length l and a sigma of sig
+        """
+        ax = np.arange(-l // 2 + 1., l // 2 + 1.)
+        xx, yy = np.meshgrid(ax, ax)
+        kernel = np.exp(-(xx ** 2 + yy ** 2) / (2. * sig ** 2))
+        return kernel / np.sum(kernel)
+
+    @staticmethod
+    def add_ccd_noise(img, rate=8):
+        img += np.random.poisson(rate, img.shape)
+        return img
+
     @staticmethod
     def process_target_image(image_src):
         hist = cv2.calcHist([image_src],[0],None,[256],[0,256])

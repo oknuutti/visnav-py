@@ -47,18 +47,18 @@ class Stopwatch:
         self.stop()
         
 
-def intrinsic_camera_mx(w=CAMERA_WIDTH, h=CAMERA_HEIGHT):
+def intrinsic_camera_mx(w=CAMERA_WIDTH, h=CAMERA_HEIGHT, legacy=True):
     x = w/2
     y = h/2
     fl_x = x / math.tan( math.radians(CAMERA_X_FOV)/2 )
     fl_y = y / math.tan( math.radians(CAMERA_Y_FOV)/2 )
-    return np.array([[fl_x, 0, x],
+    return np.array([[fl_x * (1 if legacy else -1), 0, x],
                     [0, fl_y, y],
                     [0, 0, 1]], dtype = "float")
 
 
-def inv_intrinsic_camera_mx(w=CAMERA_WIDTH, h=CAMERA_HEIGHT):
-    return np.linalg.inv(intrinsic_camera_mx(w, h))
+def inv_intrinsic_camera_mx(w=CAMERA_WIDTH, h=CAMERA_HEIGHT, legacy=True):
+    return np.linalg.inv(intrinsic_camera_mx(w, h, legacy=legacy))
 
 
 def sc_asteroid_max_shift_error(A, B):
@@ -88,13 +88,14 @@ def sc_asteroid_max_shift_error(A, B):
 def calc_xy(xi, yi, z_off, width=CAMERA_WIDTH, height=CAMERA_HEIGHT):
     """ xi and yi are unaltered image coordinates, z_off is usually negative  """
     
-    xh = xi+0.5
-    yh = height - (yi+0.5)
-    zh = -z_off
+    xh = xi + 0.5
+    #yh = height - (yi+0.5)
+    yh = yi + 0.5
+    #zh = -z_off
     
     if True:
-        iK = inv_intrinsic_camera_mx(w=width, h=height)
-        x_off, y_off, dist = iK.dot(np.array([xh, yh, 1]))*zh
+        iK = inv_intrinsic_camera_mx(w=width, h=height, legacy=False)
+        x_off, y_off, _ = iK.dot(np.array([xh, yh, 1]))*z_off
         
     else:
         cx = xh/width - 0.5
@@ -108,6 +109,14 @@ def calc_xy(xi, yi, z_off, width=CAMERA_WIDTH, height=CAMERA_HEIGHT):
         
     # print('%.3f~%.3f, %.3f~%.3f, %.3f~%.3f'%(ax, x_off, ay, y_off, az, z_off))
     return x_off, y_off
+
+
+def calc_img_xy(x, y, z, width=CAMERA_WIDTH, height=CAMERA_HEIGHT):
+    """ x, y, z are in camera frame (z typically negative),  return image coordinates  """
+
+    K = intrinsic_camera_mx(width, height, legacy=False)
+    ix, iy, iw = K.dot(np.array([x, y, z]))
+    return ix/iw, iy/iw
 
 
 def surf_normal(x1, x2, x3):
@@ -364,8 +373,8 @@ def points_with_noise(points, support=None, L=None, len_sc=SHAPE_MODEL_NOISE_LEN
     
     y_cov = None
     if L is None:
-        kernel = 0.7*noise_lv*Matern(length_scale=len_sc*max_rng, nu=1.5) \
-               + 0.2*noise_lv*Matern(length_scale=0.1*len_sc*max_rng, nu=1.5) \
+        kernel = 0.6*noise_lv*Matern(length_scale=len_sc*max_rng, nu=1.5) \
+               + 0.4*noise_lv*Matern(length_scale=0.1*len_sc*max_rng, nu=1.5) \
                + WhiteKernel(noise_level=1e-4*noise_lv*max_rng) # white noise for positive definite covariance matrix only
         y_cov = kernel(support-mean)
 
@@ -394,7 +403,7 @@ def points_with_noise(points, support=None, L=None, len_sc=SHAPE_MODEL_NOISE_LEN
                 raise IndexError('%s,%s,%s'%(err.shape, full_err.shape, points.shape)) from e
 
     # extra high frequency noise
-    white_noise = np.exp(np.random.normal(scale=0.2*noise_lv*max_rng, size=(len(full_err),1)))
+    white_noise = 1 if True else np.exp(np.random.normal(scale=0.2*noise_lv*max_rng, size=(len(full_err),1)))
 
     if only_z:
         add_err_z = (max_rng/2)*(full_err*white_noise - 1)
@@ -402,8 +411,10 @@ def points_with_noise(points, support=None, L=None, len_sc=SHAPE_MODEL_NOISE_LEN
         noisy_points = points + add_err
         devs = np.sqrt((points[:,2]-noisy_points[:,2])**2)/(max_rng/2)
     else:
-        noisy_points = (points-mean)*full_err*white_noise +mean
-        devs = np.sqrt(np.sum((points-noisy_points)**2, axis=-1)/np.sum(points**2, axis=-1))
+        # noisy_points = (points-mean)*full_err*white_noise +mean
+        r = np.sqrt(np.sum((points-mean)**2, axis=-1)).reshape(-1,1)
+        noisy_points = (points-mean)*(1 + np.log(full_err) / r) + mean
+        devs = np.sqrt(np.sum((points-noisy_points)**2, axis=-1)/np.sum((points-mean)**2, axis=-1))
     
     if DEBUG or not BATCH_MODE:
         print('noise: %.3f, %.3f; avg=%.3f'%(tuple(np.percentile(devs, (68,95)))+(np.mean(devs),)))

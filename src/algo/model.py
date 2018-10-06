@@ -9,8 +9,10 @@ from astropy import units
 from astropy.coordinates import SkyCoord
 import configparser
 
+from iotools import objloader
 from settings import *
 from algo import tools
+
 
 class Parameter():
     def __init__(self, min_val, max_val, def_val=None, estimate=True, is_gl_z=False):
@@ -23,6 +25,7 @@ class Parameter():
         self.real_value = None
         self.change_callback = None
         self.fire_change_events = True
+        self.debug=False
     
     @property
     def range(self):
@@ -31,8 +34,10 @@ class Parameter():
     @range.setter
     def range(self, range):
         min_val, max_val = range
-        if not np.isclose(self._min_val, min_val, rtol=1e-8) \
-                or not np.isclose(self._max_val, max_val, rtol=1e-8):
+
+        # NOTE: need fine rtol as time is in seconds (e.g. 1407258438)
+        if not np.isclose(self._min_val, min_val, rtol=1e-9) \
+                or not np.isclose(self._max_val, max_val, rtol=1e-9):
             self._min_val = min_val
             self._max_val = max_val
             if self.fire_change_events:
@@ -58,11 +63,17 @@ class Parameter():
     @property
     def value(self):
         return self._value
-    
+
     @value.setter
     def value(self, value):
-        if not np.isclose(self._value, value, rtol=1e-8):
+        if self.debug:
+            print('o: %s, n: %s'%(self._value, value), flush=True)
+
+        # NOTE: need fine rtol as time is in seconds (e.g. 1407258438)
+        if not np.isclose(self._value, value, rtol=1e-9):
             self._value = value
+            if self.debug:
+                print('value set: %s'%self._value, flush=True)
             if self.fire_change_events:
                 try:
                     self.change_callback(value)
@@ -117,7 +128,7 @@ class SystemModel():
     
     def __init__(self, *args, **kwargs):
         self.asteroid = Asteroid()
-        self.real_shape_model = None
+        self.real_shape_model = objloader.ShapeModel(fname=TARGET_MODEL_FILE)
         self.real_sc_ast_vertices = None
         
         # spacecraft position relative to asteroid, z towards spacecraft,
@@ -286,8 +297,8 @@ class SystemModel():
     def gl_sc_asteroid_rel_q(self, discretize_tol=False):
         """ rotation of asteroid relative to spacecraft in opengl coords """
         self.update_asteroid_model()
-        sc_ast_rel_q =  self.sc_asteroid_rel_q() # why cant have: * SystemModel.sc2gl_q ??
-        
+        sc_ast_rel_q = self.sc_asteroid_rel_q() # why cant have: * SystemModel.sc2gl_q ??
+
         if discretize_tol:
             qq = tools.discretize_q(sc_ast_rel_q, discretize_tol)
             err_q = sc_ast_rel_q*qq.conj()
@@ -338,6 +349,9 @@ class SystemModel():
     
     def sc_asteroid_vertices(self, real=False):
         """ asteroid vertices rotated and translated to spacecraft frame """
+        if self.real_shape_model is None:
+            return None
+
         sc_ast_q = self.real_sc_asteroid_rel_q() if real else self.sc_asteroid_rel_q()
         sc_pos = self.real_spacecraft_pos if real else self.spacecraft_pos
         
@@ -375,7 +389,6 @@ class SystemModel():
         real_d = self.real_spacecraft_pos[2]
         return abs(self.spacecraft_pos[2] - real_d) / abs(real_d)
         
-    
     def save_state(self, filename, printout=False):
         config = configparser.ConfigParser()
         filename = filename+('.lbl' if len(filename)<5 or filename[-4:]!='.lbl' else '')
