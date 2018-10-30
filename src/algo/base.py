@@ -20,6 +20,7 @@ class AlgorithmBase:
         self.timer = None
 
         self.latest_discretization_err_q = None
+        self.latest_discretization_light_err_angle = None
 
         # initialize by the call to set_image_zoom_and_resolution
         self.im_xoff = None
@@ -117,7 +118,8 @@ class AlgorithmBase:
         qfin = (q * q_crop.conj())
 
         # light direction
-        light = m.light_rel_dir(err_q)
+        light, err_angle = m.gl_light_rel_dir(err_q, discretize_tol)
+        self.latest_discretization_light_err_angle = err_angle if discretize_tol else False
 
         return (x, y, z), qfin, light
 

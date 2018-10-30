@@ -46,6 +46,9 @@ from algo.tools import PositioningException
 class TestLoop():
     FILE_PREFIX = 'iteration_'
 
+    # minimum allowed elongation in deg
+    MIN_ELONG = 45
+
     def __init__(self, far=False):
         self.exit = False
         self._algorithm_finished = None
@@ -73,7 +76,7 @@ class TestLoop():
         self._hires_obj_idx = None
 
         # gaussian sd in seconds
-        self._noise_time = 30/2     # 95% within +-30s
+        self._noise_time = 0     # disabled as _noise_ast_phase_shift does same thing, was 95% within +-30s
         
         # uniform, max dev in deg
         self._noise_ast_rot_axis = 10
@@ -83,9 +86,12 @@ class TestLoop():
         self._noise_sco_lat = 2/2   # 95% within 2 deg
         self._noise_sco_lon = 2/2   # 95% within 2 deg
         self._noise_sco_rot = 2/2   # 95% within 2 deg
-        
-        # minimum allowed elongation in deg
-        self._min_elong = 45
+
+        # s/c position noise, gaussian sd in km per km of distance
+        self._enable_initial_location = False
+        self._unknown_sc_pos = (0, 0, -MIN_MED_DISTANCE)
+        self._noise_lateral = 0.005   # 0.0052 when calculated using centroid algo AND 5 deg fov
+        self._noise_altitude = 0.10   # 0.131 when calculated using centroid algo AND 5 deg fov
         
         # transients
         self._smn_cache_id = ''
@@ -175,7 +181,7 @@ class TestLoop():
                     print('generating new navcam image')
                 imgfile = self.render_navcam_image(sm, i)
                 self._maybe_exit()
-            
+
             # run algorithm
             ok, rtime = self._run_algo(imgfile, self._iter_file(i), **kwargs)
             
@@ -247,10 +253,10 @@ class TestLoop():
             elong, direc = solar_elongation(as_v, sco_q)
 
             # limit elongation to always be more than set elong
-            if elong > rad(self._min_elong):
+            if elong > rad(TestLoop.MIN_ELONG):
                 break
         
-        if elong <= rad(self._min_elong):
+        if elong <= rad(TestLoop.MIN_ELONG):
             assert False, 'probable infinite loop'
         
         # put real values to model
@@ -299,28 +305,52 @@ class TestLoop():
         if rotation_noise:
             sm.spacecraft_rot = map(deg, (meas_sc_lat, meas_sc_lon, meas_sc_rot))
         
-        # wipe spacecraft position clean
-        sm.spacecraft_pos = (0, 0, -MIN_MED_DISTANCE)
+        # - spacecraft position noise
+        if self._enable_initial_location:
+            sm.spacecraft_pos = self._noisy_sc_position(sm)
+        else:
+            sm.spacecraft_pos = self._unknown_sc_pos
 
         # return this initial state
         return self._initial_state(sm)
-        
+
+    def _noisy_sc_position(self, sm):
+        x, y, z = sm.real_spacecraft_pos
+        d = np.linalg.norm((x, y, z))
+        return (
+            x + d * np.random.normal(0, self._noise_lateral),
+            y + d * np.random.normal(0, self._noise_lateral),
+            z + d * np.random.normal(0, self._noise_altitude),
+        )
+
     def _initial_state(self, sm):
         return {
             'time': sm.time.value,
             'ast_axis': sm.asteroid_axis,
             'sc_rot': sm.spacecraft_rot,
+            'sc_pos': sm.spacecraft_pos,
         }
     
     def load_state(self, sm, i):
         try:
             sm.load_state(self._cache_file(i)+'.lbl', sc_ast_vertices=True)
+            self._fill_or_censor_init_sc_pos(sm, self._cache_file(i)+'.lbl')
             initial = self._initial_state(sm)
         except FileNotFoundError:
             initial = None
         return initial
-        
-        
+
+    def _fill_or_censor_init_sc_pos(self, sm, state_file):
+        # generate and save if missing
+        if sm.spacecraft_pos == self._unknown_sc_pos or True:
+            sm.spacecraft_pos = self._noisy_sc_position(sm)
+            sm.save_state(state_file)
+
+        # maybe censor
+        if not self._enable_initial_location:
+            sm.spacecraft_pos = (0, 0, -MIN_MED_DISTANCE)
+
+
     def generate_noisy_shape_model(self, sm, i):
         #sup = objloader.ShapeModel(fname=SHAPE_MODEL_NOISE_SUPPORT)
         noisy_model, sm_noise, self._L = \
@@ -356,7 +386,7 @@ class TestLoop():
         sm.swap_values_with_real_vals()
         pos = sm.spacecraft_pos
         q, _ = sm.gl_sc_asteroid_rel_q()
-        light = sm.light_rel_dir()
+        light, _ = sm.gl_light_rel_dir()
         sm.swap_values_with_real_vals()
 
         img, depth = self._synth_navcam.render(self._hires_obj_idx, pos, q, light, get_depth=True, shadows=True)
@@ -369,7 +399,7 @@ class TestLoop():
         img = ImageProc.apply_point_spread_fn(img, ratio=0.2)
 
         # add background noise
-        img = ImageProc.add_ccd_noise(img, rate=6)
+        img = ImageProc.add_ccd_noise(img, mean=7, sd=2)
         img = np.clip(img, 0, 255).astype('uint8')
 
         if False:
@@ -420,8 +450,13 @@ class TestLoop():
         
         dev_angle = deg(angle_between_ypr(map(rad, ast_rot_noise),
                                           map(rad, sc_rot_noise)))
-        
-        noise = (time_noise,) + ast_rot_noise + sc_rot_noise + (dev_angle,)
+
+        if self._enable_initial_location:
+            sc_loc_noise = tuple(np.array(initial['sc_pos']) - np.array(sm.real_spacecraft_pos))
+        else:
+            sc_loc_noise = ('', '', '')
+
+        noise = sc_loc_noise + (time_noise,) + ast_rot_noise + sc_rot_noise + (dev_angle,)
         
         if not ok:
             pos = float('nan')*np.ones(3)
@@ -473,6 +508,7 @@ class TestLoop():
                 'sol elong', 'light dir', 'x sc pos', 'y sc pos', 'z sc pos',
                 'rel yaw', 'rel pitch', 'rel roll', 
                 'imgfile', 'optfun val', 'shape model noise',
+                'sc pos x dev', 'sc pos y dev', 'sc pos z dev',
                 'time dev', 'ast lat dev', 'ast lon dev', 'ast rot dev',
                 'sc lat dev', 'sc lon dev', 'sc rot dev', 'total dev angle',
                 'x est sc pos', 'y est sc pos', 'z est sc pos',
@@ -593,8 +629,18 @@ class TestLoop():
                 # try using pympler to find memory leaks, fail: crashes always
                 #    from pympler import tracker
                 #    tr = tracker.SummaryTracker()
+                if self._enable_initial_location:
+                    x, y, z = self.system_model.spacecraft_pos
+                    ix_off, iy_off = tools.calc_img_xy(x, y, z)
+                    kwargs['match_mask_params'] = ix_off-CAMERA_WIDTH/2, iy_off-CAMERA_HEIGHT/2, z
+
                 self.keypoint.solve_pnp(imgfile, outfile, **kwargs)
                 #    tr.print_diff()
+
+                # TODO: if fdb, log discretization errors from
+                #  - self.keypoint.latest_discretization_err_q
+                #  - self.keypoint.latest_discretization_light_err_angle
+
                 ok = True
                 rtime = self.keypoint.timer.elapsed
             except PositioningException as e:

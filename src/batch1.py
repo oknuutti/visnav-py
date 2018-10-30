@@ -1,3 +1,5 @@
+import math
+
 import settings
 settings.BATCH_MODE = True
 
@@ -95,7 +97,7 @@ if __name__ == '__main__':
     settings.ADD_SHAPE_MODEL_NOISE = False
     if 'smn_' in m:
         settings.ADD_SHAPE_MODEL_NOISE = True
-        settings.SHAPE_MODEL_NOISE_LV = 0.03
+        settings.SHAPE_MODEL_NOISE_LV = 0.04
         kwargs['smn_type'] = 'hi'
     elif 'smn' in m:
         settings.ADD_SHAPE_MODEL_NOISE = True
@@ -106,8 +108,8 @@ if __name__ == '__main__':
     if 'fdb' in m:
         kwargs['use_feature_db'] = True
         settings.TARGET_MODEL_FILE = os.path.join(settings.SCRIPT_DIR, '../data/CSHP_DV_130_01_LORES_00200.obj') # _XLRES_, _LORES_        
-        settings.VIEW_WIDTH = 768
-        settings.VIEW_HEIGHT = 768
+        settings.VIEW_WIDTH = 512
+        settings.VIEW_HEIGHT = 512
         noise = kwargs.pop('smn_type',False)
         settings.ADD_SHAPE_MODEL_NOISE = False
         if noise:
@@ -126,10 +128,11 @@ if __name__ == '__main__':
         from algo.keypoint import KeypointAlgo
         from algo import tools
         lats, lons = tools.bf_lat_lon(KeypointAlgo.FDB_TOL)
-        max_feat_mem = KeypointAlgo.FDB_MAX_MEM * len(lats) * len(lons)
-        print('Using feature DB not bigger than %.1fMB (%.0f x %.0fkB)'%(
+        elongs = math.ceil((360 - 2 * TestLoop.MIN_ELONG) / math.degrees(KeypointAlgo.FDB_TOL) / 2) - 1
+        max_feat_mem = KeypointAlgo.FDB_MAX_MEM * len(lats) * len(lons) * elongs
+        print('Using feature DB not bigger than %.1fMB (%d x %d x %d x %.0fkB)'%(
                 max_feat_mem/1024/1024,
-                len(lats) * len(lons),
+                len(lats), len(lons), elongs,
                 KeypointAlgo.FDB_MAX_MEM/1024))
 
     tl = TestLoop(far=(method == 'centroid'))

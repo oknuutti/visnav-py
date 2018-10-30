@@ -45,6 +45,14 @@ class RenderEngine:
         fragment_shader_source = open(os.path.join(os.path.dirname(__file__), frag)).read()
         return self._ctx.program(vertex_shader=vertex_shader_source, fragment_shader=fragment_shader_source)
 
+    @property
+    def width(self):
+        return self._width
+
+    @property
+    def height(self):
+        return self._height
+
     def set_frustum(self, x_fov, y_fov, frustum_near, frustum_far):
         self._frustum_near = frustum_near
         self._frustum_far = frustum_far

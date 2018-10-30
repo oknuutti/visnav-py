@@ -1,11 +1,13 @@
 
 import math
+import pickle
 
 import numpy as np
 import quaternion
 import cv2
 
 from algo.base import AlgorithmBase
+from algo.model import SystemModel
 from settings import *
 from algo import tools
 from algo.tools import PositioningException, Stopwatch
@@ -19,10 +21,17 @@ class KeypointAlgo(AlgorithmBase):
         SIFT,
         SURF,
     ) = range(4)
+
+    BYTES_PER_FEATURE = {
+        ORB: 32,
+        AKAZE: 61,
+        SIFT: 128,
+        SURF: 64,
+    }
     
-    FDB_MAX_MEM = 192*1024      # in bytes per scene, default 228kB
+    FDB_MAX_MEM = 96*1024      # in bytes per scene, default 192kB
     MAX_WORK_MEM = 512*1024     # in bytes, usable for both ref and scene features, default 512kB
-    FDB_TOL = math.radians(7)   # features from db never more than 7 deg off
+    FDB_TOL = math.radians(10)   # features from db never more than 7 deg off
     
     def __init__(self, system_model, render_engine, obj_idx):
         super(KeypointAlgo, self).__init__(system_model, render_engine, obj_idx)
@@ -31,16 +40,22 @@ class KeypointAlgo(AlgorithmBase):
         
         self._shape_model_rng = None
         self._latest_detector = None
-        
+        self._ransac_err = None
+
+        self._fdb_feat = None
+        self._fdb_scenes = None
+        self._fdb = None
+
         self.DEBUG_IMG_POSTFIX = 'k'    # if batch mode, save result image in a file ending like this
 
         # if want that mask radius is x when res 1024x1024 and ast dist 64km => coef = 64*x/1024
-        self.MATCH_MASK_COEF = 10     # 6.25, used only when running centroid algo before this one, didnt work so well..
+        self.MAX_FEATURES = 6000
+        self.MATCH_MASK_COEF = 6.25     # 6.25, used only when running centroid algo before this one
         self.RENDER_SHADOWS = True
-        self.MIN_FEATURES = 10         # fail if less inliers at the end
-        self.LOWE_METHOD_COEF = 0.85   # default 0.7 (0.8)  # 0.825 vs 0.8 => less fails, worse accuracy
+        self.MIN_FEATURES = 10          # fail if less inliers at the end
+        self.LOWE_METHOD_COEF = 0.85    # default 0.7 (0.8)  # 0.825 vs 0.8 => less fails, worse accuracy
         self.RANSAC_ITERATIONS = 10000  # default 100
-        self.RANSAC_ERROR = 16.0        # default 8.0
+        self.DEF_RANSAC_ERROR = 16      # default 8.0, for ORB & if fdb: use half the error given here
         self.SCENE_SCALE_STEP = 1.4142  # sqrt(2) scale scene image by this amount if fail
         self.MAX_SCENE_SCALE_STEPS = 5  # from mid range 64km to near range 16km (64/sqrt(2)**(5-1) => 16)
 
@@ -65,45 +80,46 @@ class KeypointAlgo(AlgorithmBase):
         if add_noise:
             self._shape_model_rng = np.max(np.ptp(self.system_model.real_shape_model.vertices, axis=0))
 
-        self.timer = Stopwatch()
-        if not use_feature_db:
-            self.timer.start()
-
-        # render model image
+        self._ransac_err = self.DEF_RANSAC_ERROR * (0.5 if feat == KeypointAlgo.ORB or use_feature_db else 1)
         render_z = -MIN_MED_DISTANCE
-        orig_z = self.system_model.z_off.value
-        self.system_model.z_off.value = render_z
-        ref_img, depth_result = self.render(center=True, depth=True,
-                                            discretize_tol=KeypointAlgo.FDB_TOL if use_feature_db else False,
-                                            shadows=self.RENDER_SHADOWS)
-        #ref_img = ImageProc.equalize_brightness(ref_img, orig_sce_img)
-        #orig_sce_img = ImageProc.adjust_gamma(orig_sce_img, 0.5)
-        #ref_img = ImageProc.adjust_gamma(ref_img, 0.5)
-        self.system_model.z_off.value = orig_z
-        
-        # scale to match scene image asteroid extent in pixels
         init_z = kwargs.get('init_z', render_z)
-        ref_img_sc = min(1, render_z/init_z) * (VIEW_WIDTH if scale_cam_img else CAMERA_WIDTH)/VIEW_WIDTH
-        ref_img = cv2.resize(ref_img, None, fx=ref_img_sc, fy=ref_img_sc, interpolation=cv2.INTER_CUBIC)
-        
-        # get keypoints and descriptors
-        ref_kp, ref_desc = self.detect_features(ref_img, feat, maxmem=ref_max_mem, for_ref=True)
-        
+        ref_img_sc = min(1, render_z / init_z) * (VIEW_WIDTH if scale_cam_img else CAMERA_WIDTH) / VIEW_WIDTH
+
+        self.timer = Stopwatch()
+        self.timer.start()
+
         if use_feature_db:
-            # if have ready calculated feature keypoints and descriptors,
-            # assume finding correct set from features db is very fast compared to
-            # the rest of the algorithm
-            self.timer.start()
-        
-        if True and DEBUG:
-            sz = self._latest_detector.descriptorSize() # in bytes
-            print('Descriptor mem use: %.0f x %.0fB => %.1f kB'%(len(ref_kp), sz, len(ref_kp)*sz/1024))
+            # find correct set of keypoints & descriptors from features db
+            ref_desc, ref_kp_3d, ref_kp, ref_img = self._query_fdb(feat)
+        else:
+            # render model image
+            orig_z = self.system_model.z_off.value
+            self.system_model.z_off.value = render_z
+            ref_img, depth_result = self.render(center=True, depth=True,
+                                                discretize_tol=KeypointAlgo.FDB_TOL if use_feature_db else False,
+                                                shadows=self.RENDER_SHADOWS)
+            #ref_img = ImageProc.equalize_brightness(ref_img, orig_sce_img)
+            #orig_sce_img = ImageProc.adjust_gamma(orig_sce_img, 0.5)
+            #ref_img = ImageProc.adjust_gamma(ref_img, 0.5)
+            self.system_model.z_off.value = orig_z
+
+        # scale to match scene image asteroid extent in pixels
+        ref_img = cv2.resize(ref_img, None, fx=ref_img_sc, fy=ref_img_sc, interpolation=cv2.INTER_CUBIC)
+
+        if not use_feature_db:
+            # get keypoints and descriptors
+            ref_kp, ref_desc = self.detect_features(ref_img, feat, maxmem=ref_max_mem, for_ref=True)
+            if DEBUG:
+                sz = self._latest_detector.descriptorSize() # in bytes
+                print('Descriptor mem use: %.0f x %.0fB => %.1f kB'%(len(ref_kp), sz, len(ref_kp)*sz/1024))
         
         if BATCH_MODE and self.debug_filebase:
             # save start situation in log archive
             self.timer.stop()
             sce = cv2.resize(orig_sce_img, ref_img.shape)
             cv2.imwrite(self.debug_filebase+'a.png', np.concatenate((sce, ref_img), axis=1))
+            cv2.imshow('compare', np.concatenate((sce, ref_img), axis=1))
+            cv2.waitKey()
             self.timer.start()
 
         # AKAZE, SIFT, SURF are truly scale invariant, couldnt get ORB to work as good
@@ -141,17 +157,18 @@ class KeypointAlgo(AlgorithmBase):
                 if error is not None:
                     raise error
 
-                # get feature 3d points using 3d model
                 if use_feature_db:
-                    self.timer.stop()
-                ref_kp_3d = self._inverse_project([ref_kp[m.trainIdx].pt for m in matches], depth_result, render_z, ref_img_sc, add_noise)
-                if use_feature_db:
-                    self.timer.start()
-                
-                sce_kp_2d = np.array([tuple(np.divide(sce_kp[m.queryIdx].pt, sce_img_sc)) for m in matches], dtype='float')
+                    ref_kp_3d = ref_kp_3d[[m.trainIdx for m in matches], :]
+                    if add_noise:
+                        # add noise to noiseless 3d ref points from fdb
+                        self.timer.stop()
+                        ref_kp_3d, self.sm_noise, _ = tools.points_with_noise(ref_kp_3d, only_z=True, max_rng=self._shape_model_rng)
+                        self.timer.start()
+                else:
+                    # get feature 3d points using 3d model
+                    ref_kp_3d = self._inverse_project([ref_kp[m.trainIdx].pt for m in matches], depth_result, render_z, ref_img_sc)
 
-                #if DEBUG:
-                #   print('3d z-range: %s'%(ref_kp_3d.ptp(axis=0),), flush=True)
+                sce_kp_2d = np.array([tuple(np.divide(sce_kp[m.queryIdx].pt, sce_img_sc)) for m in matches], dtype='float')
 
                 # solve pnp with ransac
                 rvec, tvec, inliers = self._solve_pnp_ransac(sce_kp_2d, ref_kp_3d)
@@ -202,21 +219,20 @@ class KeypointAlgo(AlgorithmBase):
     def detect_features(self, img, feat, maxmem, for_ref=False, **kwargs):
         # extra bytes needed for keypoints (only coordinates (float32), the rest not used)
         nb = 4*(3 if for_ref else 2)
+        bytes_per_feat = KeypointAlgo.BYTES_PER_FEATURE[feat] + nb
+        nfeats = kwargs.pop('nfeats', np.clip(int(maxmem / bytes_per_feat), 0, self.MAX_FEATURES))
 
         if feat == KeypointAlgo.ORB:
-            nfeats = kwargs.pop('nfeats', int(maxmem/(32+nb)))
             self._latest_detector = self._orb_detector(nfeats=nfeats, **kwargs)
         elif feat == KeypointAlgo.AKAZE:
-            nfeats = kwargs.pop('nfeats', int(maxmem/(61+nb)))
             self._latest_detector = self._akaze_detector(nfeats=nfeats, **kwargs)
         elif feat == KeypointAlgo.SIFT:
-            nfeats = kwargs.pop('nfeats', int(maxmem/(128+nb)))
             self._latest_detector = self._sift_detector(nfeats=nfeats, **kwargs)
         elif feat == KeypointAlgo.SURF:
-            nfeats = kwargs.pop('nfeats', int(maxmem/(64+nb)))
             self._latest_detector = self._surf_detector(nfeats=nfeats, **kwargs)
         else:
             assert False, 'invalid feature: %s'%(feat,)
+
         kp, dc = self._latest_detector.detectAndCompute(img, None)
         if kp is None:
             return None
@@ -290,21 +306,22 @@ class KeypointAlgo(AlgorithmBase):
             raise PositioningException('Not enough features found')
         
         if method == 'flann':
-            
-            assert False, 'doesnt currently support flann matcher'
-            
-            FLANN_INDEX_LSH = 6
-    #        FLANN_INDEX_KDTREE = 0 # for SIFT
+            ss = self._latest_detector.defaultNorm() != cv2.NORM_HAMMING
+
+            FLANN_INDEX_LSH = 6     # for ORB, AKAZE
+            FLANN_INDEX_KDTREE = 0  # for SIFT, SURF
+
             index_params = {
-    #            'algorithm':FLANN_INDEX_KDTREE, # for SIFT
-    #            'trees':5, # for SIFT
-                'algorithm':FLANN_INDEX_LSH,
-                'table_number':6,      # 12
-                'key_size':12,         # 20
-                'multi_probe_level':1, #2
+                'algorithm':    FLANN_INDEX_KDTREE if ss else FLANN_INDEX_LSH,
+                'table_number': 6,       # 12
+                'key_size':     12,      # 20
+                'multi_probe_level': 1,  # 2
             }
+            if ss:
+                index_params['trees'] = 5
+
             search_params = {
-                'checks':100,
+                'checks': 100,
             }
 
             matcher = cv2.FlannBasedMatcher(index_params, search_params)
@@ -384,11 +401,11 @@ class KeypointAlgo(AlgorithmBase):
         cam_mx = tools.intrinsic_camera_mx()
         ref_kp_3d = np.reshape(ref_kp_3d, (len(ref_kp_3d),1,3))
         sce_kp_2d = np.reshape(sce_kp_2d, (len(sce_kp_2d),1,2))
-        
+
         retval, rvec, tvec, inliers = cv2.solvePnPRansac(
                 ref_kp_3d, sce_kp_2d, cam_mx, dist_coeffs,
                 iterationsCount = self.RANSAC_ITERATIONS,
-                reprojectionError = self.RANSAC_ERROR,
+                reprojectionError = self._ransac_err,
                 flags=self.RANSAC_KERNEL)
         
         if not retval:
@@ -407,25 +424,17 @@ class KeypointAlgo(AlgorithmBase):
         prj_kp_2d, _ = cv2.projectPoints(ref_kp_3d, rvec, tvec, cam_mx, dist_coeffs)
         return np.sqrt(np.mean((sce_kp_2d[inliers] - prj_kp_2d[inliers])**2))
     
-    
-    def _inverse_project(self, points_2d, depths, render_z, img_sc, add_noise=False):
+    def _inverse_project(self, points_2d, depths, render_z, img_sc, max_dist=30):
         sc = img_sc * VIEW_WIDTH/CAMERA_WIDTH
-        
+        idxs = tools.foreground_idxs(depths, max_val=MAX_DISTANCE-3)
+
         def invproj(xi, yi):
-            z = -tools.interp2(depths, xi/img_sc, yi/img_sc, max_val=MAX_DISTANCE-3)
+            z = -tools.interp2(depths, xi/img_sc, yi/img_sc, idxs=idxs, max_val=MAX_DISTANCE-3, max_dist=max_dist)
             x, y = tools.calc_xy(xi/sc, yi/sc, z, width=CAMERA_WIDTH, height=CAMERA_HEIGHT)
             return x, -y, -(z-render_z) # same as rotate using cv2gl_q
         
-        points_3d = np.array([invproj(pt[0], pt[1]) for pt in points_2d])
-        if add_noise:
-            try:
-                points_3d, self.sm_noise, L = tools.points_with_noise(points_3d,
-                        only_z=True, max_rng=self._shape_model_rng)
-            except np.linalg.linalg.LinAlgError as e:
-                print('%s, points_3d.shape:%s'%(e,points_3d.shape))
-        
+        points_3d = np.array([invproj(pt[0], pt[1]) for pt in points_2d], dtype='float32')
         return points_3d
-    
     
     def _set_sc_from_ast_rot_and_trans(self, rvec, tvec, discretization_err_q, rotate_sc=False):
         sm = self.system_model
@@ -448,7 +457,7 @@ class KeypointAlgo(AlgorithmBase):
         
         sm.spacecraft_pos = new_sc_pos
         
-        err_q = discretization_err_q or np.quaternion(1,0,0,0)
+        err_q = discretization_err_q or np.quaternion(1, 0, 0, 0)
         if rotate_sc:
             sc2cv_q = sm.frm_conv_q(sm.SPACECRAFT_FRAME, sm.OPENCV_FRAME)
             sc_delta_q = err_q * sc2cv_q * cv_cam_delta_q.conj() * sc2cv_q.conj()
@@ -462,3 +471,74 @@ class KeypointAlgo(AlgorithmBase):
             
             err_corr_q = sc_q * err_q.conj() * sc_q.conj()
             sm.rotate_asteroid(err_corr_q * ast_delta_q)
+
+    def _query_fdb(self, feat):
+        self._ensure_fdb_loaded(feat)
+
+        sc_ast_q, _ = self.system_model.gl_sc_asteroid_rel_q()
+        light_v, _ = self.system_model.gl_light_rel_dir()
+
+        sc_ast_lat, sc_ast_lon, sc_ast_roll = tools.q_to_ypr(sc_ast_q)
+        # sc_ast_lat, sc_ast_lon = tools.render_q_to_fdb_relrot(sc_ast_q)
+
+        c_light_v = tools.q_times_v(tools.ypr_to_q(0, sc_ast_lon, 0).conj(), light_v)
+        light_lat, light_lon, _ = tools.cartesian2spherical(*c_light_v)
+        # light_lat, light_lon = tools.render_light_to_fdb_light(light_v)
+
+        sc = self._closest_scene(sc_ast_lat, sc_ast_roll, light_lat, light_lon)
+        ref_desc, ref_kp_3d = self._fdb[sc[4]][sc[5]]
+
+        self.timer.stop()
+
+        # sc = (sc_ast_lat, sc_ast_roll, light_lat, light_lon, None, None)
+
+        # construct necessary parts of ref_kp for plotting
+        # render feature db scene for plotting
+        pos = (0, 0, -MIN_MED_DISTANCE)
+        ref_kp = [cv2.KeyPoint(*tools.calc_img_xy(x, -y, -z+pos[2], CAMERA_WIDTH, CAMERA_HEIGHT), 1) for x, y, z in ref_kp_3d]
+
+        qfin = tools.ypr_to_q(sc[0], 0, sc[1])
+        # qfin = tools.fdb_relrot_to_render_q(sc[0], sc[1])
+
+        light_v = tools.spherical2cartesian(sc[2], sc[3], 1)
+        # light_v = tools.fdb_light_to_render_light(sc[2], sc[3])
+
+        ref_img = self.render_engine.render(self.obj_idx, pos, qfin, light_v)
+        ref_img = cv2.cvtColor(ref_img, cv2.COLOR_RGB2GRAY)
+
+        self.timer.start()
+        return ref_desc, ref_kp_3d, ref_kp, ref_img
+
+    def _fdb_fname(self, feat):
+        return os.path.join(CACHE_DIR, 'fdb_%s_w%d_m%d_t%d.pickle'%(
+            feat,
+            VIEW_WIDTH,
+            KeypointAlgo.FDB_MAX_MEM/1024,
+            10*math.degrees(KeypointAlgo.FDB_TOL)
+        ))
+
+    def _ensure_fdb_loaded(self, feat):
+        if self._fdb is None or self._fdb_feat != feat:
+            fname = self._fdb_fname(feat)
+            try:
+                with open(fname, 'rb') as fh:
+                    self._fdb_scenes, self._fdb = pickle.load(fh)
+            except (FileNotFoundError, EOFError):
+                assert False, 'Couldn\'t find feature db file %s'%fname
+
+                from algo.fdbgen import FeatureDatabaseGenerator
+                fdbgen = FeatureDatabaseGenerator(self.system_model, self.render_engine, self.obj_idx)
+                self._fdb_scenes, self._fdb = fdbgen.generate_fdb(feat, save_file=fname)
+            self._fdb_feat = feat
+
+    def _closest_scene(self, sc_ast_lat, sc_ast_lon, light_lat, light_lon):
+        # find "closest" point from self._fdb_scenes
+
+        # TODO: take into account that for lon: -pi == pi
+        val, idx = tools.find_nearest_arr(
+            np.array(self._fdb_scenes)[:, :4],
+            np.array((sc_ast_lat, sc_ast_lon, light_lat, light_lon)),
+            ord=2
+        )
+
+        return self._fdb_scenes[idx]

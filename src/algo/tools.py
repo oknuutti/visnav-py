@@ -1,9 +1,11 @@
 
 import math
 import time
+from functools import lru_cache
 
 import numpy as np
 import quaternion
+import sys
 from astropy.coordinates import SkyCoord
 
 from settings import *
@@ -57,6 +59,7 @@ def intrinsic_camera_mx(w=CAMERA_WIDTH, h=CAMERA_HEIGHT, legacy=True):
                     [0, 0, 1]], dtype = "float")
 
 
+@lru_cache(maxsize=None)
 def inv_intrinsic_camera_mx(w=CAMERA_WIDTH, h=CAMERA_HEIGHT, legacy=True):
     return np.linalg.inv(intrinsic_camera_mx(w, h, legacy=legacy))
 
@@ -178,7 +181,7 @@ def angleaxis_to_q(rv):
         v = normalize_v(np.array(rv[1:]))
     elif len(rv)==3:
         theta = math.sqrt(sum(x**2 for x in rv))
-        v = np.array(rv)/theta
+        v = np.array(rv) / (1 if theta == 0 else theta)
     else:
         raise Exception('Invalid angle-axis vector: %s'%(rv,))
     
@@ -267,10 +270,50 @@ def solar_elongation(ast_v, sc_q):
 
     return elong, direc
 
-
 def find_nearest(array, value):
     idx = (np.abs(array-value)).argmin()
-    return array[idx]
+    return array[idx], idx
+
+def find_nearest_arr(array, value, ord=None):
+    idx = np.linalg.norm(array-value, ord=ord, axis=1).argmin()
+    return array[idx], idx
+
+def find_nearest_n(array, value, r, ord=None):
+    d = np.linalg.norm(array - value, ord=ord, axis=1)
+    idxs = np.where(d < r)
+    return idxs[0]
+
+def cartesian2spherical(x, y, z):
+    r = math.sqrt(x**2 + y**2 + z**2)
+    theta = math.acos(z/r)
+    phi = math.atan2(y, x)
+    lat = math.pi/2 - theta
+    lon = phi
+    return np.array([lat, lon, r])
+
+
+def spherical2cartesian(lat, lon, r):
+    theta = math.pi/2 - lat
+    phi = lon
+    x = r * math.sin(theta) * math.cos(phi)
+    y = r * math.sin(theta) * math.sin(phi)
+    z = r * math.cos(theta)
+    return np.array([x, y, z])
+
+
+def discretize_v(v, tol):
+    """
+    simulate feature database by giving closest light direction with given tolerance
+    """
+
+    lat, lon, r = cartesian2spherical(*v)
+
+    dblat, dblon = bf_lat_lon(tol)
+    lat, idx1 = find_nearest(dblat, lat)
+    lon, idx2 = find_nearest(dblon, lon)
+
+    ret = spherical2cartesian(lat, lon, r)
+    return ret
 
 
 def discretize_q(q, tol):
@@ -282,19 +325,47 @@ def discretize_q(q, tol):
     lat, lon, roll = q_to_ypr(q.conj())
     
     dblat, dblon = bf_lat_lon(tol)
-    nlat = find_nearest(dblat, lat)
-    nlon = find_nearest(dblon, lon)
+    nlat, idx1 = find_nearest(dblat, lat)
+    nlon, idx2 = find_nearest(dblon, lon)
     
     nq0 = ypr_to_q(nlat, nlon, 0).conj()
     return nq0
     
 
-def bf_lat_lon(tol):
+def bf_lat_lon(tol, lat_range=(-math.pi/2, math.pi/2)):
     # tol**2 == (step/2)**2 + (step/2)**2   -- 7deg is quite nice in terms of len(lon)*len(lat) == 1260
     step = math.sqrt(2)*tol
-    lat_steps = np.linspace(-math.pi/2, math.pi/2, num=math.ceil(math.pi/step), endpoint=False)[1:]
+    lat_steps = np.linspace(*lat_range, num=math.ceil((lat_range[1] - lat_range[0])/step), endpoint=False)[1:]
     lon_steps = np.linspace(-math.pi, math.pi, num=math.ceil(2*math.pi/step), endpoint=False)
     return lat_steps, lon_steps
+
+def bf2_lat_lon(tol, lat_range=(-math.pi/2, math.pi/2)):
+    # tol**2 == (step/2)**2 + (step/2)**2   -- 7deg is quite nice in terms of len(lon)*len(lat) == 1260
+    step = math.sqrt(2)*tol
+    lat_steps = np.linspace(*lat_range, num=math.ceil((lat_range[1] - lat_range[0])/step), endpoint=False)[1:]
+
+    # similar to https://www.cmu.edu/biolphys/deserno/pdf/sphere_equi.pdf
+    points = []
+    for lat in lat_steps:
+        Mphi = math.ceil(2*math.pi*math.cos(lat)/step)
+        lon_steps = np.linspace(-math.pi, math.pi, num=Mphi, endpoint=False)
+        points.extend(zip([lat]*len(lon_steps), lon_steps))
+
+    return points
+
+def fdb_relrot_to_render_q(sc_ast_lat, sc_ast_lon):
+    return ypr_to_q(sc_ast_lat, sc_ast_lon, 0).conj()
+
+def render_q_to_fdb_relrot(qfin):
+    sc_ast_lat, sc_ast_lon, roll = q_to_ypr(qfin.conj())
+    return sc_ast_lat, sc_ast_lon
+
+def fdb_light_to_render_light(light_lat, light_lon):
+    return spherical2cartesian(light_lat, light_lon, 1)
+
+def render_light_to_fdb_light(light_v):
+    light_lat, light_lon, r = cartesian2spherical(*light_v)
+    return light_lat, light_lon
 
 
 def mv_normal(mean, cov=None, L=None, size=None):
@@ -446,7 +517,12 @@ def points_with_noise(points, support=None, L=None, len_sc=SHAPE_MODEL_NOISE_LEN
     return noisy_points, np.mean(devs), L
 
 
-def interp2(array, x, y, max_val=None, max_dist=10):
+def foreground_idxs(array, max_val=None):
+    iy, ix = np.where(array < max_val)
+    idxs = np.concatenate(((iy,), (ix,)), axis=0).T
+    return idxs
+
+def interp2(array, x, y, max_val=None, max_dist=30, idxs=None):
     assert y<array.shape[0] and x<array.shape[1], 'out of bounds %s: %s'%(array.shape, (y, x))
     
     v = array[int(y):int(y)+2, int(x):int(x)+2]
@@ -469,15 +545,16 @@ def interp2(array, x, y, max_val=None, max_dist=10):
         val = np.sum(w.reshape(1,-1)[idx] * v.reshape(1,-1)[idx]) / w_sum
     else:
         # no foreground values in 2x2 matrix, find nearest foreground value
-        iy, ix = np.where(array < max_val)
-        idxs = np.concatenate(((iy,),(ix,)), axis=0).T
+        if idxs is None:
+            idxs = foreground_idxs(array, max_val)
+
         fallback = len(idxs)==0
         if not fallback:
-            dist = np.sum((idxs - np.array((y,x)).reshape(1,2))**2, axis=1)
+            dist = np.linalg.norm(idxs - np.array((y, x)), axis=1)
             i = np.argmin(dist)
-            val = array[idxs[i,0],idxs[i,1]]
+            val = array[idxs[i, 0], idxs[i, 1]]
             #print('\n%s, %s, %s, %s, %s, %s, %s'%(v, x,y,dist[i],idxs[i,1],idxs[i,0],val))
-            fallback = dist[i] > max_dist**2
+            fallback = dist[i] > max_dist
             
         if fallback:
             val = np.sum(w*v)/np.sum(w)

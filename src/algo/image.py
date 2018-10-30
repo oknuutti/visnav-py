@@ -55,10 +55,8 @@ class ImageProc():
     @staticmethod
     def apply_point_spread_fn(img, ratio):
         # ratio is how many % of power on central pixel
-        ratio=.2
         sd = 1/math.sqrt(2*math.pi*ratio)
         kernel = ImageProc.gkern2d(5, sd)
-        print('kernel: %s'%(kernel[2,2],))
         img = signal.convolve2d(img, kernel, mode='same')
         return img
 
@@ -73,8 +71,8 @@ class ImageProc():
         return kernel / np.sum(kernel)
 
     @staticmethod
-    def add_ccd_noise(img, rate=8):
-        img += np.random.poisson(rate, img.shape)
+    def add_ccd_noise(img, mean=7, sd=2):
+        img += np.random.normal(mean, sd, img.shape)
         return img
 
     @staticmethod

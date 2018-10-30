@@ -38,7 +38,7 @@ lowe 0.85, min 10 inliers, solvepnp_ap3p, ransac err 10.0
 lowe 0.85, min 10 inliers, solvepnp_ap3p, ransac err 12.0
 2018-10-03 11:51:30 - t: 31.0min (448ms), Le: 2.976 m/km (0.82, 1.46, 6.72), De: 76.148 m/km (33.34, 48.01, 106.25), Se: 7.917 m/km (2.24, 3.33, 15.28), Re: 9.343° (2.48, 3.84, 17.46), fail: 7.85%
 
-lowe 0.85, min 10 inliers, solvepnp_ap3p, ransac err 16.0
+*lowe 0.85, min 10 inliers, solvepnp_ap3p, ransac err 16.0
 2018-10-03 12:40:09 - t: 31.0min (442ms), Le: 2.317 m/km (0.77, 1.52, 6.73), De: 57.152 m/km (33.33, 47.36, 103.26), Se: 5.942 m/km (2.26, 3.23, 16.52), Re: 9.155° (2.43, 3.73, 16.13), fail: 6.52%
 
 lowe 0.85, min 10 inliers, solvepnp_ap3p, ransac err 20.0
@@ -64,3 +64,49 @@ mixed algo, lowe 0.85, min 10 inliers, solvepnp_ap3p, ransac err 16.0, 400:1000
 
 hi noise, lowe 0.85, min 10 inliers, solvepnp_ap3p, ransac err 16.0
 2018-10-04 21:17:57 - t: 35.3min (557ms), Le: 6.068 m/km (1.20, 1.98, 26.27), De: 180.029 m/km (58.46, 84.95, 675.50), Se: 15.911 m/km (3.50, 5.29, 87.52), Re: 18.517° (4.60, 7.19, 89.79), fail: 21.48%
+
+
+orb+smn, max ~6000 features, err tol=16, min feat=10, lowe=0.85
+189ms	2.6%	2.68m/km	22.22m/km
+
+/orb+smn, max 3000 features, err tol=16, min feat=10, lowe=0.85
+159ms	2.7%	2.74m/km	21.54m/km
+
+orb+smn, max ~6000 features, err tol=12, min feat=10, lowe=0.85
+159ms	4.3%	2.64m/km	18.14m/km
+
+orb+smn, max 6000 features, err tol=16, min feat=12, lowe=0.85
+194ms	5.1%	2.62m/km	18.51m/km
+
+orb+smn, max 6000 features, err tol=16, min feat=10, lowe=0.825
+194ms 	9.0%	2.57m/km	15.52m/km
+
+orb+smn, max 6000 features, err tol=14, min feat=10, lowe=0.83
+195ms	8.5% 	2.54		15.23
+
+orb+smn, max 6000 features, err tol=14, min feat=11, lowe=0.835
+204ms	9.1%	2.58		14.27
+
+orb+smn, max 4000 features, err tol=12, min feat=10, lowe=0.85
+180		3.6%	2.69		18.43
+
+
+==
+orb+smn, max 4000 features, err tol=16, min feat=10, lowe=0.85
+2018-10-10 10:18:38 - t: 40.2min (161ms), Le: 4.031 m/km (0.85, 1.40, 17.49), De: 159.291 m/km (33.94, 54.47, 756.01), Se: 6.235 m/km (1.72, 2.55, 22.73), Re: 24.447° (2.68, 4.65, 176.29), fail: 2.90%
+
+orb+smn, max 4000 features, err tol=16, min feat=10, lowe=0.8
+2018-10-10 08:29:16 - t: 39.5min (176ms), Le: 2.302 m/km (0.83, 1.24, 6.68), De: 80.468 m/km (32.27, 47.86, 165.64), Se: 4.157 m/km (1.75, 2.57, 12.97), Re: 16.017° (2.70, 4.21, 83.90), fail: 17.80%
+
+orb+smn, max 4000 features, err tol=8, min feat=10, lowe=0.85
+2018-10-10 12:03:03 - t: 39.2min (190ms), Le: 2.287 m/km (0.84, 1.28, 8.04), De: 81.482 m/km (31.54, 48.96, 307.18), Se: 4.308 m/km (1.65, 2.41, 15.15), Re: 18.611° (2.65, 4.01, 131.56), fail: 8.60%
+
+akaze+smn, max 4000 features, err tol=8, min feat=10, lowe=0.85
+2018-10-10 13:30:23 - t: 63.7min (613ms), Le: 1.066 m/km (0.75, 1.09, 3.10), De: 38.656 m/km (29.39, 42.83, 100.65), Se: 1.959 m/km (1.49, 2.07, 4.90), Re: 5.978° (2.58, 3.53, 9.56), fail: 14.10%
+
+akaze+smn, max 4000 features, err tol=16, min feat=10, lowe=0.85
+2018-10-11 12:29:44 - t: 42.8min (401ms), Le: 1.862 m/km (0.77, 1.16, 4.14), De: 65.090 m/km (31.18, 45.96, 135.26), Se: 3.319 m/km (1.61, 2.20, 8.10), Re: 11.582° (2.65, 3.95, 24.66), fail: 9.80%
+
+akaze+fdb+smn, max 4000 features, err tol=8, min feat=10, lowe=0.85
+2018-10-11 15:30:04 - t: 16.9min (176ms), Le: 0.343 m/km (0.20, 0.31, 1.14), De: 7.948 m/km (4.59, 7.13, 25.68), Se: 0.703 m/km (0.44, 0.65, 2.23), Re: 3.404° (0.86, 1.33, 4.87), fail: 5.30%
+

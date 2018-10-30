@@ -3,8 +3,10 @@ import os
 
 SCRIPT_DIR = os.path.dirname(__file__)
 BASE_DIR = os.path.join(SCRIPT_DIR, '..')
-LOG_DIR = os.path.join(SCRIPT_DIR, '../logs/')
-CACHE_DIR = os.path.join(SCRIPT_DIR, '../cache/')
+#LOG_DIR = os.path.join(SCRIPT_DIR, '../logs/')
+LOG_DIR = 'd:/projects/visnav/logs/'
+#CACHE_DIR = os.path.join(SCRIPT_DIR, '../cache/')
+CACHE_DIR = 'd:/projects/visnav/cache/'
 
 CAMERA_X_FOV = 5            # in deg
 CAMERA_Y_FOV = 5            # in deg
@@ -56,8 +58,8 @@ SHOW_TARGET_IMAGE = True
 TARGET_IMAGE_FILE = os.path.join(IMAGE_DB_PATH, TARGET_IMAGE+'_P.png')
 TARGET_IMAGE_META_FILE = os.path.join(IMAGE_DB_PATH, TARGET_IMAGE+'.LBL')
 TARGET_MODEL_FILE = os.path.join(SCRIPT_DIR, '../data/CSHP_DV_130_01_XLRESb_00200.obj') # _XLRES_, _LORES_
-#TARGET_MODEL_FILE = os.path.join(SCRIPT_DIR, '../data/CSHP_DV_130_01_LORES_00200.obj') # _XLRES_, _LORES_
-HIRES_TARGET_MODEL_FILE = os.path.join(SCRIPT_DIR, '../data/CSHP_DV_130_01_HIRESb_00200.obj') # _XLRES_, _LORES_
+HIRES_TARGET_MODEL_FILE = os.path.join(SCRIPT_DIR, '../data/CSHP_DV_130_01_LORES_00200.obj') # _XLRES_, _LORES_
+#HIRES_TARGET_MODEL_FILE = os.path.join(SCRIPT_DIR, '../data/CSHP_DV_130_01_HIRESb_00200.obj') # _XLRES_, _LORES_
 #HIRES_TARGET_MODEL_FILE = os.path.join(SCRIPT_DIR, '../data/CSHP_DV_130_01_XLRESb_00200.obj') # _XLRES_, _LORES_
 #TARGET_MODEL_FILE = os.path.join(SCRIPT_DIR, '../data/test-ball-hires.obj')
 #TARGET_MODEL_FILE = os.path.join(SCRIPT_DIR, '../data/test-ball.obj')
@@ -78,6 +80,6 @@ PROFILE_OUT_FILE = os.path.join(SCRIPT_DIR, '../profile.out')
 START_IN_THREAD = False
 USE_IMG_LABEL_FOR_SC_POS = True
 BATCH_MODE = False
-DEBUG = False
+DEBUG = True
 
 USE_ICRS = True # if true, use barycentric equatorial system, else heliocentric ecliptic

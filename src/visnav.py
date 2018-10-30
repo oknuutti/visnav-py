@@ -401,7 +401,7 @@ class GLWidget(QOpenGLWidget):
         rv = tools.q_to_angleaxis(qfin)
 
         # light direction
-        light = m.light_rel_dir(err_q)
+        light, _ = m.gl_light_rel_dir(err_q)
         
         res = (light, (x, y, z), (math.degrees(rv[0]),)+tuple(rv[1:]))
         return res

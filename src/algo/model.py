@@ -34,12 +34,12 @@ class Parameter():
     @range.setter
     def range(self, range):
         min_val, max_val = range
+        self._min_val = min_val
+        self._max_val = max_val
 
         # NOTE: need fine rtol as time is in seconds (e.g. 1407258438)
         if not np.isclose(self._min_val, min_val, rtol=1e-9) \
                 or not np.isclose(self._max_val, max_val, rtol=1e-9):
-            self._min_val = min_val
-            self._max_val = max_val
             if self.fire_change_events:
                 try:
                     self.change_callback(self._value, self._min_val, self._max_val)
@@ -66,12 +66,12 @@ class Parameter():
 
     @value.setter
     def value(self, value):
+        self._value = value
         if self.debug:
             print('o: %s, n: %s'%(self._value, value), flush=True)
 
         # NOTE: need fine rtol as time is in seconds (e.g. 1407258438)
         if not np.isclose(self._value, value, rtol=1e-9):
-            self._value = value
             if self.debug:
                 print('value set: %s'%self._value, flush=True)
             if self.fire_change_events:
@@ -126,9 +126,9 @@ class SystemModel():
     # from opencv cam frame (axis: +z, up: -y) to opengl (axis -z, up: +y)
     cv2gl_q = np.quaternion(0, 1, 0, 0)
     
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, shape_model=TARGET_MODEL_FILE, **kwargs):
         self.asteroid = Asteroid()
-        self.real_shape_model = objloader.ShapeModel(fname=TARGET_MODEL_FILE)
+        self.real_shape_model = objloader.ShapeModel(fname=shape_model)
         self.real_sc_ast_vertices = None
         
         # spacecraft position relative to asteroid, z towards spacecraft,
@@ -358,13 +358,27 @@ class SystemModel():
         return tools.q_times_mx(sc_ast_q, np.array(self.real_shape_model.vertices)) \
                 + tools.q_times_v(SystemModel.sc2gl_q, sc_pos)
     
-    def light_rel_dir(self, err_q=False):
+    def gl_light_rel_dir(self, err_q=False, discretize_tol=False):
         """ direction of light relative to spacecraft in opengl coords """
-        ast_v = tools.normalize_v(self.asteroid.position(self.time.value))
+        light_v, err_angle = self.light_rel_dir(err_q, discretize_tol)
+        return tools.q_times_v(SystemModel.sc2gl_q.conj(), light_v), err_angle
+
+    def light_rel_dir(self, err_q=False, discretize_tol=False):
+        """ direction of light relative to spacecraft in s/c coords """
+        light_v = tools.normalize_v(self.asteroid.position(self.time.value))
         sc_q = self.spacecraft_q()
-        err_q = (err_q or np.quaternion(1,0,0,0))
-        return tools.q_times_v(SystemModel.sc2gl_q.conj() * err_q.conj() * sc_q.conj(), ast_v)
-        
+        err_q = (err_q or np.quaternion(1, 0, 0, 0))
+
+        if discretize_tol:
+            ast_q = self.asteroid_q()
+            light_ast_v = tools.q_times_v(ast_q.conj(), light_v)
+            dlv = tools.discretize_v(light_ast_v, discretize_tol)
+            err_angle = tools.angle_between_v(light_ast_v, dlv)
+            light_v = tools.q_times_v(ast_q, dlv)
+
+        return tools.q_times_v(err_q.conj() * sc_q.conj(), light_v),\
+               err_angle if discretize_tol else False
+
     def solar_elongation(self, real=False):
         ast_v = self.asteroid.position(self.time.real_value if real else self.time.value)
         sc_q = self.real_spacecraft_q() if real else self.spacecraft_q()
@@ -393,8 +407,10 @@ class SystemModel():
         config = configparser.ConfigParser()
         filename = filename+('.lbl' if len(filename)<5 or filename[-4:]!='.lbl' else '')
         config.read(filename)
-        config.add_section('main')
-        config.add_section('real')
+        if not config.has_section('main'):
+            config.add_section('main')
+        if not config.has_section('real'):
+            config.add_section('real')
         
         for n, p in self.get_params(all=True):
             config.set('main', n, str(p.value))
@@ -472,7 +488,8 @@ class Asteroid():
         self.real_position = None
         
         # for cross section, assume spherical object and 2km radius
-        self.mean_cross_section = math.pi*2000**2
+        self.mean_radius = 2000
+        self.mean_cross_section = math.pi*self.mean_radius**2
         
         # epoch for orbital elements, 2010-Oct-22.0 TDB
         self.oe_epoch = Time(2455491.5, format='jd')
