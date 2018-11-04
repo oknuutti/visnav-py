@@ -29,7 +29,7 @@ class KeypointAlgo(AlgorithmBase):
         SURF: 64,
     }
     
-    FDB_MAX_MEM = 96*1024      # in bytes per scene, default 192kB
+    FDB_MAX_MEM = 192*1024      # in bytes per scene, default 192kB
     MAX_WORK_MEM = 512*1024     # in bytes, usable for both ref and scene features, default 512kB
     FDB_TOL = math.radians(10)   # features from db never more than 7 deg off
     
@@ -118,8 +118,8 @@ class KeypointAlgo(AlgorithmBase):
             self.timer.stop()
             sce = cv2.resize(orig_sce_img, ref_img.shape)
             cv2.imwrite(self.debug_filebase+'a.png', np.concatenate((sce, ref_img), axis=1))
-            cv2.imshow('compare', np.concatenate((sce, ref_img), axis=1))
-            cv2.waitKey()
+            # cv2.imshow('compare', np.concatenate((sce, ref_img), axis=1))
+            # cv2.waitKey()
             self.timer.start()
 
         # AKAZE, SIFT, SURF are truly scale invariant, couldnt get ORB to work as good
@@ -486,7 +486,8 @@ class KeypointAlgo(AlgorithmBase):
         # light_lat, light_lon = tools.render_light_to_fdb_light(light_v)
 
         sc = self._closest_scene(sc_ast_lat, sc_ast_roll, light_lat, light_lon)
-        ref_desc, ref_kp_3d = self._fdb[sc[4]][sc[5]]
+        ref_desc = self._fdb[0][sc[4], sc[5], self._fdb[3][sc[4], sc[5], :], :]
+        ref_kp_3d = self._fdb[2][sc[4], sc[5], self._fdb[3][sc[4], sc[5], :], :]
 
         self.timer.stop()
 
@@ -533,12 +534,11 @@ class KeypointAlgo(AlgorithmBase):
 
     def _closest_scene(self, sc_ast_lat, sc_ast_lon, light_lat, light_lon):
         # find "closest" point from self._fdb_scenes
-
-        # TODO: take into account that for lon: -pi == pi
         val, idx = tools.find_nearest_arr(
             np.array(self._fdb_scenes)[:, :4],
             np.array((sc_ast_lat, sc_ast_lon, light_lat, light_lon)),
-            ord=2
+            ord=2,
+            fun=tools.wrap_rads,
         )
 
         return self._fdb_scenes[idx]

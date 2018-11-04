@@ -17,10 +17,14 @@ class PositioningException(Exception):
 class Stopwatch:
     # from https://www.safaribooksonline.com/library/view/python-cookbook-3rd/9781449357337/ch13s13.html
     
-    def __init__(self, func=time.perf_counter):
-        self.elapsed = 0.0
+    def __init__(self, elapsed=0.0, func=time.perf_counter):
+        self._elapsed = elapsed
         self._func = func
         self._start = None
+
+    @property
+    def elapsed(self):
+        return self._elapsed + ((self._start - self._func()) if self.running else 0)
 
     def start(self):
         if self._start is not None:
@@ -31,11 +35,11 @@ class Stopwatch:
         if self._start is None:
             raise RuntimeError('Not started')
         end = self._func()
-        self.elapsed += end - self._start
+        self._elapsed += end - self._start
         self._start = None
         
     def reset(self):
-        self.elapsed = 0.0
+        self._elapsed = 0.0
 
     @property
     def running(self):
@@ -274,12 +278,14 @@ def find_nearest(array, value):
     idx = (np.abs(array-value)).argmin()
     return array[idx], idx
 
-def find_nearest_arr(array, value, ord=None):
-    idx = np.linalg.norm(array-value, ord=ord, axis=1).argmin()
+def find_nearest_arr(array, value, ord=None, fun=None):
+    diff = array - value
+    idx = np.linalg.norm(diff if fun is None else list(map(fun, diff)), ord=ord, axis=1).argmin()
     return array[idx], idx
 
-def find_nearest_n(array, value, r, ord=None):
-    d = np.linalg.norm(array - value, ord=ord, axis=1)
+def find_nearest_n(array, value, r, ord=None, fun=None):
+    diff = array - value
+    d = np.linalg.norm(diff if fun is None else list(map(fun, diff)), ord=ord, axis=1)
     idxs = np.where(d < r)
     return idxs[0]
 
