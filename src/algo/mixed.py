@@ -29,8 +29,8 @@ class MixedAlgo(AlgorithmBase):
                 centroid_result = self.system_model.real_spacecraft_pos
             #kwargs['init_z'] = centroid_result[2]
 
-            x_off, y_off = tools.calc_img_xy(*centroid_result)
-            kwargs['match_mask_params'] = (x_off-CAMERA_WIDTH/2, y_off-CAMERA_HEIGHT/2, centroid_result[2])
+            x_off, y_off = self._cam.calc_img_xy(*centroid_result)
+            kwargs['match_mask_params'] = (x_off-self._cam.width/2, y_off-self._cam.height/2, centroid_result[2])
 
         except PositioningException as e:
             if str(e) == 'No asteroid found':
@@ -42,7 +42,7 @@ class MixedAlgo(AlgorithmBase):
             self._keypoint.solve_pnp(sce_img, outfile, **kwargs)
             ok = True
         except PositioningException as e:
-            if centroid_result and kwargs.get('centroid_fallback', False) and centroid_result[2] < -MIN_MED_DISTANCE:
+            if centroid_result and kwargs.get('centroid_fallback', False) and centroid_result[2] < -self.system_model.min_med_distance:
                 self.system_model.spacecraft_rot = sc_r
                 self.system_model.spacecraft_pos = centroid_result
                 if DEBUG:

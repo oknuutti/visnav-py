@@ -1,5 +1,7 @@
 import sys
 import math
+from abc import ABC
+from functools import lru_cache
 
 import numpy as np
 import quaternion # adds to numpy
@@ -25,7 +27,7 @@ class Parameter():
         self.real_value = None
         self.change_callback = None
         self.fire_change_events = True
-        self.debug=False
+        self.debug = False
     
     @property
     def range(self):
@@ -109,7 +111,7 @@ class Parameter():
         )
     
 
-class SystemModel():
+class SystemModel(ABC):
     (
         OPENGL_FRAME,
         SPACECRAFT_FRAME,
@@ -126,11 +128,24 @@ class SystemModel():
     # from opencv cam frame (axis: +z, up: -y) to opengl (axis -z, up: +y)
     cv2gl_q = np.quaternion(0, 1, 0, 0)
     
-    def __init__(self, *args, shape_model=TARGET_MODEL_FILE, **kwargs):
-        self.asteroid = Asteroid()
-        self.real_shape_model = objloader.ShapeModel(fname=shape_model)
-        self.real_sc_ast_vertices = None
-        
+    def __init__(self, asteroid, camera, limits, *args, **kwargs):
+        super(SystemModel, self).__init__()
+
+        self.asteroid = asteroid
+        self.cam = camera
+
+        # mission limits
+        (
+            self.min_distance,      # min_distance in km
+            self.min_med_distance,  # min_med_distance in km
+            self.max_med_distance,  # max_med_distance in km #640
+            self.max_distance,      # max_distance in km
+            self.min_elong,         # min_elong in deg
+            self.min_time           # min time instant as astropy.time.Time
+        ) = limits
+
+        self.mission_id = None      # overridden by particular missions
+
         # spacecraft position relative to asteroid, z towards spacecraft,
         #   x towards right when looking out from s/c camera, y up
         self.x_off = Parameter(-4, 4, estimate=False)
@@ -138,7 +153,7 @@ class SystemModel():
         
         # whole view: 1.65km/tan(2.5deg) = 38km
         # can span ~30px: 1.65km/tan(2.5deg * 30/1024) = 1290km
-        self.z_off = Parameter(-MAX_DISTANCE, -MIN_DISTANCE, def_val=-MIN_MED_DISTANCE, is_gl_z=True) # was 120, 220
+        self.z_off = Parameter(-self.max_distance, -self.min_distance, def_val=-self.min_med_distance, is_gl_z=True) # was 120, 220
 
         # spacecraft orientation relative to stars
         self.x_rot = Parameter(-90, 90, estimate=False) # axis latitude
@@ -153,8 +168,8 @@ class SystemModel():
 
         # time in seconds since 1970-01-01 00:00:00
         self.time = Parameter(
-            Time('2015-01-01 00:00:00').unix,
-            Time('2015-01-01 00:00:00').unix + self.asteroid.rotation_period,
+            self.min_time.unix,
+            self.min_time.unix + self.asteroid.rotation_period,
             estimate=False
         )
         
@@ -165,7 +180,7 @@ class SystemModel():
         # set default values to params
         for n, p in self.get_params():
             p.value = p.def_val
-        
+
     def get_params(self, all=False):
         return (
             (n, getattr(self, n))
@@ -297,14 +312,13 @@ class SystemModel():
     def gl_sc_asteroid_rel_q(self, discretize_tol=False):
         """ rotation of asteroid relative to spacecraft in opengl coords """
         self.update_asteroid_model()
-        sc_ast_rel_q = self.sc_asteroid_rel_q() # why cant have: * SystemModel.sc2gl_q ??
+        sc_ast_rel_q = SystemModel.sc2gl_q.conj() * self.sc_asteroid_rel_q()
 
         if discretize_tol:
-            qq = tools.discretize_q(sc_ast_rel_q, discretize_tol)
-            err_q = sc_ast_rel_q*qq.conj()
+            qq, _ = tools.discretize_q(sc_ast_rel_q, discretize_tol)
+            err_q = sc_ast_rel_q * qq.conj()
             sc_ast_rel_q = qq
         
-        sc_ast_rel_q = SystemModel.sc2gl_q.conj()*sc_ast_rel_q
         if not BATCH_MODE and DEBUG:
             print('asteroid x-axis: %s'%tools.q_times_v(sc_ast_rel_q, np.array([1, 0, 0])))
         
@@ -349,19 +363,29 @@ class SystemModel():
     
     def sc_asteroid_vertices(self, real=False):
         """ asteroid vertices rotated and translated to spacecraft frame """
-        if self.real_shape_model is None:
+        if self.asteroid.real_shape_model is None:
             return None
 
         sc_ast_q = self.real_sc_asteroid_rel_q() if real else self.sc_asteroid_rel_q()
         sc_pos = self.real_spacecraft_pos if real else self.spacecraft_pos
         
-        return tools.q_times_mx(sc_ast_q, np.array(self.real_shape_model.vertices)) \
+        return tools.q_times_mx(sc_ast_q, np.array(self.asteroid.real_shape_model.vertices)) \
                 + tools.q_times_v(SystemModel.sc2gl_q, sc_pos)
     
     def gl_light_rel_dir(self, err_q=False, discretize_tol=False):
         """ direction of light relative to spacecraft in opengl coords """
-        light_v, err_angle = self.light_rel_dir(err_q, discretize_tol)
-        return tools.q_times_v(SystemModel.sc2gl_q.conj(), light_v), err_angle
+        light_v, err_angle = self.light_rel_dir(err_q=False, discretize_tol=False)
+
+        err_q = (err_q or np.quaternion(1, 0, 0, 0))
+        light_gl_v = tools.q_times_v(err_q.conj() * SystemModel.sc2gl_q.conj(), light_v)
+
+        # new way to discretize light, consistent with real fdb inplementation
+        if discretize_tol:
+            dlv, _ = tools.discretize_v(light_gl_v, discretize_tol, lat_range=(-math.pi/2, math.radians(90 - self.min_elong)))
+            err_angle = tools.angle_between_v(light_gl_v, dlv)
+            light_gl_v = dlv
+
+        return light_gl_v, err_angle
 
     def light_rel_dir(self, err_q=False, discretize_tol=False):
         """ direction of light relative to spacecraft in s/c coords """
@@ -369,10 +393,11 @@ class SystemModel():
         sc_q = self.spacecraft_q()
         err_q = (err_q or np.quaternion(1, 0, 0, 0))
 
+        # old, better way to discretize light, based on asteroid rotation axis, now not in use
         if discretize_tol:
             ast_q = self.asteroid_q()
             light_ast_v = tools.q_times_v(ast_q.conj(), light_v)
-            dlv = tools.discretize_v(light_ast_v, discretize_tol)
+            dlv, _ = tools.discretize_v(light_ast_v, discretize_tol)
             err_angle = tools.angle_between_v(light_ast_v, dlv)
             light_v = tools.q_times_v(ast_q, dlv)
 
@@ -456,7 +481,7 @@ class SystemModel():
         
         if sc_ast_vertices:
             # get real relative position of asteroid model vertices
-            self.real_sc_ast_vertices = self.sc_asteroid_vertices(real=True)
+            self.asteroid.real_sc_ast_vertices = self.sc_asteroid_vertices(real=True)
     
     @staticmethod
     def frm_conv_q(fsrc, fdst):
@@ -481,136 +506,193 @@ class SystemModel():
         )
         
 
-class Asteroid():
-    def __init__(self, *args, **kwargs):
-        self.name = '67P/Churyumov-Gerasimenko'
-        
-        self.real_position = None
-        
-        # for cross section, assume spherical object and 2km radius
-        self.mean_radius = 2000
-        self.mean_cross_section = math.pi*self.mean_radius**2
-        
-        # epoch for orbital elements, 2010-Oct-22.0 TDB
-        self.oe_epoch = Time(2455491.5, format='jd')
+class Camera:
+    def __init__(self, width, height, x_fov, y_fov):
+        self.width = width      # in pixels
+        self.height = height    # in pixels
+        self.x_fov = x_fov      # in deg
+        self.y_fov = y_fov      # in deg
 
-        # orbital elements (from https://ssd.jpl.nasa.gov/sbdb.cgi)
-        # reference: JPL K154/1 (heliocentric ecliptic J2000)
-        self.eccentricity = .6405823233437267
-        self.semimajor_axis = 3.464737502510219 * const.au
-        self.inclination = math.radians(7.043680712713979)
-        self.longitude_of_ascending_node = math.radians(50.18004588418096)
-        self.argument_of_periapsis = math.radians(12.69446409956478)
-        self.mean_anomaly = math.radians(91.76808585530111)
+    def intrinsic_camera_mx(self, legacy=True):
+        return Camera._intrinsic_camera_mx(self.width, self.height, self.x_fov, self.y_fov, legacy=legacy)
 
-        #other
-        self.aphelion = 5.684187101644357 * const.au
-        self.perihelion = 1.245287903376082 * const.au
-        self.orbital_period = 2355.612944885578*24*3600 # seconds
-        #self.true_anomaly = math.radians(145.5260853202137 ??)
-  
+    def inv_intrinsic_camera_mx(self, legacy=True):
+        return Camera._inv_intrinsic_camera_mx(self.width, self.height, self.x_fov, self.y_fov, legacy=legacy)
+
+    @staticmethod
+    def _intrinsic_camera_mx(width, height, x_fov, y_fov, legacy=True):
+        x = width/2
+        y = height/2
+        fl_x = x / math.tan(math.radians(x_fov)/2)
+        fl_y = y / math.tan(math.radians(y_fov)/2)
+        return np.array([[fl_x * (1 if legacy else -1), 0, x],
+                        [0, fl_y, y],
+                        [0, 0, 1]], dtype="float")
+
+    @staticmethod
+    @lru_cache(maxsize=None)
+    def _inv_intrinsic_camera_mx(w, h, xfov, yfov, legacy=True):
+        return np.linalg.inv(Camera._intrinsic_camera_mx(w, h, xfov, yfov, legacy=legacy))
+
+    def calc_xy(self, xi, yi, z_off):
+        """ xi and yi are unaltered image coordinates, z_off is usually negative  """
+
+        xh = xi + 0.5
+        # yh = height - (yi+0.5)
+        yh = yi + 0.5
+        # zh = -z_off
+
+        if True:
+            iK = self.inv_intrinsic_camera_mx(legacy=False)
+            x_off, y_off, _ = iK.dot(np.array([xh, yh, 1])) * z_off
+
+        else:
+            cx = xh / self.width - 0.5
+            cy = yh / self.height - 0.5
+
+            h_angle = cx * math.radians(self.x_fov)
+            x_off = zh * math.tan(h_angle)
+
+            v_angle = cy * math.radians(self.y_fov)
+            y_off = zh * math.tan(v_angle)
+
+        # print('%.3f~%.3f, %.3f~%.3f, %.3f~%.3f'%(ax, x_off, ay, y_off, az, z_off))
+        return x_off, y_off
+
+    def calc_img_xy(self, x, y, z):
+        """ x, y, z are in camera frame (z typically negative),  return image coordinates  """
+        K = self.intrinsic_camera_mx(legacy=False)
+        ix, iy, iw = K.dot(np.array([x, y, z]))
+        return ix / iw, iy / iw
+
+
+class Asteroid(ABC):
+    def __init__(self, *args, shape_model=None, **kwargs):
+        super(Asteroid, self).__init__()
+
+        self.name = None                # (NOT IN USE)
+
+        self.image_db_path = None
+        self.target_model_file = None
+        self.hires_target_model_file = None
+
+        # shape model related
+        self.real_shape_model = None    # loaded at overriding class __init__
+        self.real_sc_ast_vertices = None
+
+        self.real_position = None       # transient, loaded from image metadata at iotools.lblloader
+        
+        # for cross section (probably not in (good) use)
+        self.mean_radius = None         # in meters
+        self.mean_cross_section = None  # in m2
+        
+        # epoch for orbital elements
+        self.oe_epoch = None            # as astropy.time.Time
+
+        # orbital elements
+        self.eccentricity = None                    # unitless
+        self.semimajor_axis = None                  # with astropy.units
+        self.inclination = None                     # in rads
+        self.longitude_of_ascending_node = None     # in rads
+        self.argument_of_periapsis = None           # in rads
+        self.mean_anomaly = None                    # in rads
+
+        # other
+        self.aphelion = None        # in rads
+        self.perihelion = None      # in rads
+        self.orbital_period = None  # in seconds
+
         # rotation period
-        # from http://www.aanda.org/articles/aa/full_html/2015/11/aa26349-15/aa26349-15.html
-        #   - 12.4043h (2014 aug-oct)
-        # from http://www.sciencedirect.com/science/article/pii/S0019103516301385?via%3Dihub
-        #   - 12.4304h (19 May 2015)
-        #   - 12.305h (10 Aug 2015)
-        self.rot_epoch = Time('J2000')
+        self.rot_epoch = None           # as astropy.time.Time
+        self.rotation_velocity = None   # in rad/s
+        self.rotation_pm = None         # in rads
+        self.axis_latitude = None       # in rads
+        self.axis_longitude = None      # in rads
 
-        #self.rotation_velocity = 2*math.pi/12.4043/3600 # prograde, in rad/s
-        # --- above seems incorrect based on the pics, own estimate
-        # based on ROS_CAM1_20150720T165249 - ROS_CAM1_20150721T075733
-        if False:
-            self.rotation_velocity = 2*math.pi/12.4043/3600
-        else:
-            # 2014-08-01 - 2014-09-02: 0.4/25
-            self.rotation_velocity = 2*math.pi/12.4043/3600 -math.radians(0.4/25)/24/3600  #0.3754
-       
-        # for rotation phase shift, will use as equatorial longitude of
-        #   asteroid zero longitude (cheops) at J2000, based on 20150720T165249
-        #   papar had 114deg in it
-        # for precession cone center (J2000), paper had 69.54, 64.11
-        if False:
-            tlat, tlon, tpm = 69.54, 64.11, 114
-        else:
-            # pm: 2014-08-01 - 2014-09-02: -9; 2015-06-13: -143
-            tlat, tlon, tpm = 64.11, 69.54, -9
-        
-        self.rotation_pm = math.radians(tpm)
-        self.axis_latitude, self.axis_longitude = \
-                (math.radians(tlat), math.radians(tlon)) if USE_ICRS else \
-                tools.equatorial_to_ecliptic(tlat*units.deg, tlon*units.deg)
-        
-        self.precession_cone_radius = math.radians(0.14)    # other paper 0.15+-0.03 deg
-        self.precession_period = 10.7*24*3600  # other paper had 11.5+-0.5 days
-        self.precession_pm = math.radians(0.288)
-        
+        self.precession_cone_radius = None      # in rads       (NOT IN USE)
+        self.precession_period = None           # in seconds    (NOT IN USE)
+        self.precession_pm = None               # in rads       (NOT IN USE)
+
+        # default values of axis that gets changed during monte-carlo simulation at testloop.py
+        self.def_rotation_pm = None
+        self.def_axis_latitude = None
+        self.def_axis_longitude = None
+
+    def set_defaults(self):
+        self.def_rotation_pm = self.rotation_pm          # in rads
+        self.def_axis_latitude = self.axis_latitude      # in rads
+        self.def_axis_longitude = self.axis_longitude    # in rads
+
+    def reset_to_defaults(self):
+        self.rotation_pm = self.def_rotation_pm          # in rads
+        self.axis_latitude = self.def_axis_latitude      # in rads
+        self.axis_longitude = self.def_axis_longitude    # in rads
+
     @property
     def rotation_period(self):
-        return 2*math.pi/self.rotation_velocity
-    
+        return 2 * math.pi / self.rotation_velocity
+
     def rotation_theta(self, timestamp):
         dt = (Time(timestamp, format='unix') - self.rot_epoch).sec
-        theta = (self.rotation_pm + self.rotation_velocity*dt) % (2*math.pi)
+        theta = (self.rotation_pm + self.rotation_velocity * dt) % (2 * math.pi)
         return theta
-        
+
     def rotation_q(self, timestamp):
         theta = self.rotation_theta(timestamp)
-        
+
         # TODO: use precession info
-        
+
         # orient z axis correctly, rotate around it
         ast2sc_q = SystemModel.frm_conv_q(SystemModel.ASTEROID_FRAME, SystemModel.SPACECRAFT_FRAME)
         return tools.ypr_to_q(self.axis_latitude, self.axis_longitude, theta) \
-                * ast2sc_q
-    
+               * ast2sc_q
+
     def position(self, timestamp):
         if self.real_position is not None:
             return self.real_position
-        
+
         # from http://space.stackexchange.com/questions/8911/determining-\
         #                           orbital-position-at-a-future-point-in-time
-        
+
         # convert unix seconds to seconds since oe_epoch
         dt = (Time(timestamp, format='unix') - self.oe_epoch).sec
-        
+
         # mean anomaly M
-        M = (self.mean_anomaly + 2*math.pi*dt/self.orbital_period) % (2*math.pi)
-        
+        M = (self.mean_anomaly + 2 * math.pi * dt / self.orbital_period) % (2 * math.pi)
+
         # eccentric anomaly E, orbit plane coordinates P & Q
         ecc = self.eccentricity
         E = tools.eccentric_anomaly(ecc, M)
         P = self.semimajor_axis * (math.cos(E) - ecc)
-        Q = self.semimajor_axis * math.sin(E) * math.sqrt(1 - ecc**2)
-        
+        Q = self.semimajor_axis * math.sin(E) * math.sqrt(1 - ecc ** 2)
+
         # rotate by argument of periapsis
         w = self.argument_of_periapsis
         x = math.cos(w) * P - math.sin(w) * Q
         y = math.sin(w) * P + math.cos(w) * Q
-        
+
         # rotate by inclination
         z = math.sin(self.inclination) * x
         x = math.cos(self.inclination) * x
-        
+
         # rotate by longitude of ascending node
         W = self.longitude_of_ascending_node
         xtemp = x
         x = math.cos(W) * xtemp - math.sin(W) * y
         y = math.sin(W) * xtemp + math.cos(W) * y
-        
+
         # corrections for ROS_CAM1_20150720T113057
-        if(False):
-            x += 1.5e9*units.m
-            y += -1e9*units.m
-            z += -26.55e9*units.m
-        
+        if (False):
+            x += 1.5e9 * units.m
+            y += -1e9 * units.m
+            z += -26.55e9 * units.m
+
         v_ba = np.array([x.value, y.value, z.value])
         if not USE_ICRS:
             sc = SkyCoord(x=x, y=y, z=z, frame='icrs',
-                          representation='cartesian', obstime='J2000')\
-                .transform_to('heliocentrictrueecliptic')\
+                          representation='cartesian', obstime='J2000') \
+                .transform_to('heliocentrictrueecliptic') \
                 .represent_as('cartesian')
             v_ba = np.array([sc.x.value, sc.y.value, sc.z.value])
-        
+
         return v_ba
-    

@@ -14,6 +14,7 @@ from settings import *
 class PositioningException(Exception):
 	pass
 
+
 class Stopwatch:
     # from https://www.safaribooksonline.com/library/view/python-cookbook-3rd/9781449357337/ch13s13.html
     
@@ -51,21 +52,6 @@ class Stopwatch:
 
     def __exit__(self, *args):
         self.stop()
-        
-
-def intrinsic_camera_mx(w=CAMERA_WIDTH, h=CAMERA_HEIGHT, legacy=True):
-    x = w/2
-    y = h/2
-    fl_x = x / math.tan( math.radians(CAMERA_X_FOV)/2 )
-    fl_y = y / math.tan( math.radians(CAMERA_Y_FOV)/2 )
-    return np.array([[fl_x * (1 if legacy else -1), 0, x],
-                    [0, fl_y, y],
-                    [0, 0, 1]], dtype = "float")
-
-
-@lru_cache(maxsize=None)
-def inv_intrinsic_camera_mx(w=CAMERA_WIDTH, h=CAMERA_HEIGHT, legacy=True):
-    return np.linalg.inv(intrinsic_camera_mx(w, h, legacy=legacy))
 
 
 def sc_asteroid_max_shift_error(A, B):
@@ -91,40 +77,6 @@ def sc_asteroid_max_shift_error(A, B):
     # max length of diff vectors
     return np.max(normD)
     
-
-def calc_xy(xi, yi, z_off, width=CAMERA_WIDTH, height=CAMERA_HEIGHT):
-    """ xi and yi are unaltered image coordinates, z_off is usually negative  """
-    
-    xh = xi + 0.5
-    #yh = height - (yi+0.5)
-    yh = yi + 0.5
-    #zh = -z_off
-    
-    if True:
-        iK = inv_intrinsic_camera_mx(w=width, h=height, legacy=False)
-        x_off, y_off, _ = iK.dot(np.array([xh, yh, 1]))*z_off
-        
-    else:
-        cx = xh/width - 0.5
-        cy = yh/height - 0.5
-
-        h_angle = cx * math.radians(CAMERA_X_FOV)
-        x_off = zh * math.tan(h_angle)
-
-        v_angle = cy * math.radians(CAMERA_Y_FOV)
-        y_off = zh * math.tan(v_angle)
-        
-    # print('%.3f~%.3f, %.3f~%.3f, %.3f~%.3f'%(ax, x_off, ay, y_off, az, z_off))
-    return x_off, y_off
-
-
-def calc_img_xy(x, y, z, width=CAMERA_WIDTH, height=CAMERA_HEIGHT):
-    """ x, y, z are in camera frame (z typically negative),  return image coordinates  """
-
-    K = intrinsic_camera_mx(width, height, legacy=False)
-    ix, iy, iw = K.dot(np.array([x, y, z]))
-    return ix/iw, iy/iw
-
 
 def surf_normal(x1, x2, x3):
     a, b, c = tuple(map(np.array, (x1, x2, x3)))
@@ -307,35 +259,49 @@ def spherical2cartesian(lat, lon, r):
     return np.array([x, y, z])
 
 
-def discretize_v(v, tol):
+def discretize_v(v, tol=None, lat_range=(-math.pi/2, math.pi/2), points=None):
     """
     simulate feature database by giving closest light direction with given tolerance
     """
 
+    if tol is not None and points is not None or tol is None and points is None:
+        assert False, 'Give either tol or points'
+    elif tol is not None:
+        points = bf2_lat_lon(tol, lat_range=lat_range)
+
     lat, lon, r = cartesian2spherical(*v)
 
-    dblat, dblon = bf_lat_lon(tol)
-    lat, idx1 = find_nearest(dblat, lat)
-    lon, idx2 = find_nearest(dblon, lon)
+    (nlat, nlon), idx = find_nearest_arr(
+        points,
+        np.array((lat, lon)),
+        ord=2,
+        fun=wrap_rads,
+    )
 
-    ret = spherical2cartesian(lat, lon, r)
-    return ret
+    ret = spherical2cartesian(nlat, nlon, r)
+    return ret, idx
 
 
-def discretize_q(q, tol):
+def discretize_q(q, tol=None, lat_range=(-math.pi/2, math.pi/2), points=None):
     """
-    simulate feature database by giving closest lat & lon with given tolerance
-    and set roll to zero as feature detectors are rotation invariant
+    simulate feature database by giving closest lat & roll with given tolerance
+    and set lon to zero as feature detectors are rotation invariant (in opengl coords)
     """
-    
-    lat, lon, roll = q_to_ypr(q.conj())
-    
-    dblat, dblon = bf_lat_lon(tol)
-    nlat, idx1 = find_nearest(dblat, lat)
-    nlon, idx2 = find_nearest(dblon, lon)
-    
-    nq0 = ypr_to_q(nlat, nlon, 0).conj()
-    return nq0
+
+    if tol is not None and points is not None or tol is None and points is None:
+        assert False, 'Give either tol or points'
+    elif tol is not None:
+        points = bf2_lat_lon(tol, lat_range=lat_range)
+
+    lat, lon, roll = q_to_ypr(q)
+    (nlat, nroll), idx = find_nearest_arr(
+        points,
+        np.array((lat, roll)),
+        ord=2,
+        fun=wrap_rads,
+    )
+    nq0 = ypr_to_q(nlat, 0, nroll)
+    return nq0, idx
     
 
 def bf_lat_lon(tol, lat_range=(-math.pi/2, math.pi/2)):
@@ -648,7 +614,8 @@ def solve_q_bf(src_q, dst_q):
     ):
         tq = res_q * src_q * res_q.conj()
         qs.append(res_q)
-        d.append(1-np.array((tq.w, tq.x, tq.y, tq.z)).dot(np.array((dst_q.w, dst_q.x, dst_q.y, dst_q.z)))**2)
+        #d.append(1-np.array((tq.w, tq.x, tq.y, tq.z)).dot(np.array((dst_q.w, dst_q.x, dst_q.y, dst_q.z)))**2)
+        d.append(angle_between_q(tq, dst_q))
     i = np.argmin(d)
     return qs[i]
 

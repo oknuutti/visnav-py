@@ -6,6 +6,7 @@ import cv2
 from algo.image import ImageProc
 from algo.model import SystemModel
 from iotools import lblloader
+from missions.rosetta import RosettaSystemModel
 from settings import *
 from render.render import RenderEngine
 from algo import tools
@@ -18,6 +19,7 @@ class AlgorithmBase:
         self.obj_idx = obj_idx
         self.debug_filebase = None
         self.timer = None
+        self._cam = self.system_model.cam
 
         self.latest_discretization_err_q = None
         self.latest_discretization_light_err_angle = None
@@ -32,32 +34,31 @@ class AlgorithmBase:
 
         self.set_image_zoom_and_resolution()
 
-    def set_image_zoom_and_resolution(self, im_xoff=0, im_yoff=0,
-                                      im_width=CAMERA_WIDTH, im_height=CAMERA_HEIGHT, im_scale=1):
+    def set_image_zoom_and_resolution(self, im_xoff=0, im_yoff=0, im_width=None, im_height=None):
         self.im_xoff = im_xoff
         self.im_yoff = im_yoff
-        self.im_width = im_width
-        self.im_height = im_height
-        self.im_def_scale = min(VIEW_WIDTH/im_width, VIEW_HEIGHT/im_height)
+        self.im_width = im_width or self._cam.width
+        self.im_height = im_height or self._cam.height
+        self.im_def_scale = min(VIEW_WIDTH/self.im_width, VIEW_HEIGHT/self.im_height)
         self.im_scale = self.im_def_scale
 
         # calculate frustum based on fov, aspect & near
         # NOTE: with wide angle camera, would need to take into account
         #       im_xoff, im_yoff, im_width and im_height
-        x_fov = CAMERA_X_FOV * self.im_def_scale / self.im_scale
-        y_fov = CAMERA_Y_FOV * self.im_def_scale / self.im_scale
-        self.render_engine.set_frustum(x_fov, y_fov, 0.1, MAX_DISTANCE)
+        x_fov = self._cam.x_fov * self.im_def_scale / self.im_scale
+        y_fov = self._cam.y_fov * self.im_def_scale / self.im_scale
+        self.render_engine.set_frustum(x_fov, y_fov, 0.1, self.system_model.max_distance)
 
     def load_target_image(self, src):
         tmp = cv2.imread(src, cv2.IMREAD_GRAYSCALE)
         if tmp is None:
             raise Exception('Cant load image from file %s' % (src,))
 
-        if tmp.shape != (CAMERA_HEIGHT, CAMERA_WIDTH):
+        if tmp.shape != (self._cam.height, self._cam.width):
             # visit fails to generate 1024 high images
             tmp = cv2.resize(tmp, None,
-                             fx=CAMERA_WIDTH / tmp.shape[1],
-                             fy=CAMERA_HEIGHT / tmp.shape[0],
+                             fx=self._cam.width / tmp.shape[1],
+                             fy=self._cam.height / tmp.shape[0],
                              interpolation=cv2.INTER_CUBIC)
         return tmp
 
@@ -86,11 +87,11 @@ class AlgorithmBase:
 
         # NOTE: with wide angle camera, would need to take into account
         #       im_xoff, im_yoff, im_width and im_height
-        xc_off = (self.im_xoff + self.im_width / 2 - CAMERA_WIDTH / 2)
-        xc_angle = xc_off / CAMERA_WIDTH * math.radians(CAMERA_X_FOV)
+        xc_off = (self.im_xoff + self.im_width / 2 - self._cam.width / 2)
+        xc_angle = xc_off / self._cam.width * math.radians(self._cam.x_fov)
 
-        yc_off = (self.im_yoff + self.im_height / 2 - CAMERA_HEIGHT / 2)
-        yc_angle = yc_off / CAMERA_HEIGHT * math.radians(CAMERA_Y_FOV)
+        yc_off = (self.im_yoff + self.im_height / 2 - self._cam.height / 2)
+        yc_angle = yc_off / self._cam.height * math.radians(self._cam.y_fov)
 
         # first rotate around x-axis, then y-axis,
         # note that diff angle in image y direction corresponds to rotation
@@ -113,7 +114,8 @@ class AlgorithmBase:
 
         # get object rotation and turn it a bit based on cropping effect
         q, err_q = m.gl_sc_asteroid_rel_q(discretize_tol)
-        self.latest_discretization_err_q = err_q if discretize_tol else False
+        sc2gl_q = m.frm_conv_q(m.SPACECRAFT_FRAME, m.OPENGL_FRAME)
+        self.latest_discretization_err_q = sc2gl_q * err_q * sc2gl_q.conj() if discretize_tol else False
 
         qfin = (q * q_crop.conj())
 
@@ -125,10 +127,10 @@ class AlgorithmBase:
 
 
 if __name__ == '__main__':
-    sm = SystemModel()
-    lblloader.load_image_meta(TARGET_IMAGE_META_FILE, sm)
+    sm = RosettaSystemModel()
+    lblloader.load_image_meta(sm.asteroid.sample_image_meta_file, sm)
     re = RenderEngine(VIEW_WIDTH, VIEW_HEIGHT, antialias_samples=0)
-    obj_idx = re.load_object(sm.real_shape_model, smooth=True)
+    obj_idx = re.load_object(sm.asteroid.real_shape_model, smooth=True)
 
     ab = AlgorithmBase(sm, re, obj_idx)
     #sm.z_off.value = -70
@@ -141,7 +143,7 @@ if __name__ == '__main__':
         cv2.waitKey()
 
     if True:
-        real = cv2.imread(TARGET_IMAGE_FILE, cv2.IMREAD_GRAYSCALE)
+        real = cv2.imread(sm.asteroid.sample_image_file, cv2.IMREAD_GRAYSCALE)
         synth2 = ab.render(shadows=True)
         #synth1 = ab.render()
         #synth0 = ab.render(lambertian=True)

@@ -172,7 +172,7 @@ def load_image_meta(src, sm):
     sm.asteroid_rotation_from_model()
     sm.real_asteroid_axis = sm.asteroid_axis
 
-    sm.real_sc_ast_vertices = sm.sc_asteroid_vertices(real=True)
+    sm.asteroid.real_sc_ast_vertices = sm.sc_asteroid_vertices(real=True)
 
     if not np.isclose(float(Decimal(sm.time.value) - Decimal(sm.time.real_value)), 0):
         sm.time.real_value = sm.time.value

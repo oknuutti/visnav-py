@@ -102,7 +102,7 @@ class PhaseCorrelationAlgo(AlgorithmBase):
                 tcx + VIEW_WIDTH/2,
                 tcy + VIEW_HEIGHT/2)
         
-        scx, scy = tools.calc_xy(xi, yi, m.z_off.value)
+        scx, scy = self._cam.calc_xy(xi, yi, m.z_off.value)
         m.spacecraft_pos = (scx, scy, m.z_off.value)
         
         #print('z=%.3f: (%.3f, %.3f) => (%.3f, %.3f) => (%.3f, %.3f) => (%.3f, %.3f)'%(
@@ -129,15 +129,17 @@ class PhaseCorrelationAlgo(AlgorithmBase):
         # get x, y, w, h from img
         xs, ys, ws, hs = cv2.boundingRect(img)
 
+        cw, ch = self._cam.width, self._cam.height
+
         # translate to 1:1 scale, add margin
         tmpw = round(ws/self.im_scale) +2*margin
         tmph = round(hs/self.im_scale) +2*margin
-        im_width = min(CAMERA_WIDTH, max(tmpw, round(tmph * CAMERA_WIDTH/CAMERA_HEIGHT)))
-        im_height = min(CAMERA_HEIGHT, max(tmph, round(tmpw * CAMERA_HEIGHT/CAMERA_WIDTH)))
+        im_width = min(cw, max(tmpw, round(tmph * cw/ch)))
+        im_height = min(ch, max(tmph, round(tmpw * ch/cw)))
         
         (x, y) = self._original_image_coords(xs, ys)
-        im_xoff = round(max(0, min(x - margin, CAMERA_WIDTH - im_width)))
-        im_yoff = round(max(0, min(y - margin, CAMERA_HEIGHT - im_height)))
+        im_xoff = round(max(0, min(x - margin, cw - im_width)))
+        im_yoff = round(max(0, min(y - margin, ch - im_height)))
         
         if DEBUG:
             print('(%.0f, %.0f, %.0f, %.0f) => (%.1f, %.1f, %.1f, %.1f)'%(
@@ -149,8 +151,8 @@ class PhaseCorrelationAlgo(AlgorithmBase):
         
         # adjust bounds to cover whole view
         if im_scale == 1:
-            im_xoff = max(0, min(im_xoff-round((VIEW_WIDTH-im_width)/2), CAMERA_WIDTH-VIEW_WIDTH))
-            im_yoff = max(0, min(im_yoff-round((VIEW_HEIGHT-im_height)/2), CAMERA_HEIGHT-VIEW_HEIGHT))
+            im_xoff = max(0, min(im_xoff-round((VIEW_WIDTH-im_width)/2), cw-VIEW_WIDTH))
+            im_yoff = max(0, min(im_yoff-round((VIEW_HEIGHT-im_height)/2), ch-VIEW_HEIGHT))
             im_width = VIEW_WIDTH
             im_height = VIEW_HEIGHT
         
@@ -188,7 +190,7 @@ class PhaseCorrelationAlgo(AlgorithmBase):
         
         #hwsize = kwargs.get('hwin_size', 4)
         #tmp = cv2.createHanningWindow((hwsize, hwsize), cv2.CV_32F)
-        #sd = int((CAMERA_HEIGHT - hwsize)/2)
+        #sd = int((self._cam.height - hwsize)/2)
         #self._hannw = cv2.copyMakeBorder(tmp,
         #        sd, sd, sd, sd, cv2.BORDER_CONSTANT, 0)
         
@@ -340,7 +342,7 @@ class PhaseCorrelationAlgo(AlgorithmBase):
         cv2.imwrite(outfile, img)
 
         if method=='two-step-brute':
-            self.system_model.z_off.range = (-MAX_DISTANCE, -MIN_MED_DISTANCE)
+            self.system_model.z_off.range = (-self.system_model.max_distance, -self.system_model.min_med_distance)
             if DEBUG:
                 print('Phase II: (%s, %s, %s)\n'%(
                     self.system_model.x_off.value,

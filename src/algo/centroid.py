@@ -6,6 +6,7 @@ import cv2
 from algo.base import AlgorithmBase
 from algo.model import SystemModel
 from iotools import lblloader
+from missions.rosetta import RosettaSystemModel
 from render.render import RenderEngine
 from settings import *
 from algo import tools
@@ -37,7 +38,7 @@ class CentroidAlgo(AlgorithmBase):
         self._bg_threshold = kwargs.get('bg_threshold', self._bg_threshold)
         sce_img = self.maybe_load_scene_image(sce_img)
         
-        self.system_model.spacecraft_pos = (0, 0, -MIN_MED_DISTANCE)
+        self.system_model.spacecraft_pos = (0, 0, -self.system_model.min_med_distance)
         for i in range(self.MAX_ITERATIONS):
             ox, oy, oz = self.system_model.spacecraft_pos
             od = math.sqrt(ox**2 + oy**2 + oz**2)
@@ -119,8 +120,8 @@ class CentroidAlgo(AlgorithmBase):
         err_d_y = old_y * (1 - new_z/old_z)
 
         # calculate brightness centroid coordinates
-        ref_cx, ref_cy = tools.calc_xy(ref_icx, ref_icy, max(old_z, new_z))  # use max so that wont move out of view
-        sce_cx, sce_cy = tools.calc_xy(sce_icx, sce_icy, max(old_z, new_z))  # use max so that wont move out of view
+        ref_cx, ref_cy = self._cam.calc_xy(ref_icx, ref_icy, max(old_z, new_z))  # use max so that wont move out of view
+        sce_cx, sce_cy = self._cam.calc_xy(sce_icx, sce_icy, max(old_z, new_z))  # use max so that wont move out of view
 
         # lateral errors
         err_x = ref_cx - sce_cx
@@ -252,10 +253,10 @@ class CentroidAlgo(AlgorithmBase):
         # TODO: somehow improve on this, now seems very crude
         r = math.sqrt(cs/math.pi)
         R = math.sqrt(system_model.asteroid.mean_cross_section/math.pi)
-        angle = r/CAMERA_HEIGHT * math.radians(CAMERA_Y_FOV)
+        angle = r/self._cam.height * math.radians(self._cam.y_fov)
         dist = R/1000 / math.tan(angle) # in km
         
-        x_off, y_off = tools.calc_xy(cx, cy, -dist)
+        x_off, y_off = self._cam.calc_xy(cx, cy, -dist)
         
         return (x_off, y_off, -dist)
         
@@ -282,9 +283,9 @@ class CentroidAlgo(AlgorithmBase):
                 raise PositioningException('Algorithm failure: model moved out of view')
         
         # image centroid
-        icx = m['m10']/m['m00']/iw*CAMERA_WIDTH
-        icy = m['m01']/m['m00']/ih*CAMERA_HEIGHT
-        brightness = m['m00']/iw/ih*CAMERA_WIDTH*CAMERA_HEIGHT
+        icx = m['m10']/m['m00']/iw*self._cam.width
+        icy = m['m01']/m['m00']/ih*self._cam.height
+        brightness = m['m00']/iw/ih*self._cam.width*self._cam.height
         
         # pixel spreads
         # used to model dimensions of asteroid parts visible in image
@@ -295,10 +296,10 @@ class CentroidAlgo(AlgorithmBase):
 
 
 if __name__ == '__main__':
-    sm = SystemModel()
+    sm = RosettaSystemModel()
     lblloader.load_image_meta(TARGET_IMAGE_META_FILE, sm)
     re = RenderEngine(VIEW_WIDTH, VIEW_HEIGHT)
-    obj_idx = re.load_object(sm.real_shape_model)
+    obj_idx = re.load_object(sm.asteroid.real_shape_model)
 
     DEBUG = True
     algo = CentroidAlgo(sm, re, obj_idx)

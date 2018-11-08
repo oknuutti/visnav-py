@@ -1,5 +1,14 @@
-import time
+import math
+from math import degrees as deg, radians as rad
+import os
+import sys
+import pickle
+from datetime import datetime as dt
+from decimal import *
 
+import numpy as np
+import quaternion
+from astropy.coordinates import spherical_to_cartesian
 import cv2
 
 from algo.centroid import CentroidAlgo
@@ -8,31 +17,13 @@ from algo.keypoint import KeypointAlgo
 from algo.mixed import MixedAlgo
 from algo.phasecorr import PhaseCorrelationAlgo
 from render.render import RenderEngine
-from settings import *
-
-import math
-from math import degrees as deg
-from math import radians as rad
-import os
-import sys
-import shutil
-import pickle
-import threading
-from datetime import datetime as dt
-from decimal import *
-
-import numpy as np
-import quaternion
-from astropy.coordinates import spherical_to_cartesian
-
-from iotools import objloader
-from iotools import lblloader
-
-from algo.model import Asteroid, SystemModel
+from iotools import objloader, lblloader
 import algo.tools as tools
 from algo.tools import (ypr_to_q, q_to_ypr, q_times_v, q_to_unitbase, normalize_v,
                    wrap_rads, solar_elongation, angle_between_ypr)
 from algo.tools import PositioningException
+
+from settings import *
 
 #from memory_profiler import profile
 #import tracemalloc
@@ -43,28 +34,29 @@ from algo.tools import PositioningException
 #   - astropy, many places
 
 
-class TestLoop():
-    FILE_PREFIX = 'iteration_'
+class TestLoop:
+    def __init__(self, system_model, far=False):
+        self.system_model = system_model
 
-    # minimum allowed elongation in deg
-    MIN_ELONG = 45
-
-    def __init__(self, far=False):
         self.exit = False
         self._algorithm_finished = None
         self._smooth_faces = False
 
+        file_prefix_mod = ''
         if far:
-            TestLoop.FILE_PREFIX = 'far'
-            self.max_r = MAX_DISTANCE
-            self.min_r = MAX_MED_DISTANCE
+            file_prefix_mod = 'far_'
+            self.max_r = self.system_model.max_distance
+            self.min_r = self.system_model.max_med_distance
         else:
-            self.max_r = MAX_MED_DISTANCE
-            self.min_r = MIN_MED_DISTANCE
+            self.max_r = self.system_model.max_med_distance
+            self.min_r = self.system_model.min_med_distance
+        self.file_prefix = system_model.mission_id+'_'+file_prefix_mod
+        self.noisy_sm_prefix = system_model.mission_id
+        self.cache_path = os.path.join(CACHE_DIR, system_model.mission_id)
+        os.makedirs(self.cache_path, exist_ok=True)
 
-        self.system_model = SystemModel()
         self.render_engine = RenderEngine(VIEW_WIDTH, VIEW_HEIGHT)
-        self.obj_idx = self.render_engine.load_object(self.system_model.real_shape_model, smooth=self._smooth_faces)
+        self.obj_idx = self.render_engine.load_object(self.system_model.asteroid.real_shape_model, smooth=self._smooth_faces)
 
         self.keypoint = KeypointAlgo(self.system_model, self.render_engine, self.obj_idx)
         self.centroid = CentroidAlgo(self.system_model, self.render_engine, self.obj_idx)
@@ -89,7 +81,7 @@ class TestLoop():
 
         # s/c position noise, gaussian sd in km per km of distance
         self._enable_initial_location = False
-        self._unknown_sc_pos = (0, 0, -MIN_MED_DISTANCE)
+        self._unknown_sc_pos = (0, 0, -self.system_model.min_med_distance)
         self._noise_lateral = 0.005   # 0.0052 when calculated using centroid algo AND 5 deg fov
         self._noise_altitude = 0.10   # 0.131 when calculated using centroid algo AND 5 deg fov
         
@@ -116,8 +108,7 @@ class TestLoop():
 
 
     # main method
-    def run(self, times, log_prefix='test-', smn_type='',
-            state_db_path=None, rotation_noise=True, **kwargs):
+    def run(self, times, log_prefix='test-', smn_type='', state_db_path=None, rotation_noise=True, **kwargs):
         self._smn_cache_id = smn_type
         self._state_db_path = state_db_path
         self._rotation_noise = rotation_noise
@@ -182,6 +173,13 @@ class TestLoop():
                 imgfile = self.render_navcam_image(sm, i)
                 self._maybe_exit()
 
+            if False:
+                # TODO: fix synthetic navcam generation to work with onboard rendering
+                #       current work-around:
+                #           1) first generate cache files and skip _run_algo
+                #           2) run again, this time not skipping _run_algo
+                continue
+
             # run algorithm
             ok, rtime = self._run_algo(imgfile, self._iter_file(i), **kwargs)
             
@@ -207,7 +205,7 @@ class TestLoop():
 
     def generate_system_state(self, sm, i):
         # reset asteroid axis to true values
-        sm.asteroid = Asteroid()
+        sm.asteroid.reset_to_defaults()
         sm.asteroid_rotation_from_model()
         
         if self._state_list is not None:
@@ -237,7 +235,7 @@ class TestLoop():
             sc_ast_v = -np.array([sc_ex, sc_ey, sc_ez])
 
             # sc orientation: uniform, center of asteroid at edge of screen - some margin
-            da = np.random.uniform(0, rad(CAMERA_Y_FOV/2))
+            da = np.random.uniform(0, rad(sm.cam.y_fov/2))
             dd = np.random.uniform(0, 2*math.pi)
             sco_lat = wrap_rads(-sc_lat + da*math.sin(dd))
             sco_lon = wrap_rads(math.pi + sc_lon + da*math.cos(dd))
@@ -253,10 +251,10 @@ class TestLoop():
             elong, direc = solar_elongation(as_v, sco_q)
 
             # limit elongation to always be more than set elong
-            if elong > rad(TestLoop.MIN_ELONG):
+            if elong > rad(sm.min_elong):
                 break
         
-        if elong <= rad(TestLoop.MIN_ELONG):
+        if elong <= rad(sm.min_elong):
             assert False, 'probable infinite loop'
         
         # put real values to model
@@ -271,7 +269,7 @@ class TestLoop():
         sm.real_asteroid_axis = sm.asteroid_axis
 
         # get real relative position of asteroid model vertices
-        sm.real_sc_ast_vertices = sm.sc_asteroid_vertices()
+        sm.asteroid.real_sc_ast_vertices = sm.sc_asteroid_vertices()
         
         
     def add_noise(self, sm):
@@ -348,19 +346,19 @@ class TestLoop():
 
         # maybe censor
         if not self._enable_initial_location:
-            sm.spacecraft_pos = (0, 0, -MIN_MED_DISTANCE)
+            sm.spacecraft_pos = (0, 0, -sm.min_med_distance)
 
 
     def generate_noisy_shape_model(self, sm, i):
         #sup = objloader.ShapeModel(fname=SHAPE_MODEL_NOISE_SUPPORT)
         noisy_model, sm_noise, self._L = \
-                tools.apply_noise(sm.real_shape_model,
+                tools.apply_noise(sm.asteroid.real_shape_model,
                                   #support=np.array(sup.vertices),
                                   L=self._L,
                                   len_sc=SHAPE_MODEL_NOISE_LEN_SC,
                                   noise_lv=SHAPE_MODEL_NOISE_LV)
         
-        fname = self._cache_file(i, prefix='shapemodel_')+'_'+self._smn_cache_id+'.nsm'
+        fname = self._cache_file(i, prefix=self.noisy_sm_prefix)+'_'+self._smn_cache_id+'.nsm'
         with open(fname, 'wb') as fh:
             pickle.dump((noisy_model.as_dict(), sm_noise), fh, -1)
         
@@ -369,7 +367,7 @@ class TestLoop():
     
     def load_noisy_shape_model(self, sm, i):
         try:
-            fname = self._cache_file(i, prefix='shapemodel_')+'_'+self._smn_cache_id+'.nsm'
+            fname = self._cache_file(i, prefix=self.noisy_sm_prefix)+'_'+self._smn_cache_id+'.nsm'
             with open(fname, 'rb') as fh:
                 noisy_model, sm_noise = pickle.load(fh)
             self.render_engine.load_object(objloader.ShapeModel(data=noisy_model), self.obj_idx, smooth=self._smooth_faces)
@@ -379,9 +377,9 @@ class TestLoop():
 
     def render_navcam_image(self, sm, i):
         if self._synth_navcam is None:
-            self._synth_navcam = RenderEngine(CAMERA_WIDTH, CAMERA_HEIGHT, antialias_samples=16)
-            self._synth_navcam.set_frustum(CAMERA_X_FOV, CAMERA_Y_FOV, 0.1, MAX_DISTANCE)
-            self._hires_obj_idx = self._synth_navcam.load_object(HIRES_TARGET_MODEL_FILE)
+            self._synth_navcam = RenderEngine(sm.cam.width, sm.cam.height, antialias_samples=16)
+            self._synth_navcam.set_frustum(sm.cam.x_fov, sm.cam.y_fov, 0.1, sm.max_distance)
+            self._hires_obj_idx = self._synth_navcam.load_object(sm.asteroid.hires_target_model_file)
 
         sm.swap_values_with_real_vals()
         pos = sm.spacecraft_pos
@@ -393,7 +391,7 @@ class TestLoop():
         img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
 
         # coef=2 gives reasonably many stars
-        img = ImageProc.add_stars(img.astype('float'), mask=depth>=MAX_DISTANCE-0.1, coef=2.5)
+        img = ImageProc.add_stars(img.astype('float'), mask=depth>=sm.max_distance-0.1, coef=2.5)
 
         # ratio seems too low but blurring in images match actual Rosetta navcam images
         img = ImageProc.apply_point_spread_fn(img, ratio=0.2)
@@ -468,7 +466,7 @@ class TestLoop():
             rel_rot = q_to_ypr(sm.sc_asteroid_rel_q())
             est_vertices = sm.sc_asteroid_vertices()
             max_shift = tools.sc_asteroid_max_shift_error(
-                    est_vertices, sm.real_sc_ast_vertices)
+                    est_vertices, sm.asteroid.real_sc_ast_vertices)
             
             err = (
                 *np.subtract(pos, sm.real_spacecraft_pos),
@@ -492,8 +490,7 @@ class TestLoop():
     
     def _init_log(self, log_prefix):
         os.makedirs(LOG_DIR, exist_ok=True)
-        os.makedirs(CACHE_DIR, exist_ok=True)
-        
+
         logbody = log_prefix + dt.now().strftime('%Y%m%d-%H%M%S')
         self._iter_dir = os.path.join(LOG_DIR, logbody)
         os.mkdir(self._iter_dir)
@@ -595,7 +592,7 @@ class TestLoop():
         
         self._timer.stop()
         summary = (
-            '%s - t: %.1fmin (%dms), '
+            '%s - t: %.1fmin (%.0fms), '
             + 'Le: %.3f m/km (%s), '
             + 'De: %.3f m/km (%s), '
             + 'Se: %.3f m/km (%s), '
@@ -618,6 +615,7 @@ class TestLoop():
         timer = tools.Stopwatch()
         timer.start()
         method = kwargs.pop('method', False)
+        sm = self.system_model
         if method == 'keypoint+':
             try:
                 self.mixedalgo.run(imgfile, outfile, **kwargs)
@@ -630,9 +628,9 @@ class TestLoop():
                 #    from pympler import tracker
                 #    tr = tracker.SummaryTracker()
                 if self._enable_initial_location:
-                    x, y, z = self.system_model.spacecraft_pos
-                    ix_off, iy_off = tools.calc_img_xy(x, y, z)
-                    kwargs['match_mask_params'] = ix_off-CAMERA_WIDTH/2, iy_off-CAMERA_HEIGHT/2, z
+                    x, y, z = sm.spacecraft_pos
+                    ix_off, iy_off = sm.cam.calc_img_xy(x, y, z)
+                    kwargs['match_mask_params'] = ix_off-sm.cam.width/2, iy_off-sm.cam.height/2, z
 
                 self.keypoint.solve_pnp(imgfile, outfile, **kwargs)
                 #    tr.print_diff()
@@ -659,15 +657,15 @@ class TestLoop():
 
     def _iter_file(self, i, prefix=None):
         if prefix is None:
-            prefix = TestLoop.FILE_PREFIX
+            prefix = self.file_prefix
         return os.path.normpath(
                 os.path.join(self._iter_dir, prefix+'%04d'%i))
     
     def _cache_file(self, i, prefix=None):
         if prefix is None:
-            prefix = TestLoop.FILE_PREFIX
+            prefix = self.file_prefix
         return os.path.normpath(
-            os.path.join(CACHE_DIR, (prefix+'%04d'%i) if self._state_list is None
+            os.path.join(self.cache_path, (prefix+'%04d'%i) if self._state_list is None
                                     else self._state_list[i]))
     
     def _maybe_exit(self):

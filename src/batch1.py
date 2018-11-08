@@ -1,6 +1,9 @@
 import math
 
 import settings
+from missions.didymos import DidymosSystemModel
+from missions.rosetta import RosettaSystemModel
+
 settings.BATCH_MODE = True
 
 import sys
@@ -11,8 +14,9 @@ from scipy import optimize
 
 
 if __name__ == '__main__':
-    full_method = sys.argv[1] if len(sys.argv)>1 else 'keypoint'
-    count = sys.argv[2] if len(sys.argv)>2 else 10
+    mission = sys.argv[1]
+    full_method = sys.argv[2]
+    count = sys.argv[3] if len(sys.argv)>3 else 10
     
     m = full_method.split('+')
     method=m[0]
@@ -105,35 +109,32 @@ if __name__ == '__main__':
         kwargs['smn_type'] = 'lo'
 
     # feature db
+    hi_res_shape_model = False
     if 'fdb' in m:
         kwargs['use_feature_db'] = True
-        settings.TARGET_MODEL_FILE = os.path.join(settings.SCRIPT_DIR, '../data/CSHP_DV_130_01_LORES_00200.obj') # _XLRES_, _LORES_        
+        hi_res_shape_model = True
         settings.VIEW_WIDTH = 512
         settings.VIEW_HEIGHT = 512
-        noise = kwargs.pop('smn_type',False)
+        noise = kwargs.pop('smn_type', False)
         settings.ADD_SHAPE_MODEL_NOISE = False
         if noise:
             kwargs['add_noise'] = True
-    
+
+    if mission == 'rose':
+        sm = RosettaSystemModel(hi_res_shape_model=hi_res_shape_model)
+    elif mission == 'didy':
+        sm = DidymosSystemModel(hi_res_shape_model=hi_res_shape_model)
+    else:
+        assert False, 'Unknown mission given as argument: %s' % mission
+    assert mission == sm.mission_id, 'wrong system model mission id'
+
     if 'real' in m:
-        kwargs['state_db_path'] = settings.IMAGE_DB_PATH
+        kwargs['state_db_path'] = sm.asteroid.image_db_path
         #kwargs['scale_cam_img'] = True
         #kwargs['rotation_noise'] = False
-        
 
     from settings import *
     from testloop import TestLoop
 
-    if 'fdb' in m:
-        from algo.keypoint import KeypointAlgo
-        from algo import tools
-        lats, lons = tools.bf_lat_lon(KeypointAlgo.FDB_TOL)
-        elongs = math.ceil((360 - 2 * TestLoop.MIN_ELONG) / math.degrees(KeypointAlgo.FDB_TOL) / 2) - 1
-        max_feat_mem = KeypointAlgo.FDB_MAX_MEM * len(lats) * len(lons) * elongs
-        print('Using feature DB not bigger than %.1fMB (%d x %d x %d x %.0fkB)'%(
-                max_feat_mem/1024/1024,
-                len(lats), len(lons), elongs,
-                KeypointAlgo.FDB_MAX_MEM/1024))
-
-    tl = TestLoop(far=(method == 'centroid'))
-    tl.run(count, log_prefix=full_method+'-', **kwargs)
+    tl = TestLoop(sm, far=(method == 'centroid'))
+    tl.run(count, log_prefix=mission+'-'+full_method+'-', **kwargs)

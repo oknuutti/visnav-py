@@ -7,14 +7,12 @@ import cv2
 
 from algo import tools
 from algo.keypoint import KeypointAlgo
-from algo.model import SystemModel
 from algo.tools import PositioningException, Stopwatch
 from iotools import lblloader
+from missions.rosetta import RosettaSystemModel
 
 from settings import *
 from render.render import RenderEngine
-from testloop import TestLoop
-
 
 
 class InvalidSceneException(Exception):
@@ -22,10 +20,10 @@ class InvalidSceneException(Exception):
 
 
 class FeatureDatabaseGenerator(KeypointAlgo):
-    def __init__(self, system_model, render_engine, obj_idx, render_z=-MIN_MED_DISTANCE):
+    def __init__(self, system_model, render_engine, obj_idx, render_z=None):
         super(FeatureDatabaseGenerator, self).__init__(system_model, render_engine, obj_idx)
 
-        self.render_z = render_z
+        self.render_z = render_z or -self.system_model.min_med_distance
         self._ransac_err = self.DEF_RANSAC_ERROR
 
         # for overriding rendering
@@ -36,8 +34,6 @@ class FeatureDatabaseGenerator(KeypointAlgo):
 
         # so that no need to always pass these in function call
         self._ref_img_sc = None
-        self._sc_ast_perms = None
-        self._light_perms = None
 
     def generate_fdb(self, feat, save_file, view_width=VIEW_WIDTH, view_height=VIEW_HEIGHT, fdb_tol=KeypointAlgo.FDB_TOL,
                      maxmem=KeypointAlgo.FDB_MAX_MEM, save_progress=False):
@@ -45,21 +41,21 @@ class FeatureDatabaseGenerator(KeypointAlgo):
         assert view_width == self.render_engine.width and view_height == self.render_engine.height,\
             'wrong size render engine: (%d, %d)' % (self.render_engine.width, self.render_engine.height)
 
-        self._ref_img_sc = CAMERA_WIDTH / view_width
+        self._ref_img_sc = self._cam.width / view_width
 
         # s/c-asteroid relative orientation, camera axis rotation zero, in opengl coords
-        self._sc_ast_perms = np.array(tools.bf2_lat_lon(fdb_tol))
+        self._fdb_sc_ast_perms = np.array(tools.bf2_lat_lon(fdb_tol))
                                                         #, lat_range=(-fdb_tol, fdb_tol)))
 
         # light direction in opengl coords
         #   z-axis towards cam, x-axis to the right => +90deg lat==sun ahead, -90deg sun behind
         #   0 deg lon => sun on the left
-        self._light_perms = np.array(tools.bf2_lat_lon(fdb_tol,
-                                                       lat_range=(-math.pi/2, math.radians(90 - TestLoop.MIN_ELONG))))
+        self._fdb_light_perms = np.array(tools.bf2_lat_lon(fdb_tol,
+                                                       lat_range=(-math.pi/2, math.radians(90 - self.system_model.min_elong))))
                                                        #lat_range=(-fdb_tol, fdb_tol)))
 
-        n1 = len(self._sc_ast_perms)
-        n2 = len(self._light_perms)
+        n1 = len(self._fdb_sc_ast_perms)
+        n2 = len(self._fdb_light_perms)
         print('%d x %d = %d, <%dMB'%(n1, n2, n1*n2, n1*n2*(maxmem/1024/1024)))
 
         # initialize fdb array
@@ -70,8 +66,18 @@ class FeatureDatabaseGenerator(KeypointAlgo):
 
         if save_progress and os.path.exists(save_file):
             # load existing fdb
-            status, scenes, fdb = self.load_fdb(save_file)
-            assert len(scenes) == n1*n2, 'Wrong amount of scenes in loaded fdb: %d vs %d'%(len(scenes), n1*n2)
+            tmp = self.load_fdb(save_file)
+            if len(tmp) == 3:
+                # backwards compatibility
+                status, scenes, fdb = tmp
+                assert len(scenes) == n1 * n2, 'Wrong amount of scenes in loaded fdb: %d vs %d' % (len(scenes), n1 * n2)
+                scenes = None
+            else:
+                status, sc_ast_perms, light_perms, fdb = tmp
+                assert len(sc_ast_perms) == n1, \
+                    'Wrong number of s/c - asteroid relative orientation scenes: %d vs %d'%(len(sc_ast_perms), n1)
+                assert len(light_perms) == n2, \
+                    'Wrong number of light direction scenes: %d vs %d' % (len(light_perms), n2)
             assert fdb[0].shape == (n1, n2, n3, dlen), 'Wrong shape descriptor array: %s vs %s'%(fdb[0].shape, (n1, n2, n3, dlen))
             assert fdb[1].shape == (n1, n2, n3, 2), 'Wrong shape 2d img coord array: %s vs %s'%(fdb[1].shape, (n1, n2, n3, 2))
             assert fdb[2].shape == (n1, n2, n3, 3), 'Wrong shape 3d coord array: %s vs %s'%(fdb[2].shape, (n1, n2, n3, 3))
@@ -80,7 +86,6 @@ class FeatureDatabaseGenerator(KeypointAlgo):
         else:
             # create new fdb
             status = {'stage': 1, 'i1': -1, 'time': 0}
-            scenes = np.zeros((n1*n2, 6), dtype='float32')
             fdb = [
                 np.zeros((n1, n2, n3, dlen), dtype='uint8'),    # descriptors
                 np.zeros((n1, n2, n3, 2), dtype='float32'),     # 2d image coords
@@ -96,12 +101,12 @@ class FeatureDatabaseGenerator(KeypointAlgo):
         print(''.join(['_']*n1), flush=True)
 
         if status['stage'] == 1:
-            for i1, (sc_ast_lat, sc_ast_lon) in enumerate(self._sc_ast_perms):
+            for i1, (sc_ast_lat, sc_ast_lon) in enumerate(self._fdb_sc_ast_perms):
                 print('.', flush=True, end="")
                 if i1 <= status['i1']:
                     continue
 
-                for i2, (light_lat, light_lon) in enumerate(self._light_perms):
+                for i2, (light_lat, light_lon) in enumerate(self._fdb_light_perms):
                     # tr = tracker.SummaryTracker()
                     tmp = self._scene_features(feat, maxmem, sc_ast_lat, sc_ast_lon, light_lat, light_lon)
                     # tr.print_diff()
@@ -111,19 +116,22 @@ class FeatureDatabaseGenerator(KeypointAlgo):
                         fdb[1][i1, i2, 0:nf, :] = tmp[1]
                         fdb[2][i1, i2, 0:nf, :] = tmp[2]
                         fdb[4][i1, i2] = nf
-                        scenes[i1*n2+i2, :] = (sc_ast_lat, sc_ast_lon, light_lat, light_lon, i1, i2)
 
                 if save_progress and (i1+1) % 30 == 0:
                     status = {'stage': 1, 'i1': i1, 'time': timer.elapsed}
-                    self.save_fdb(status, scenes, fdb, save_file)
+                    self.save_fdb(status, fdb, save_file)
             print('\n', flush=True, end="")
             status = {'stage': 2, 'i1': -1, 'time': timer.elapsed}
         else:
+            self._latest_detector, nfeats = self._get_detector(feat, 0)
             print(''.join(['.'] * n1), flush=True)
 
-        status['stage'] = 2
+        if False:
+            status['stage'] = 2
+            status['i1'] = 0
+
         # second phase, match with neighbours, record matching features
-        if status['stage'] == 2:
+        if True or status['stage'] == 2:
             visited = set()
             for i1 in range(n1):
                 print('.', flush=True, end="")
@@ -131,15 +139,15 @@ class FeatureDatabaseGenerator(KeypointAlgo):
                     continue
                 for i2 in range(n2):
                     self._update_matched_features(fdb_tol, visited, fdb, i1, i2)
-                if False and save_progress and (i1+1) % 30 == 0:
+                if save_progress and (i1+1) % 30 == 0:
                     status = {'stage': 2, 'i1': i1, 'time': timer.elapsed}
-                    self.save_fdb(status, scenes, fdb, save_file)
+                    self.save_fdb(status, fdb, save_file)
             print('\n', flush=True, end="")
             # fdb[1] = None
             status = {'stage': 3, 'i1': 0, 'time': timer.elapsed}
         else:
             print(''.join(['.'] * n1), flush=True)
-        quit()
+
         # third phase, discard features that didn't match with any neighbours
         # for i1 in range(n1):
         #     print('.', flush=True, end="")
@@ -154,14 +162,14 @@ class FeatureDatabaseGenerator(KeypointAlgo):
         # finished, save, then exit
         if status['stage'] == 3:
             status = {'stage': 4, 'i1': 0, 'time': timer.elapsed}
-            self.save_fdb(status, scenes, fdb, save_file)
+            self.save_fdb(status, fdb, save_file)
             timer.stop()
             secs = timer.elapsed
         else:
             secs = status['time']
 
         print('Total time: %.1fh, per scene: %.3fs'%(secs/3600, secs/n1/n2))
-        return scenes, fdb
+        return fdb
 
     def _scene_features(self, feat, maxmem, sc_ast_lat, sc_ast_lon, light_lat, light_lon):
         self._sc_ast_lat = sc_ast_lat
@@ -188,15 +196,16 @@ class FeatureDatabaseGenerator(KeypointAlgo):
         ref_kp_3d = self._inverse_project(ref_kp_2d, depth, self.render_z, self._ref_img_sc, max_dist=30)
 
         if False:
+            mm_dist = self.system_model.min_med_distance
             if False:
-                pos = (0, 0, -MIN_MED_DISTANCE)
+                pos = (0, 0, -mm_dist)
                 qfin = tools.ypr_to_q(sc_ast_lat, 0, sc_ast_lon)
                 light_v = tools.spherical2cartesian(light_lat, light_lon, 1)
                 reimg = self.render_engine.render(self.obj_idx, pos, qfin, light_v)
                 reimg = cv2.cvtColor(reimg, cv2.COLOR_RGB2GRAY)
                 img = np.concatenate((cv2.resize(ref_img, (VIEW_WIDTH, VIEW_HEIGHT)), reimg), axis=1)
             else:
-                ref_kp = [cv2.KeyPoint(*tools.calc_img_xy(x, -y, -z-MIN_MED_DISTANCE, CAMERA_WIDTH, CAMERA_HEIGHT), 1) for x, y, z in ref_kp_3d]
+                ref_kp = [cv2.KeyPoint(*self._cam.calc_img_xy(x, -y, -z-mm_dist), 1) for x, y, z in ref_kp_3d]
                 img = cv2.drawKeypoints(ref_img, ref_kp, ref_img.copy(), (0, 0, 255), flags=cv2.DRAW_MATCHES_FLAGS_DEFAULT)
             cv2.imshow('res', img)
             cv2.waitKey()
@@ -222,8 +231,8 @@ class FeatureDatabaseGenerator(KeypointAlgo):
             return
 
         coef = math.sqrt(2.5)  # math.sqrt(math.sqrt(2)**2 + (math.sqrt(2)/2)**2)
-        nearest1 = tools.find_nearest_n(self._sc_ast_perms, self._sc_ast_perms[i1], r=fdb_tol*coef, fun=tools.wrap_rads)
-        nearest2 = tools.find_nearest_n(self._light_perms, self._light_perms[i2], r=fdb_tol*coef, fun=tools.wrap_rads)
+        nearest1 = tools.find_nearest_n(self._fdb_sc_ast_perms, self._fdb_sc_ast_perms[i1], r=fdb_tol*coef, fun=tools.wrap_rads)
+        nearest2 = tools.find_nearest_n(self._fdb_light_perms, self._fdb_light_perms[i2], r=fdb_tol*coef, fun=tools.wrap_rads)
 
         visit = {(i1, i2, n1, n2) for n1 in nearest1 for n2 in nearest2} - {(i1, i2, i1, i2)} - visited
         for i1, i2, j1, j2 in visit:
@@ -253,13 +262,24 @@ class FeatureDatabaseGenerator(KeypointAlgo):
             rvec, tvec, inliers = self._solve_pnp_ransac(sce_kp_2d, ref_kp_3d)
 
             q_res = tools.angleaxis_to_q(rvec)
-            q_src = tools.ypr_to_q(*self._sc_ast_perms[idxs1[0]], 0)
-            q_trg = tools.ypr_to_q(*self._sc_ast_perms[idxs2[0]], 0)
-            q_rel = q_trg.conj() * q_src
-            err1 = math.degrees(tools.angle_between_q(q_res, q_rel))
+            lat1, roll1 = self._fdb_sc_ast_perms[idxs1[0]]
+            lat2, roll2 = self._fdb_sc_ast_perms[idxs2[0]]
+            q_src = tools.ypr_to_q(lat1, 0, roll1)
+            q_trg = tools.ypr_to_q(lat2, 0, roll2)
+            q_rel = q_trg * q_src.conj()
+
+            # q_res.x = -q_res.x
+            # np.quaternion(0.707106781186547, 0, -0.707106781186547, 0)
+            m = self.system_model
+            q_frame = m.frm_conv_q(m.OPENGL_FRAME, m.OPENCV_FRAME)
+            q_res = q_frame * q_res.conj() * q_frame.conj()
+
+            err1 = math.degrees(tools.wrap_rads(tools.angle_between_q(q_res, q_rel)))
             err2 = np.linalg.norm(tvec - np.array((0, 0, -self.render_z)).reshape((3, 1)))
-            if abs(err1) > 15 or abs(err2) > 0.1*abs(self.render_z):
-                assert len(inliers)<20, 'at (%s, %s): q_real: %s, q_est: %s, tvec: %s'%(idxs1, idxs2, q_rel, q_res, tvec)
+            if abs(err1) > 10 or abs(err2) > 0.10*abs(self.render_z):
+                if len(inliers) > 30:
+                    print('at (%s, %s), in: %d, err1: %.1fdeg, err2: %.1fkm\n\tq_real: %s\n\tq_est:  %s'%(
+                        idxs1, idxs2, len(inliers), err1, err2, q_rel, q_res))
                 raise PositioningException()
 
             fdb[3][idxs1[0], idxs1[1], [matches[i[0]].queryIdx for i in inliers]] = True
@@ -268,7 +288,7 @@ class FeatureDatabaseGenerator(KeypointAlgo):
             # assert inliers is not None, 'at (%s, %s): ransac failed'%(idxs1, idxs2)
             pass
 
-    def calculate_fdb_stats(self, scenes, fdb, feat):
+    def calculate_fdb_stats(self, fdb, feat):
         fcounts = np.sum(fdb[3], axis=2).flatten()
         totmem = 1.0 * np.sum(fcounts) * (KeypointAlgo.BYTES_PER_FEATURE[feat] + 3 * 4)
         n_mean = np.mean(fcounts)
@@ -288,12 +308,12 @@ class FeatureDatabaseGenerator(KeypointAlgo):
 
     def load_fdb(self, save_file):
         with open(fname, 'rb') as fh:
-            status, scenes, fdb = pickle.load(fh)
-        return status, scenes, fdb
+            tmp = pickle.load(fh)
+        return tmp
 
-    def save_fdb(self, status, scenes, fdb, save_file):
+    def save_fdb(self, status, fdb, save_file):
         with open(save_file+'.tmp', 'wb') as fh:
-            pickle.dump((status, scenes, fdb), fh, -1)
+            pickle.dump((status, self._fdb_sc_ast_perms, self._fdb_light_perms, fdb), fh, -1)
         if os.path.exists(save_file):
             os.remove(save_file)
         os.rename(save_file+'.tmp', save_file)
@@ -301,47 +321,48 @@ class FeatureDatabaseGenerator(KeypointAlgo):
     def estimate_mem_usage(self, fdb_tol_deg, sc_mem_kb, acc_ratio=0.5):
         fdb_tol = math.radians(fdb_tol_deg)
         n1 = len(tools.bf2_lat_lon(fdb_tol))
-        n2 = len(tools.bf2_lat_lon(fdb_tol, lat_range=(-math.pi/2, math.radians(90 - TestLoop.MIN_ELONG))))
+        n2 = len(tools.bf2_lat_lon(fdb_tol, lat_range=(-math.pi/2, math.radians(90 - self.system_model.min_elong))))
         print('%d x %d = %d, <%dMB, ~%dMB'%(n1, n2, n1*n2, n1*n2*(sc_mem_kb/1024), n1*n2*(sc_mem_kb/1024)*acc_ratio))
 
 
 if __name__ == '__main__':
-    sm = SystemModel(shape_model=HIRES_TARGET_MODEL_FILE)
-    #lblloader.load_image_meta(TARGET_IMAGE_META_FILE, sm)
+    sm = RosettaSystemModel(hi_res_shape_model=True)
     re = RenderEngine(VIEW_WIDTH, VIEW_HEIGHT, antialias_samples=0)
-    obj_idx = re.load_object(sm.real_shape_model)
+    obj_idx = re.load_object(sm.asteroid.real_shape_model)
     fdbgen = FeatureDatabaseGenerator(sm, re, obj_idx)
 
     # ORB:
     # - 9 deg, 96kb, 0.327, 1851MB
-    # - 10 deg, 192kb, 0.32, 2.2GB
-    # - 12 deg, 512kb, 0.126. 1130MB
+    # * 10 deg, 128kb,
+    # * 12 deg, 512kb, 0.174, 1558MB
+
+    # AKAZE:
+    # * 12 deg, 512kb, 0.131, 1177MB
 
     feat = KeypointAlgo.ORB
-    fdb_tol = math.radians(12)
-    maxmem = 512 * 1024
-    fname = os.path.join(CACHE_DIR, 'fdb_%s_w%d_m%d_t%d.pickle' % (
+    fdb_tol = math.radians(10)
+    maxmem = 128 * 1024
+    fname = os.path.join(CACHE_DIR, sm.mission_id, 'fdb_%s_w%d_m%d_t%d.pickle' % (
         feat,
         VIEW_WIDTH,
         maxmem / 1024,
         10 * math.degrees(fdb_tol)
     ))
 
-    scenes, fdb = fdbgen.generate_fdb(feat, fname, fdb_tol=fdb_tol, maxmem=maxmem, save_progress=True)
+    fdb = fdbgen.generate_fdb(feat, fname, fdb_tol=fdb_tol, maxmem=maxmem, save_progress=True)
     #status, scenes, fdb = fdbgen.load_fdb(fname)
     #fdbgen.estimate_mem_usage(12, 512, 0.25)
     #quit()
 
-    stats = fdbgen.calculate_fdb_stats(scenes, fdb, feat)
+    stats = fdbgen.calculate_fdb_stats(fdb, feat)
     print('FDB stats:\n'+str(stats))
     # print('Total time: %.1fh, per scene: %.3fs' % (status['time'] / 3600, status['time'] / len(scenes)))
-    scenes = None
     fdb = None
 
     # feat = KeypointAlgo.ORB
     # fdb_tol = math.radians(12)
     # maxmem = 384 * 1024
-    # fname = os.path.join(CACHE_DIR, 'fdb_%s_w%d_m%d_t%d.pickle' % (
+    # fname = os.path.join(CACHE_DIR, sm.mission_id, 'fdb_%s_w%d_m%d_t%d.pickle' % (
     #     feat,
     #     VIEW_WIDTH,
     #     maxmem / 1024,

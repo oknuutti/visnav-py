@@ -9,6 +9,7 @@ from moderngl.ext.obj import Obj
 
 from algo import tools
 from iotools.objloader import ShapeModel
+from missions.rosetta import RosettaSystemModel
 
 
 class RenderEngine:
@@ -71,21 +72,22 @@ class RenderEngine:
         self._persp_mx[2, 3] = -2*f*n/(f-n)
 
     def load_object(self, object, obj_idx=None, smooth=False):
+        vertex_data = None
         if isinstance(object, str):
-            vertex_data = Obj.open(object)
-            assert not smooth, 'not supported'
+            object = ShapeModel(fname=object)
         elif isinstance(object, Obj):
             vertex_data = object
             assert not smooth, 'not supported'
-        elif isinstance(object, ShapeModel):
+
+        if isinstance(object, ShapeModel):
             if smooth:
                 verts, norms, faces = object.export_smooth_faces()
             else:
                 verts, norms, faces = object.export_angular_faces()
 
             vertex_data = Obj(verts, tuple(), norms, faces)
-        else:
-            assert False, 'wrong object type'
+
+        assert vertex_data is not None, 'wrong object type'
 
         # texture_image = Image.open('data/wood.jpg')
         # texture = ctx.texture(texture_image.size, 3, texture_image.tobytes())
@@ -261,9 +263,10 @@ class RenderEngine:
 if __name__ == '__main__':
     from settings import *
     import cv2
+    sm = RosettaSystemModel()
     re = RenderEngine(VIEW_WIDTH, VIEW_HEIGHT)
-    obj_idx = re.load_object(TARGET_MODEL_FILE)
-    re.set_frustum(5, 5, 0.1, MAX_DISTANCE)
+    obj_idx = re.load_object(sm.asteroid.target_model_file)
+    re.set_frustum(5, 5, 0.1, sm.max_distance)
 
     q = tools.angleaxis_to_q((math.radians(10), 0, 1, 0))
     if False:

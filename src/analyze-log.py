@@ -5,6 +5,9 @@ import math
 import numpy as np
 import matplotlib.pyplot as plt
 
+from missions.didymos import DidymosSystemModel
+from missions.rosetta import RosettaSystemModel
+
 try:
     from sklearn.gaussian_process import GaussianProcessRegressor
     from sklearn.gaussian_process import GaussianProcessClassifier
@@ -18,7 +21,7 @@ from algo import tools
 
 
 # read logfiles
-def read_data(logfile, predictors, target):
+def read_data(sm, logfile, predictors, target):
     X, y = [], []
     
     with open(logfile, newline='') as csvfile:
@@ -36,8 +39,8 @@ def read_data(logfile, predictors, target):
                     row = np.array(row)
                     pos = row[pos_i].astype(np.float)
                     distance = np.sqrt(np.sum(pos**2))
-                    xt = abs(pos[2])*math.tan(math.radians(CAMERA_X_FOV)/2)
-                    yt = abs(pos[2])*math.tan(math.radians(CAMERA_Y_FOV)/2)
+                    xt = abs(pos[2])*math.tan(math.radians(sm.cam.x_fov)/2)
+                    yt = abs(pos[2])*math.tan(math.radians(sm.cam.y_fov)/2)
                     xm = np.clip((xt - (abs(pos[0])-diam/2))/diam, 0, 1)
                     ym = np.clip((yt - (abs(pos[1])-diam/2))/diam, 0, 1)
                     
@@ -71,6 +74,14 @@ if __name__ == '__main__':
     logfile = sys.argv[1]
     one_d_only = len(sys.argv) > 2 and sys.argv[2] == '1d'
 
+    if logfile[:4] == 'rose':
+        sm = RosettaSystemModel()
+    elif logfile[:4] == 'didy':
+        sm = DidymosSystemModel()
+    else:
+        print('defaulting to rosetta mission')
+        sm = RosettaSystemModel()
+
     predictors = (
         'sol elong',    # solar elongation
         'total dev angle',  # total angle between initial estimate and actual relative orientation
@@ -86,7 +97,7 @@ if __name__ == '__main__':
     target = 'rel shift error' #'shift error km' #if not one_d_only else 'dist error'
     
     # read data
-    X, yc, yr = read_data(logfile, predictors, target)
+    X, yc, yr = read_data(sm, logfile, predictors, target)
     X[:,1] = np.abs(tools.wrap_degs(X[:,1]))
 
     if one_d_only:

@@ -15,6 +15,7 @@ from PyQt5.QtWidgets import (QApplication, QHBoxLayout, QVBoxLayout,
         QOpenGLWidget, QSlider, QPushButton, QWidget)
 
 from algo.base import AlgorithmBase
+from missions.rosetta import RosettaSystemModel
 from settings import *
 from algo import tools
 from algo.model import SystemModel
@@ -57,7 +58,7 @@ class Window(QWidget):
     def __init__(self):
         super(Window, self).__init__()
         
-        self.systemModel = SystemModel()
+        self.systemModel = RosettaSystemModel()
         self.glWidget = GLWidget(self.systemModel, parent=self)
         self.closing = []
         
@@ -237,12 +238,12 @@ class GLWidget(QOpenGLWidget):
         self.image_bg_threshold = None
         self.latest_rendered_image = None
 
-        self.im_def_scale = min(VIEW_WIDTH/CAMERA_WIDTH, VIEW_HEIGHT/CAMERA_HEIGHT)
+        self.im_def_scale = min(VIEW_WIDTH/systemModel.cam.width, VIEW_HEIGHT/systemModel.cam.height)
         self.im_scale = self.im_def_scale
         self.im_xoff = 0
         self.im_yoff = 0
-        self.im_width = CAMERA_WIDTH
-        self.im_height = CAMERA_HEIGHT
+        self.im_width = systemModel.cam.width
+        self.im_height = systemModel.cam.height
         
         self.debug_c = 0
         self.gl = None
@@ -268,7 +269,7 @@ class GLWidget(QOpenGLWidget):
         self._bgColor = QColor.fromRgbF(0, 0, 0, 1)
         #self._bgColor = QColor.fromCmykF(0.0, 0.0, 0.0, 1.0)
         self._frustum_near = 0.1
-        self._frustum_far = MAX_DISTANCE
+        self._frustum_far = self.systemModel.max_distance
         self._expire=0
 
     def minimumSizeHint(self):
@@ -324,7 +325,7 @@ class GLWidget(QOpenGLWidget):
         
     def resizeGL(self, width, height):
         rel_scale = self.im_scale / self.im_def_scale
-        self.im_def_scale = min(width/CAMERA_WIDTH, height/CAMERA_HEIGHT)
+        self.im_def_scale = min(width/self.systemModel.cam.width, height/self.systemModel.cam.height)
         self.im_scale = self.im_def_scale * rel_scale
         self._width = width
         self._height = height
@@ -336,8 +337,8 @@ class GLWidget(QOpenGLWidget):
         # calculate frustum based on fov, aspect & near
         # NOTE: with wide angle camera, would need to take into account
         #       im_xoff, im_yoff, im_width and im_height
-        x_fov = CAMERA_X_FOV * self.im_def_scale / self.im_scale
-        y_fov = CAMERA_Y_FOV * self.im_def_scale / self.im_scale
+        x_fov = self.systemModel.cam.x_fov * self.im_def_scale / self.im_scale
+        y_fov = self.systemModel.cam.y_fov * self.im_def_scale / self.im_scale
         
         # calculate frustum based on fov, aspect & near
         right = self._frustum_near * math.tan(math.radians(x_fov/2))
@@ -367,11 +368,11 @@ class GLWidget(QOpenGLWidget):
         
         # NOTE: with wide angle camera, would need to take into account
         #       im_xoff, im_yoff, im_width and im_height
-        xc_off = (self.im_xoff+self.im_width/2 - CAMERA_WIDTH/2)
-        xc_angle = xc_off/CAMERA_WIDTH * math.radians(CAMERA_X_FOV)
+        xc_off = (self.im_xoff+self.im_width/2 - m.cam.width/2)
+        xc_angle = xc_off/m.cam.width * math.radians(m.cam.x_fov)
         
-        yc_off = (self.im_yoff+self.im_height/2 - CAMERA_HEIGHT/2)
-        yc_angle = yc_off/CAMERA_HEIGHT * math.radians(CAMERA_Y_FOV)
+        yc_off = (self.im_yoff+self.im_height/2 - m.cam.height/2)
+        yc_angle = yc_off/m.cam.height * math.radians(m.cam.y_fov)
         
         # first rotate around x-axis, then y-axis,
         # note that diff angle in image y direction corresponds to rotation
@@ -551,12 +552,12 @@ class GLWidget(QOpenGLWidget):
         self._lastPos = event.pos()
 
     def setImageZoomAndResolution(self, im_xoff=0, im_yoff=0,
-                    im_width=CAMERA_WIDTH, im_height=CAMERA_HEIGHT, im_scale=1):
+                    im_width=None, im_height=None, im_scale=1):
         
         self.im_xoff = im_xoff
         self.im_yoff = im_yoff
-        self.im_width = im_width
-        self.im_height = im_height
+        self.im_width = im_width or self.systemModel.cam.width
+        self.im_height = im_height or self.systemModel.cam.height
         self.im_scale = im_scale
         
         self.image = ImageProc.crop_and_zoom_image(self.full_image, im_xoff, im_yoff,
@@ -564,7 +565,7 @@ class GLWidget(QOpenGLWidget):
         self._image_h = self.image.shape[0]
         self._image_w = self.image.shape[1]
         
-        if SHOW_TARGET_IMAGE:
+        if self._show_target_image:
             # form _gl_image that is used for rendering
             # black => 0 alpha, non-black => white => .5 alpha
             im = self.image.copy()
@@ -587,11 +588,12 @@ class GLWidget(QOpenGLWidget):
         if tmp is None:
             raise Exception('Cant load image from file %s'%(src,))
 
-        if tmp.shape != (CAMERA_HEIGHT, CAMERA_WIDTH):
+        cam = self.systemModel.cam
+        if tmp.shape != (cam.height, cam.width):
             # visit fails to generate 1024 high images
             tmp = cv2.resize(tmp, None,
-                            fx=CAMERA_WIDTH/tmp.shape[1],
-                            fy=CAMERA_HEIGHT/tmp.shape[0],
+                            fx=cam.width/tmp.shape[1],
+                            fy=cam.height/tmp.shape[0],
                             interpolation=cv2.INTER_CUBIC)
 
         if BATCH_MODE and self.add_image_noise and self._noise_image:
@@ -638,9 +640,9 @@ class GLWidget(QOpenGLWidget):
         #self.gl.glMaterialfv(self.gl.GL_FRONT, self.gl.GL_SHININESS, (0,));
         
         if self.systemModel.real_shape_model is None:
-            rsm = self.systemModel.real_shape_model = objloader.ShapeModel(fname=TARGET_MODEL_FILE)
+            rsm = self.systemModel.asteroid.real_shape_model = objloader.ShapeModel(fname=TARGET_MODEL_FILE)
         else:
-            rsm = self.systemModel.real_shape_model
+            rsm = self.systemModel.asteroid.real_shape_model
         
         if noisy_model is not None:
             sm = noisy_model
