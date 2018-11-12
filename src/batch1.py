@@ -77,6 +77,7 @@ if __name__ == '__main__':
         }
     elif method=='centroid':
         kwargs = {'method':'centroid'}
+        assert not set(m).union({'keypoint', 'orb', 'akaze', 'sift', 'surf'}), 'for args: first keypoint method, then centroid'
     elif method=='keypoint':
         kwargs = {'method':'keypoint'}
     elif method=='orb':
@@ -92,20 +93,16 @@ if __name__ == '__main__':
 
     if kwargs['method'] == 'keypoint' and 'centroid' in m:
         kwargs['method'] = 'keypoint+'
+        kwargs['centroid_fallback'] = True
 
     kwargs0 = {'min_options':{}}
     kwargs0.update(kwargs)
     kwargs = kwargs0
     
     # shape model noise
-    settings.ADD_SHAPE_MODEL_NOISE = False
     if 'smn_' in m:
-        settings.ADD_SHAPE_MODEL_NOISE = True
-        settings.SHAPE_MODEL_NOISE_LV = 0.04
         kwargs['smn_type'] = 'hi'
     elif 'smn' in m:
-        settings.ADD_SHAPE_MODEL_NOISE = True
-        settings.SHAPE_MODEL_NOISE_LV = 0.01
         kwargs['smn_type'] = 'lo'
 
     # feature db
@@ -113,20 +110,23 @@ if __name__ == '__main__':
     if 'fdb' in m:
         kwargs['use_feature_db'] = True
         hi_res_shape_model = True
-        settings.VIEW_WIDTH = 512
-        settings.VIEW_HEIGHT = 512
         noise = kwargs.pop('smn_type', False)
-        settings.ADD_SHAPE_MODEL_NOISE = False
         if noise:
-            kwargs['add_noise'] = True
+            kwargs['add_noise'] = noise
 
     if mission == 'rose':
         sm = RosettaSystemModel(hi_res_shape_model=hi_res_shape_model)
     elif mission == 'didy':
         sm = DidymosSystemModel(hi_res_shape_model=hi_res_shape_model)
+    elif mission == 'didw':
+        sm = DidymosSystemModel(hi_res_shape_model=hi_res_shape_model, use_narrow_cam=False)
     else:
         assert False, 'Unknown mission given as argument: %s' % mission
     assert mission == sm.mission_id, 'wrong system model mission id'
+
+    if 'fdb' in m:
+        #sm.view_width = sm.cam.width
+        sm.view_width = 512
 
     if 'real' in m:
         kwargs['state_db_path'] = sm.asteroid.image_db_path
@@ -136,5 +136,5 @@ if __name__ == '__main__':
     from settings import *
     from testloop import TestLoop
 
-    tl = TestLoop(sm, far=(method == 'centroid'))
+    tl = TestLoop(sm, far=(kwargs['method'] in ('centroid', 'keypoint+')))
     tl.run(count, log_prefix=mission+'-'+full_method+'-', **kwargs)

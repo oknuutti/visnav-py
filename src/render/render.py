@@ -9,6 +9,7 @@ from moderngl.ext.obj import Obj
 
 from algo import tools
 from iotools.objloader import ShapeModel
+from missions.didymos import DidymosSystemModel
 from missions.rosetta import RosettaSystemModel
 
 
@@ -138,13 +139,13 @@ class RenderEngine:
             fbo = self._fbo
             dbo = self._dbo
 
-        data = np.frombuffer(fbo.read(components=3, alignment=1), dtype='u1').reshape((self._width, self._height, 3))
+        data = np.frombuffer(fbo.read(components=3, alignment=1), dtype='u1').reshape((self._height, self._width, 3))
         data = np.flipud(data)
 
         if get_depth:
             a = -(self._frustum_far - self._frustum_near) / (2.0 * self._frustum_far * self._frustum_near)
             b = (self._frustum_far + self._frustum_near) / (2.0 * self._frustum_far * self._frustum_near)
-            depth = np.frombuffer(dbo.read(alignment=1), dtype='f4').reshape((self._width, self._height))
+            depth = np.frombuffer(dbo.read(alignment=1), dtype='f4').reshape((self._height, self._width))
             depth = np.divide(1.0, (2.0 * a) * depth - (a - b))  # 1/((2*X-1)*a+b)
             depth = np.flipud(depth)
 
@@ -263,20 +264,20 @@ class RenderEngine:
 if __name__ == '__main__':
     from settings import *
     import cv2
-    sm = RosettaSystemModel()
-    re = RenderEngine(VIEW_WIDTH, VIEW_HEIGHT)
+    sm = DidymosSystemModel(use_narrow_cam=False)
+    re = RenderEngine(sm.cam.width, sm.cam.height)
     obj_idx = re.load_object(sm.asteroid.target_model_file)
-    re.set_frustum(5, 5, 0.1, sm.max_distance)
+    re.set_frustum(sm.cam.x_fov, sm.cam.y_fov, sm.min_altitude, sm.max_distance)
 
     q = tools.angleaxis_to_q((math.radians(10), 0, 1, 0))
     if False:
         for i in range(36):
-            image = re.render(obj_idx, [0, 0, -70], q**i, np.array([1, 0, 0])/math.sqrt(1), get_depth=False)
+            image = re.render(obj_idx, [0, 0, -sm.min_med_distance], q**i, np.array([1, 0, 0])/math.sqrt(1), get_depth=False)
             cv2.imshow('image', image)
             cv2.waitKey()
 
     if True:
-        image, depth = re.render(obj_idx, [0, 0, -70], q ** 5, np.array([1, 0, 0]) / math.sqrt(1), get_depth=True)
-        cv2.imshow('depth', np.clip((72.5-depth)/5, 0, 1))
+        image, depth = re.render(obj_idx, [0, 0, -sm.min_med_distance], q ** 5, np.array([1, 0, 0]) / math.sqrt(1), get_depth=True)
+        cv2.imshow('depth', np.clip((sm.min_med_distance+sm.asteroid.mean_radius - depth)/5, 0, 1))
         cv2.imshow('image', image)
         cv2.waitKey()

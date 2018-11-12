@@ -93,14 +93,14 @@ class PhaseCorrelationAlgo(AlgorithmBase):
                 render_result.shape, self._target_image.shape,
                 self.im_xoff, self.im_yoff,
                 self.im_width, self.im_height, self.im_scale,
-                VIEW_WIDTH, VIEW_HEIGHT)
+                m.view_width, m.view_height)
         (tcx, tcy), pwr = cv2.phaseCorrelate(
                 np.float32(render_result), self._target_image, self._hannw)
         
         # if crop params set, compensate cx, cy
         xi, yi = self._original_image_coords(
-                tcx + VIEW_WIDTH/2,
-                tcy + VIEW_HEIGHT/2)
+                tcx + m.view_width/2,
+                tcy + m.view_height/2)
         
         scx, scy = self._cam.calc_xy(xi, yi, m.z_off.value)
         m.spacecraft_pos = (scx, scy, m.z_off.value)
@@ -151,10 +151,12 @@ class PhaseCorrelationAlgo(AlgorithmBase):
         
         # adjust bounds to cover whole view
         if im_scale == 1:
-            im_xoff = max(0, min(im_xoff-round((VIEW_WIDTH-im_width)/2), cw-VIEW_WIDTH))
-            im_yoff = max(0, min(im_yoff-round((VIEW_HEIGHT-im_height)/2), ch-VIEW_HEIGHT))
-            im_width = VIEW_WIDTH
-            im_height = VIEW_HEIGHT
+            view_w = self.system_model.view_width
+            view_h = self.system_model.view_height
+            im_xoff = max(0, min(im_xoff-round((view_w-im_width)/2), cw-view_w))
+            im_yoff = max(0, min(im_yoff-round((view_h-im_height)/2), ch-view_h))
+            im_width = view_w
+            im_height = view_h
         
         return im_xoff, im_yoff, im_width, im_height, im_scale
     
@@ -294,7 +296,7 @@ class PhaseCorrelationAlgo(AlgorithmBase):
             second_opts = dict(min_opts.pop('second'))
             margin = second_opts.pop('margin', 50)
             distance_margin = second_opts.pop('distance_margin', 0.2)
-            max_width = second_opts.pop('max_width', VIEW_WIDTH)
+            max_width = second_opts.pop('max_width', -self.system_model.view_width)
             
             # calculate min_dist and max_dist
             min_dist = (-self.system_model.z_off.value) * (1-distance_margin)

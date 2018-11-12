@@ -297,10 +297,10 @@ class CentroidAlgo(AlgorithmBase):
 
 if __name__ == '__main__':
     sm = RosettaSystemModel()
-    lblloader.load_image_meta(TARGET_IMAGE_META_FILE, sm)
-    re = RenderEngine(VIEW_WIDTH, VIEW_HEIGHT)
+    lblloader.load_image_meta(sm.asteroid.sample_image_meta_file, sm)
+    re = RenderEngine(sm.view_width, sm.view_height)
     obj_idx = re.load_object(sm.asteroid.real_shape_model)
 
     DEBUG = True
     algo = CentroidAlgo(sm, re, obj_idx)
-    algo.adjust_iteratively(TARGET_IMAGE_FILE, None)
+    algo.adjust_iteratively(sm.asteroid.sample_image_file, None)

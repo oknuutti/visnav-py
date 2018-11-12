@@ -222,7 +222,7 @@ class GLWidget(QOpenGLWidget):
     def __init__(self, systemModel, parent=None):
         super(GLWidget, self).__init__(parent)
         
-        self.setFixedSize(VIEW_WIDTH, VIEW_HEIGHT)
+        self.setFixedSize(systemModel.view_width, systemModel.view_height)
         
         self.systemModel = systemModel
         self.min_method = None
@@ -238,7 +238,7 @@ class GLWidget(QOpenGLWidget):
         self.image_bg_threshold = None
         self.latest_rendered_image = None
 
-        self.im_def_scale = min(VIEW_WIDTH/systemModel.cam.width, VIEW_HEIGHT/systemModel.cam.height)
+        self.im_def_scale = systemModel.view_width/systemModel.cam.width
         self.im_scale = self.im_def_scale
         self.im_xoff = 0
         self.im_yoff = 0
@@ -273,13 +273,13 @@ class GLWidget(QOpenGLWidget):
         self._expire=0
 
     def minimumSizeHint(self):
-        return QSize(VIEW_WIDTH, VIEW_HEIGHT)
+        return self.sizeHint()
 
     def maximumSizeHint(self):
-        return QSize(VIEW_WIDTH, VIEW_HEIGHT)
+        return self.sizeHint()
 
     def sizeHint(self):
-        return QSize(VIEW_WIDTH, VIEW_HEIGHT)
+        return QSize(self.systemModel.view_width, self.systemModel.view_height)
 
     def initializeGL(self):
         f = QSurfaceFormat()
@@ -454,7 +454,7 @@ class GLWidget(QOpenGLWidget):
         # f = self.format() 
         # print('dbs: %s'%f.depthBufferSize())
         
-        pixels = glReadPixels(0, 0, VIEW_WIDTH, VIEW_HEIGHT,
+        pixels = glReadPixels(0, 0, self.systemModel.view_width, self.systemModel.view_height,
                 self.gl.GL_DEPTH_COMPONENT if depth else self.gl.GL_LUMINANCE if grayscale else self.gl.GL_RGBA,
                 self.gl.GL_FLOAT if depth else self.gl.GL_UNSIGNED_BYTE)
 
@@ -467,7 +467,7 @@ class GLWidget(QOpenGLWidget):
             b =  (far + near) / (2.0 * far * near)
             data = np.divide(1.0,(2.0*a)*data -(a-b)) # 1/((2*X-1)*a+b)
         
-        data = np.flipud(data.reshape([VIEW_HEIGHT, VIEW_WIDTH] + ([] if depth or grayscale else [4])))
+        data = np.flipud(data.reshape([self.systemModel.view_height, self.systemModel.view_width] + ([] if depth or grayscale else [4])))
         
         # print('data: %s'%(data,))
         # cv2.imshow('target_image', data)
@@ -646,7 +646,7 @@ class GLWidget(QOpenGLWidget):
         
         if noisy_model is not None:
             sm = noisy_model
-        elif ADD_SHAPE_MODEL_NOISE and not BATCH_MODE:
+        elif self._add_shape_model_noise and not BATCH_MODE:
             #sup = objloader.ShapeModel(fname=SHAPE_MODEL_NOISE_SUPPORT)
             #sm, noise, L = tools.apply_noise(rsm, support=np.array(sup.vertices))
             sm, noise, L = tools.apply_noise(rsm)

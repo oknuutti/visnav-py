@@ -1,5 +1,6 @@
 import os
 import math
+import warnings
 
 from astropy.time import Time
 from astropy import constants as const
@@ -14,7 +15,11 @@ from settings import *
 
 class DidymosSystemModel(SystemModel):
     def __init__(self, hi_res_shape_model=False, use_narrow_cam=True):
-        mission_id = 'didy'
+        # gives some unnecessary warning about "dubious year" even when trying to ignore it
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            min_time = Time('2023-01-01 00:00:00', scale='utc', format='iso')
+
         narrow_cam = Camera(
             1024,   # width in pixels
             1024,   # height in pixels
@@ -27,21 +32,29 @@ class DidymosSystemModel(SystemModel):
             50,     # x fov in degrees
             47.46,  # y fov in degrees
         )
-        limits = (
+        narrow_cam_limits = (
             0.150,  # min_distance in km
-            1.0,  # min_med_distance in km
-            5.0,  # max_med_distance in km
-            20.0,  # max_distance in km
-            45,  # min_elong in deg
-            Time('2023-01-01 00:00:00'),  # min time instant
+            1.2,    # min_med_distance in km
+            5.0,    # max_med_distance in km
+            20.0,   # max_distance in km
+            45,     # min_elong in deg
+            min_time,  # min time instant
+        )
+        wide_cam_limits = (
+            0.150,  # min_distance in km
+            0.230,  # min_med_distance in km
+            2.0,    # max_med_distance in km
+            2.0,    # max_distance in km
+            45,     # min_elong in deg
+            min_time,  # min time instant
         )
 
         super(DidymosSystemModel, self).__init__(
             asteroid=DidymosSecondary(hi_res_shape_model=hi_res_shape_model),
             camera=narrow_cam if use_narrow_cam else wide_cam,
-            limits=limits
+            limits=narrow_cam_limits if use_narrow_cam else wide_cam_limits,
         )
-        self.mission_id = mission_id
+        self.mission_id = 'didy' if use_narrow_cam else 'didw'
 
 
 class DidymosSecondary(Asteroid):
@@ -50,16 +63,18 @@ class DidymosSecondary(Asteroid):
         self.name = 'Didymos Secondary'
 
         self.image_db_path = None
-        self.target_model_file = os.path.join(BASE_DIR, 'data/ryugu.obj')          # use ryugu model for this
-        self.hires_target_model_file = os.path.join(BASE_DIR, 'data/ryugu.obj')    # still same as above
+        self.target_model_file = os.path.join(BASE_DIR, 'data/ryugu-lo-res.obj')          # use ryugu model for this
+        self.hires_target_model_file = os.path.join(BASE_DIR, 'data/ryugu-hi-res.obj')
 
         self.sample_image_file = None
         self.sample_image_meta_file = None
 
         self.real_shape_model = objloader.ShapeModel(
             fname=self.hires_target_model_file if hi_res_shape_model else self.target_model_file)
+        self.render_smooth_faces = False if hi_res_shape_model else True
 
         # for cross section, assume spherical object
+        self.max_radius = 85      # in meters, maximum extent of object from asteroid frame coordinate origin
         self.mean_radius = 163/2  # in meters
         self.mean_cross_section = math.pi * self.mean_radius ** 2
 

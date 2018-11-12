@@ -1,4 +1,5 @@
 import math
+import warnings
 
 from astropy.time import Time
 from astropy import constants as const
@@ -12,6 +13,11 @@ from algo.model import SystemModel, Asteroid, Camera
 
 class RosettaSystemModel(SystemModel):
     def __init__(self, hi_res_shape_model=False):
+        # gives some unnecessary warning about "dubious year" even when trying to ignore it
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            min_time = Time('2015-01-01 00:00:00', scale='utc', format='iso')
+
         super(RosettaSystemModel, self).__init__(
             asteroid=ChuryumovGerasimenko(hi_res_shape_model=hi_res_shape_model),
             camera=Camera(
@@ -21,12 +27,12 @@ class RosettaSystemModel(SystemModel):
                 5,          # y fov in degrees
             ),
             limits=(
-                16,         # min_distance in km
+                64,         # min_distance in km
                 64,         # min_med_distance in km
                 480,        # max_med_distance in km #640
                 1280,       # max_distance in km
                 45,         # min_elong in deg
-                Time('2015-01-01 00:00:00'),  # min time instant
+                min_time,   # min time instant
             )
         )
         self.mission_id = 'rose'
@@ -42,6 +48,7 @@ class ChuryumovGerasimenko(Asteroid):
         self.image_db_path = os.path.join(BASE_DIR, 'data/rosetta-mtp006')
         self.target_model_file = os.path.join(BASE_DIR, 'data/CSHP_DV_130_01_XLRESb_00200.obj') # _XLRES_, _LORES_
         self.hires_target_model_file = os.path.join(BASE_DIR, 'data/CSHP_DV_130_01_LORES_00200.obj') # _XLRES_, _LORES_
+        self.render_smooth_faces = False
         # HIRES_TARGET_MODEL_FILE = os.path.join(SCRIPT_DIR, '../data/CSHP_DV_130_01_HIRESb_00200.obj') # _XLRES_, _LORES_
         # HIRES_TARGET_MODEL_FILE = os.path.join(SCRIPT_DIR, '../data/CSHP_DV_130_01_XLRESb_00200.obj') # _XLRES_, _LORES_
         # TARGET_MODEL_FILE = os.path.join(SCRIPT_DIR, '../data/test-ball-hires.obj')
@@ -54,8 +61,10 @@ class ChuryumovGerasimenko(Asteroid):
         self.real_shape_model = objloader.ShapeModel(
             fname=self.hires_target_model_file if hi_res_shape_model else self.target_model_file)
 
-        # for cross section, assume spherical object and 2km radius
+        self.max_radius = 3000     # in meters, maximum extent of object from asteroid frame coordinate origin
         self.mean_radius = 2000
+
+        # for cross section, assume spherical object and 2km radius
         self.mean_cross_section = math.pi * self.mean_radius ** 2
 
         # epoch for orbital elements, 2010-Oct-22.0 TDB

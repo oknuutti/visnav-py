@@ -138,13 +138,17 @@ class SystemModel(ABC):
         (
             self.min_distance,      # min_distance in km
             self.min_med_distance,  # min_med_distance in km
-            self.max_med_distance,  # max_med_distance in km #640
+            self.max_med_distance,  # max_med_distance in km
             self.max_distance,      # max_distance in km
             self.min_elong,         # min_elong in deg
             self.min_time           # min time instant as astropy.time.Time
         ) = limits
 
+        assert self.min_altitude > 0, \
+            'min distance %.2fkm too small, possible collision as asteroid max_radius=%.0fm'%(self.min_distance, self.asteroid.max_radius)
+
         self.mission_id = None      # overridden by particular missions
+        self.view_width = VIEW_WIDTH
 
         # spacecraft position relative to asteroid, z towards spacecraft,
         #   x towards right when looking out from s/c camera, y up
@@ -180,6 +184,16 @@ class SystemModel(ABC):
         # set default values to params
         for n, p in self.get_params():
             p.value = p.def_val
+
+
+    @property
+    def min_altitude(self):
+        """ in km """
+        return self.min_distance - self.asteroid.max_radius/1000
+
+    @property
+    def view_height(self):
+        return int(self.cam.height * self.view_width/self.cam.width)
 
     def get_params(self, all=False):
         return (
@@ -311,6 +325,7 @@ class SystemModel(ABC):
         
     def gl_sc_asteroid_rel_q(self, discretize_tol=False):
         """ rotation of asteroid relative to spacecraft in opengl coords """
+        assert not discretize_tol, 'discretize_tol deprecated at gl_sc_asteroid_rel_q function'
         self.update_asteroid_model()
         sc_ast_rel_q = SystemModel.sc2gl_q.conj() * self.sc_asteroid_rel_q()
 
@@ -374,6 +389,8 @@ class SystemModel(ABC):
     
     def gl_light_rel_dir(self, err_q=False, discretize_tol=False):
         """ direction of light relative to spacecraft in opengl coords """
+        assert not discretize_tol, 'discretize_tol deprecated at gl_light_rel_dir function'
+
         light_v, err_angle = self.light_rel_dir(err_q=False, discretize_tol=False)
 
         err_q = (err_q or np.quaternion(1, 0, 0, 0))
@@ -389,6 +406,8 @@ class SystemModel(ABC):
 
     def light_rel_dir(self, err_q=False, discretize_tol=False):
         """ direction of light relative to spacecraft in s/c coords """
+        assert not discretize_tol, 'discretize_tol deprecated at light_rel_dir function'
+
         light_v = tools.normalize_v(self.asteroid.position(self.time.value))
         sc_q = self.spacecraft_q()
         err_q = (err_q or np.quaternion(1, 0, 0, 0))
@@ -577,13 +596,16 @@ class Asteroid(ABC):
         self.hires_target_model_file = None
 
         # shape model related
-        self.real_shape_model = None    # loaded at overriding class __init__
+        self.render_smooth_faces = False    # when rendering shape model, smooth faces instead of angular ones
+        self.real_shape_model = None        # loaded at overriding class __init__
         self.real_sc_ast_vertices = None
 
         self.real_position = None       # transient, loaded from image metadata at iotools.lblloader
         
-        # for cross section (probably not in (good) use)
+        self.max_radius = None          # in meters, maximum extent of object from asteroid frame coordinate origin
         self.mean_radius = None         # in meters
+
+        # for cross section (probably not in (good) use)
         self.mean_cross_section = None  # in m2
         
         # epoch for orbital elements

@@ -39,7 +39,7 @@ class AlgorithmBase:
         self.im_yoff = im_yoff
         self.im_width = im_width or self._cam.width
         self.im_height = im_height or self._cam.height
-        self.im_def_scale = min(VIEW_WIDTH/self.im_width, VIEW_HEIGHT/self.im_height)
+        self.im_def_scale = self.system_model.view_width/self.im_width
         self.im_scale = self.im_def_scale
 
         # calculate frustum based on fov, aspect & near
@@ -47,7 +47,7 @@ class AlgorithmBase:
         #       im_xoff, im_yoff, im_width and im_height
         x_fov = self._cam.x_fov * self.im_def_scale / self.im_scale
         y_fov = self._cam.y_fov * self.im_def_scale / self.im_scale
-        self.render_engine.set_frustum(x_fov, y_fov, 0.1, self.system_model.max_distance)
+        self.render_engine.set_frustum(x_fov, y_fov, self.system_model.min_altitude, self.system_model.max_distance)
 
     def load_target_image(self, src):
         tmp = cv2.imread(src, cv2.IMREAD_GRAYSCALE)
@@ -70,6 +70,8 @@ class AlgorithmBase:
         self.obj_idx = self.render_engine.load_object(obj_file, obj_idx)
 
     def render(self, center=False, depth=False, discretize_tol=False, shadows=False, lambertian=False):
+        assert not discretize_tol, 'discretize_tol deprecated at render function'
+
         rel_pos_v, rel_rot_q, light_v = self._render_params(discretize_tol, center)
         res = self.render_engine.render(self.obj_idx, rel_pos_v, rel_rot_q, light_v,
                                          get_depth=depth, shadows=shadows, lambertian=lambertian)
@@ -83,6 +85,8 @@ class AlgorithmBase:
 
 
     def _render_params(self, discretize_tol=False, center_model=False):
+        assert not discretize_tol, 'discretize_tol deprecated at _render_params function'
+
         m = self.system_model
 
         # NOTE: with wide angle camera, would need to take into account
@@ -129,7 +133,7 @@ class AlgorithmBase:
 if __name__ == '__main__':
     sm = RosettaSystemModel()
     lblloader.load_image_meta(sm.asteroid.sample_image_meta_file, sm)
-    re = RenderEngine(VIEW_WIDTH, VIEW_HEIGHT, antialias_samples=0)
+    re = RenderEngine(sm.view_width, sm.view_height, antialias_samples=0)
     obj_idx = re.load_object(sm.asteroid.real_shape_model, smooth=True)
 
     ab = AlgorithmBase(sm, re, obj_idx)

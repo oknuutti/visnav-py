@@ -40,22 +40,22 @@ class TestLoop:
 
         self.exit = False
         self._algorithm_finished = None
-        self._smooth_faces = False
+        self._smooth_faces = self.system_model.asteroid.render_smooth_faces
 
         file_prefix_mod = ''
         if far:
             file_prefix_mod = 'far_'
             self.max_r = self.system_model.max_distance
-            self.min_r = self.system_model.max_med_distance
+            self.min_r = self.system_model.min_distance
         else:
             self.max_r = self.system_model.max_med_distance
-            self.min_r = self.system_model.min_med_distance
+            self.min_r = self.system_model.min_distance
         self.file_prefix = system_model.mission_id+'_'+file_prefix_mod
         self.noisy_sm_prefix = system_model.mission_id
         self.cache_path = os.path.join(CACHE_DIR, system_model.mission_id)
         os.makedirs(self.cache_path, exist_ok=True)
 
-        self.render_engine = RenderEngine(VIEW_WIDTH, VIEW_HEIGHT)
+        self.render_engine = RenderEngine(system_model.view_width, system_model.view_height)
         self.obj_idx = self.render_engine.load_object(self.system_model.asteroid.real_shape_model, smooth=self._smooth_faces)
 
         self.keypoint = KeypointAlgo(self.system_model, self.render_engine, self.obj_idx)
@@ -112,7 +112,7 @@ class TestLoop:
         self._smn_cache_id = smn_type
         self._state_db_path = state_db_path
         self._rotation_noise = rotation_noise
-        
+
         skip = 0
         if isinstance(times, str):
             if ':' in times:
@@ -135,7 +135,7 @@ class TestLoop:
             
             # maybe generate new noise for shape model
             sm_noise = 0
-            if ADD_SHAPE_MODEL_NOISE:
+            if self._smn_cache_id:
                 sm_noise = self.load_noisy_shape_model(sm, i)
                 if sm_noise is None:
                     if DEBUG:
@@ -173,7 +173,7 @@ class TestLoop:
                 imgfile = self.render_navcam_image(sm, i)
                 self._maybe_exit()
 
-            if False:
+            if ONLY_POPULATE_CACHE:
                 # TODO: fix synthetic navcam generation to work with onboard rendering
                 #       current work-around:
                 #           1) first generate cache files and skip _run_algo
@@ -182,7 +182,7 @@ class TestLoop:
 
             # run algorithm
             ok, rtime = self._run_algo(imgfile, self._iter_file(i), **kwargs)
-            
+
             if kwargs.get('use_feature_db', False) and kwargs.get('add_noise', False):
                 sm_noise = self.keypoint.sm_noise
             
@@ -356,8 +356,8 @@ class TestLoop:
                                   #support=np.array(sup.vertices),
                                   L=self._L,
                                   len_sc=SHAPE_MODEL_NOISE_LEN_SC,
-                                  noise_lv=SHAPE_MODEL_NOISE_LV)
-        
+                                  noise_lv=SHAPE_MODEL_NOISE_LV[self._smn_cache_id])
+
         fname = self._cache_file(i, prefix=self.noisy_sm_prefix)+'_'+self._smn_cache_id+'.nsm'
         with open(fname, 'wb') as fh:
             pickle.dump((noisy_model.as_dict(), sm_noise), fh, -1)
@@ -378,7 +378,7 @@ class TestLoop:
     def render_navcam_image(self, sm, i):
         if self._synth_navcam is None:
             self._synth_navcam = RenderEngine(sm.cam.width, sm.cam.height, antialias_samples=16)
-            self._synth_navcam.set_frustum(sm.cam.x_fov, sm.cam.y_fov, 0.1, sm.max_distance)
+            self._synth_navcam.set_frustum(sm.cam.x_fov, sm.cam.y_fov, sm.min_altitude, sm.max_distance)
             self._hires_obj_idx = self._synth_navcam.load_object(sm.asteroid.hires_target_model_file)
 
         sm.swap_values_with_real_vals()
@@ -418,8 +418,8 @@ class TestLoop:
 
     def calculate_result(self, sm, i, imgfile, ok, initial, **kwargs):
         # save function values from optimization
-        fvals = self.window.phasecorr.optfun_values \
-                if ok and kwargs.get('method', False)=='phasecorr' \
+        fvals = self._phasecorr.optfun_values \
+                if np.all(ok) and kwargs.get('method', False) == 'phasecorr' \
                 else None
         final_fval = fvals[-1] if fvals else None
 
@@ -455,28 +455,39 @@ class TestLoop:
             sc_loc_noise = ('', '', '')
 
         noise = sc_loc_noise + (time_noise,) + ast_rot_noise + sc_rot_noise + (dev_angle,)
-        
-        if not ok:
-            pos = float('nan')*np.ones(3)
-            rel_rot = float('nan')*np.ones(3)
-            err = float('nan')*np.ones(4)
-            
+
+        if np.all(ok):
+            ok_pos, ok_rot = True, True
+        elif not np.any(ok):
+            ok_pos, ok_rot = False, False
         else:
+            ok_pos, ok_rot = ok
+
+        if ok_pos:
             pos = sm.spacecraft_pos
+            pos_err = tuple(np.subtract(pos, sm.real_spacecraft_pos))
+        else:
+            pos = float('nan')*np.ones(3)
+            pos_err = tuple(float('nan')*np.ones(3))
+
+        if ok_rot:
             rel_rot = q_to_ypr(sm.sc_asteroid_rel_q())
+            rot_err = (deg(wrap_rads(angle_between_ypr(rel_rot, real_rel_rot))),)
+        else:
+            rel_rot = float('nan')*np.ones(3)
+            rot_err = (float('nan'),)
+
+        if ok_pos and ok_rot:
             est_vertices = sm.sc_asteroid_vertices()
             max_shift = tools.sc_asteroid_max_shift_error(
                     est_vertices, sm.asteroid.real_sc_ast_vertices)
-            
-            err = (
-                *np.subtract(pos, sm.real_spacecraft_pos),
-                deg(angle_between_ypr(rel_rot, real_rel_rot)),
-                max_shift,
-            )
-        
+            both_err = (max_shift,)
+        else:
+            both_err = (float('nan'),)
+
+        err = pos_err + rot_err + both_err
         return params, noise, pos, map(deg, rel_rot), fvals, err
-    
-    
+
     def _init_state_db(self):
         try:
             with open(os.path.join(self._state_db_path, 'ignore_these.txt'), 'rb') as fh:
@@ -511,7 +522,7 @@ class TestLoop:
                 'x est sc pos', 'y est sc pos', 'z est sc pos',
                 'yaw rel est', 'pitch rel est', 'roll rel est',
                 'x err sc pos', 'y err sc pos', 'z err sc pos', 'rot error',
-                'shift error km', 'lat error', 'dist error', 'rel shift error',
+                'shift error km', 'lat error (m/km)', 'dist error (m/km)', 'rel shift error (m/km)',
             ))+'\n')
             
         self._run_times = []
@@ -618,8 +629,7 @@ class TestLoop:
         sm = self.system_model
         if method == 'keypoint+':
             try:
-                self.mixedalgo.run(imgfile, outfile, **kwargs)
-                ok = True
+                ok = self.mixedalgo.run(imgfile, outfile, **kwargs)
             except PositioningException as e:
                 print(str(e))
         if method == 'keypoint':

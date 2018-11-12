@@ -25,7 +25,7 @@ class Stopwatch:
 
     @property
     def elapsed(self):
-        return self._elapsed + ((self._start - self._func()) if self.running else 0)
+        return self._elapsed + ((self._func() - self._start) if self.running else 0)
 
     def start(self):
         if self._start is not None:
@@ -325,21 +325,6 @@ def bf2_lat_lon(tol, lat_range=(-math.pi/2, math.pi/2)):
 
     return points
 
-def fdb_relrot_to_render_q(sc_ast_lat, sc_ast_lon):
-    return ypr_to_q(sc_ast_lat, sc_ast_lon, 0).conj()
-
-def render_q_to_fdb_relrot(qfin):
-    sc_ast_lat, sc_ast_lon, roll = q_to_ypr(qfin.conj())
-    return sc_ast_lat, sc_ast_lon
-
-def fdb_light_to_render_light(light_lat, light_lon):
-    return spherical2cartesian(light_lat, light_lon, 1)
-
-def render_light_to_fdb_light(light_v):
-    light_lat, light_lon, r = cartesian2spherical(*light_v)
-    return light_lat, light_lon
-
-
 def mv_normal(mean, cov=None, L=None, size=None):
     if size is None:
         final_shape = []
@@ -380,7 +365,7 @@ def mv_normal(mean, cov=None, L=None, size=None):
     
 
 def apply_noise(model, support=None, L=None, len_sc=SHAPE_MODEL_NOISE_LEN_SC, 
-                noise_lv=SHAPE_MODEL_NOISE_LV, only_z=False):
+                noise_lv=SHAPE_MODEL_NOISE_LV['lo'], only_z=False):
     
     noisy_points, avg_dev, L = points_with_noise(points=np.array(model.vertices),
             support=support, L=L, len_sc=len_sc, noise_lv=noise_lv, only_z=only_z)
@@ -395,7 +380,7 @@ def apply_noise(model, support=None, L=None, len_sc=SHAPE_MODEL_NOISE_LEN_SC,
     
 
 def points_with_noise(points, support=None, L=None, len_sc=SHAPE_MODEL_NOISE_LEN_SC, 
-                noise_lv=SHAPE_MODEL_NOISE_LV, max_rng=None, only_z=False):
+                noise_lv=SHAPE_MODEL_NOISE_LV['lo'], max_rng=None, only_z=False):
     
     from scipy.interpolate import LinearNDInterpolator, NearestNDInterpolator
     import random
@@ -411,19 +396,19 @@ def points_with_noise(points, support=None, L=None, len_sc=SHAPE_MODEL_NOISE_LEN
         support = points #[random.sample(list(range(len(points))), min(3000,len(points)))]
     
     n = len(support)
-    mean = np.mean(points,axis=0)
-    max_rng = np.max(np.ptp(points,axis=0)) if max_rng is None else max_rng
+    mean = np.mean(points, axis=0)
+    max_rng = np.max(np.ptp(points, axis=0)) if max_rng is None else max_rng
     
     y_cov = None
     if L is None:
-        kernel = 0.6*noise_lv*Matern(length_scale=len_sc*max_rng, nu=1.5) \
-               + 0.4*noise_lv*Matern(length_scale=0.1*len_sc*max_rng, nu=1.5) \
-               + WhiteKernel(noise_level=1e-4*noise_lv*max_rng) # white noise for positive definite covariance matrix only
-        y_cov = kernel(support-mean)
+        kernel = 0.6*noise_lv * Matern(length_scale=len_sc*max_rng, nu=1.5) \
+               + 0.4*noise_lv * Matern(length_scale=0.1*len_sc*max_rng, nu=1.5) \
+               + WhiteKernel(noise_level=1e-5*noise_lv*max_rng) # white noise for positive definite covariance matrix only
+        y_cov = kernel(support - mean)
 
     # sample gp
     e0, L = mv_normal(np.zeros(n), cov=y_cov, L=L)
-    err = np.exp(e0).reshape((-1,1))
+    err = np.exp(e0).reshape((-1, 1))
 
     if len(err) == len(points):
         full_err = err
@@ -446,21 +431,23 @@ def points_with_noise(points, support=None, L=None, len_sc=SHAPE_MODEL_NOISE_LEN
                 raise IndexError('%s,%s,%s'%(err.shape, full_err.shape, points.shape)) from e
 
     # extra high frequency noise
-    white_noise = 1 if True else np.exp(np.random.normal(scale=0.2*noise_lv*max_rng, size=(len(full_err),1)))
+    # white_noise = 1 if True else np.exp(np.random.normal(scale=0.2*noise_lv*max_rng, size=(len(full_err),1)))
 
     if only_z:
-        add_err_z = (max_rng/2)*(full_err*white_noise - 1)
-        add_err = np.concatenate((np.zeros((len(full_err),2)), add_err_z), axis=1)
+        add_err_z = (max_rng/2) * (full_err - 1)
+        add_err = np.concatenate((np.zeros((len(full_err), 2)), add_err_z), axis=1)
         noisy_points = points + add_err
-        devs = np.sqrt((points[:,2]-noisy_points[:,2])**2)/(max_rng/2)
+        devs = np.abs(noisy_points[:, 2] - points[:, 2]) / (max_rng/2)
+        assert np.isclose(devs.flatten(), np.abs(full_err - 1).flatten()).all(), 'something wrong'
     else:
         # noisy_points = (points-mean)*full_err*white_noise +mean
-        r = np.sqrt(np.sum((points-mean)**2, axis=-1)).reshape(-1,1)
-        noisy_points = (points-mean)*(1 + np.log(full_err) / r) + mean
-        devs = np.sqrt(np.sum((points-noisy_points)**2, axis=-1)/np.sum((points-mean)**2, axis=-1))
+        #r = np.sqrt(np.sum((points - mean)**2, axis=-1)).reshape(-1, 1)
+        #noisy_points = (points - mean) * (1 + np.log(full_err)/r) + mean
+        noisy_points = (points - mean) * full_err + mean
+        devs = np.sqrt(np.sum((noisy_points - points)**2, axis=-1) / np.sum((points - mean)**2, axis=-1))
     
     if DEBUG or not BATCH_MODE:
-        print('noise: %.3f, %.3f; avg=%.3f'%(tuple(np.percentile(devs, (68,95)))+(np.mean(devs),)))
+        print('noise (lv=%.3f): %.3f, %.3f; avg=%.3f'%((noise_lv,)+tuple(np.percentile(devs, (68, 95)))+(np.mean(devs),)))
     
     if False:
         import matplotlib.pyplot as plt
