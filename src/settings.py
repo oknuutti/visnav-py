@@ -19,8 +19,8 @@ VIEW_WIDTH = 512
 
 SHAPE_MODEL_NOISE_LEN_SC = 0.33
 SHAPE_MODEL_NOISE_LV = {
-    'lo': 0.005,
-    'hi': 0.020,
+    'lo': 0.0003,   # was 0.005, resulted in very spiky 3d models, ~5% err
+    'hi': 0.0012,    # was 0.020, resulted in very spiky 3d models. ~10% err
 }
 
 ## profile algorithm by setting PROFILE to True

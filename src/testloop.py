@@ -35,6 +35,8 @@ from settings import *
 
 
 class TestLoop:
+    UNIFORM_DISTANCE_GENERATION = True
+
     def __init__(self, system_model, far=False):
         self.system_model = system_model
 
@@ -43,7 +45,7 @@ class TestLoop:
         self._smooth_faces = self.system_model.asteroid.render_smooth_faces
 
         file_prefix_mod = ''
-        if far:
+        if far and self.system_model.max_distance > self.system_model.max_med_distance:
             file_prefix_mod = 'far_'
             self.max_r = self.system_model.max_distance
             self.min_r = self.system_model.min_distance
@@ -225,7 +227,10 @@ class TestLoop:
             sc_lon = np.random.uniform(-math.pi, math.pi)
 
             # s/c distance as inverse uniform distribution
-            sc_r = 1/np.random.uniform(1/self.max_r, 1/self.min_r)
+            if TestLoop.UNIFORM_DISTANCE_GENERATION:
+                sc_r = np.random.uniform(self.min_r, self.max_r)
+            else:
+                sc_r = 1/np.random.uniform(1/self.max_r, 1/self.min_r)
 
             # same in cartesian coord
             sc_ex_u, sc_ey_u, sc_ez_u = spherical_to_cartesian(sc_r, sc_lat, sc_lon)
@@ -235,11 +240,11 @@ class TestLoop:
             sc_ast_v = -np.array([sc_ex, sc_ey, sc_ez])
 
             # sc orientation: uniform, center of asteroid at edge of screen - some margin
-            da = np.random.uniform(0, rad(sm.cam.y_fov/2))
+            da = np.random.uniform(0, rad(min(sm.cam.x_fov, sm.cam.y_fov)/2))
             dd = np.random.uniform(0, 2*math.pi)
             sco_lat = wrap_rads(-sc_lat + da*math.sin(dd))
             sco_lon = wrap_rads(math.pi + sc_lon + da*math.cos(dd))
-            sco_rot = np.random.uniform(-math.pi, math.pi) # rotation around camera axis
+            sco_rot = np.random.uniform(-math.pi, math.pi)  # rotation around camera axis
             sco_q = ypr_to_q(sco_lat, sco_lon, sco_rot)
             
             # sc_ast_p ecliptic => sc_ast_p open gl -z aligned view
@@ -430,7 +435,7 @@ class TestLoop:
         # real system state
         params = (sm.time.real_value, *r_ast_axis,
                 *sm.real_spacecraft_rot, deg(elong), deg(direc),
-                *sm.real_spacecraft_pos, *map(deg, real_rel_rot),
+                *sm.real_spacecraft_pos, sm.real_spacecraft_altitude, *map(deg, real_rel_rot),
                 imgfile, final_fval)
         
         # calculate added noise
@@ -477,16 +482,18 @@ class TestLoop:
             rel_rot = float('nan')*np.ones(3)
             rot_err = (float('nan'),)
 
+        alt = float('nan')
         if ok_pos and ok_rot:
             est_vertices = sm.sc_asteroid_vertices()
             max_shift = tools.sc_asteroid_max_shift_error(
                     est_vertices, sm.asteroid.real_sc_ast_vertices)
-            both_err = (max_shift,)
+            alt = sm.spacecraft_altitude
+            both_err = (max_shift, alt - sm.real_spacecraft_altitude)
         else:
-            both_err = (float('nan'),)
+            both_err = (float('nan'), float('nan'),)
 
         err = pos_err + rot_err + both_err
-        return params, noise, pos, map(deg, rel_rot), fvals, err
+        return params, noise, pos, alt, map(deg, rel_rot), fvals, err
 
     def _init_state_db(self):
         try:
@@ -513,16 +520,16 @@ class TestLoop:
                 'iter', 'date', 'execution time',
                 'time', 'ast lat', 'ast lon', 'ast rot',
                 'sc lat', 'sc lon', 'sc rot', 
-                'sol elong', 'light dir', 'x sc pos', 'y sc pos', 'z sc pos',
+                'sol elong', 'light dir', 'x sc pos', 'y sc pos', 'z sc pos', 'sc altitude',
                 'rel yaw', 'rel pitch', 'rel roll', 
                 'imgfile', 'optfun val', 'shape model noise',
                 'sc pos x dev', 'sc pos y dev', 'sc pos z dev',
                 'time dev', 'ast lat dev', 'ast lon dev', 'ast rot dev',
                 'sc lat dev', 'sc lon dev', 'sc rot dev', 'total dev angle',
-                'x est sc pos', 'y est sc pos', 'z est sc pos',
+                'x est sc pos', 'y est sc pos', 'z est sc pos', 'altitude est sc',
                 'yaw rel est', 'pitch rel est', 'roll rel est',
                 'x err sc pos', 'y err sc pos', 'z err sc pos', 'rot error',
-                'shift error km', 'lat error (m/km)', 'dist error (m/km)', 'rel shift error (m/km)',
+                'shift error km', 'altitude error', 'lat error (m/km)', 'dist error (m/km)', 'rel shift error (m/km)',
             ))+'\n')
             
         self._run_times = []
@@ -535,20 +542,20 @@ class TestLoop:
         self._timer.start()
         
         
-    def _write_log_entry(self, i, rtime, sm_noise, params, noise, pos, rel_rot, fvals, err):
+    def _write_log_entry(self, i, rtime, sm_noise, params, noise, pos, alt, rel_rot, fvals, err):
 
         # save execution time
         self._run_times.append(rtime)
 
         # calculate errors
-        dist = abs(params[-6])
+        dist = abs(params[-7])
         if not math.isnan(err[0]):
             lerr = 1000*math.sqrt(err[0]**2 + err[1]**2) / dist     # m/km
-            derr = 1000*abs(err[2]) / dist                          # m/km
+            derr = 1000*err[2] / dist                               # m/km
             rerr = abs(err[3])
             serr = 1000*err[4] / dist                               # m/km
             self._laterrs.append(lerr)
-            self._disterrs.append(derr)
+            self._disterrs.append(abs(derr))
             self._roterrs.append(rerr)
             self._shifterrs.append(serr)
         else:
@@ -559,7 +566,7 @@ class TestLoop:
         with open(self._logfile, 'a') as file:
             file.write('\t'.join(map(str, (
                 i, dt.now().strftime("%Y-%m-%d %H:%M:%S"), rtime, *params,
-                sm_noise, *noise, *pos, *rel_rot, *err, lerr, derr, serr
+                sm_noise, *noise, *pos, alt, *rel_rot, *err, lerr, derr, serr
             )))+'\n')
 
         # log opt fun values in other file

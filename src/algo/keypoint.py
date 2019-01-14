@@ -31,7 +31,7 @@ class KeypointAlgo(AlgorithmBase):
     MAX_WORK_MEM = 0*1024       # in bytes, usable for both ref and scene features, default 512kB
     FDB_MAX_MEM = 512*1024      # in bytes per scene, default 192kB
     FDB_TOL = math.radians(12)  # features from db never more than FDB_TOL off
-    FDB_REAL = False
+    FDB_REAL = True
     FDB_USE_ALL_FEATS = False
 
     MIN_FEATURES = 10  # fail if less inliers at the end

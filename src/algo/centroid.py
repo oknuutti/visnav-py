@@ -27,7 +27,7 @@ class CentroidAlgo(AlgorithmBase):
         self.MIN_PIXELS_FOR_DETECTION = 30      # fail if less pixels lit
         self.ASTEROID_MIN_BORDER_MARGIN = 0.04  # if less than margin at both extrames, astroid too close
         self.ASTEROID_MAX_SPAN = 0.85           # if asteroid spans more than this, it's too close
-        self.MAX_ITERATIONS = 10                # max number of iterations       
+        self.MAX_ITERATIONS = 30                # max number of iterations
         self.ITERATION_TOL = 0.002              # min change % in position vector
         self.CHECK_RESULT_VALIDITY = False
         self.MIN_RESULT_XCORR = 0.3             # if result xcorr with scene is less than this, fail
@@ -37,13 +37,16 @@ class CentroidAlgo(AlgorithmBase):
         self.debug_filebase = outfile
         self._bg_threshold = kwargs.get('bg_threshold', self._bg_threshold)
         sce_img = self.maybe_load_scene_image(sce_img)
-        
+
+        if DEBUG:
+            cv2.imshow('target img', sce_img)
+
         self.system_model.spacecraft_pos = (0, 0, -self.system_model.min_med_distance)
         for i in range(self.MAX_ITERATIONS):
             ox, oy, oz = self.system_model.spacecraft_pos
             od = math.sqrt(ox**2 + oy**2 + oz**2)
             
-            if not DEBUG or BATCH_MODE:
+            if not DEBUG:
                 self.adjust(sce_img)
             else:
                 try:
@@ -115,7 +118,7 @@ class CentroidAlgo(AlgorithmBase):
         old_z = self.system_model.z_off.value
 
         # when adjusting for distance, remember to adjust all coordinates, try to first adjust laterally
-        new_z = old_z * (math.sqrt(ref_px/sce_px) ** .2)
+        new_z = old_z * (math.sqrt(ref_px/sce_px) ** .5)
         err_d_x = old_x * (1 - new_z/old_z)
         err_d_y = old_y * (1 - new_z/old_z)
 

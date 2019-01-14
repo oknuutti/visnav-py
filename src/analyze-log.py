@@ -5,6 +5,7 @@ import math
 import numpy as np
 import matplotlib.pyplot as plt
 
+from batch1 import get_system_model
 from missions.didymos import DidymosSystemModel
 from missions.rosetta import RosettaSystemModel
 
@@ -22,10 +23,10 @@ from algo import tools
 
 # read logfiles
 def read_data(sm, logfile, predictors, target):
-    X, y = [], []
+    X, y, aux = [], [], []
     
     with open(logfile, newline='') as csvfile:
-        diam = 2 # avg diam 2km for asteroid
+        rad = sm.asteroid.mean_radius * 0.001
         data = csv.reader(csvfile, delimiter='\t')
         first = True
         for row in data:
@@ -34,6 +35,7 @@ def read_data(sm, logfile, predictors, target):
                     first = False
                     prd_i = [row.index(p) for p in predictors if p not in ('distance', 'visible')]
                     trg_i = row.index(target)
+                    rot_i = row.index('rot error')
                     pos_i = [row.index(p+' sc pos') for p in ('x','y','z')]
                 else:
                     row = np.array(row)
@@ -41,9 +43,9 @@ def read_data(sm, logfile, predictors, target):
                     distance = np.sqrt(np.sum(pos**2))
                     xt = abs(pos[2])*math.tan(math.radians(sm.cam.x_fov)/2)
                     yt = abs(pos[2])*math.tan(math.radians(sm.cam.y_fov)/2)
-                    xm = np.clip((xt - (abs(pos[0])-diam/2))/diam, 0, 1)
-                    ym = np.clip((yt - (abs(pos[1])-diam/2))/diam, 0, 1)
-                    
+                    xm = np.clip((xt - (abs(pos[0])-rad))/rad/2, 0, 1)
+                    ym = np.clip((yt - (abs(pos[1])-rad))/rad/2, 0, 1)
+
                     X.append(np.concatenate((
                         row[prd_i].astype(np.float),
                         [distance],
@@ -51,13 +53,16 @@ def read_data(sm, logfile, predictors, target):
                     )))
                     
                     # err m/km
-                    tmp = row[trg_i].astype(np.float)*1000 if len(row)>trg_i else float('nan')
-                    y.append(tmp) #/ distance
+                    tmp = row[trg_i].astype(np.float) if len(row)>trg_i else float('nan')
+                    y.append(tmp)
+                    aux.append(row[rot_i].astype(np.float))
     
     X = np.array(X)
     
     # for classification of fails
     yc = np.isnan(y)
+    if True:
+        yc = np.logical_or(yc, np.isnan(aux))
     
     # for regression
     yr = np.array(y)
@@ -68,19 +73,29 @@ def read_data(sm, logfile, predictors, target):
 
 if __name__ == '__main__':
     if len(sys.argv)<2:
-        print('USAGE: python analyze-log.py <path to log file>')
+        print('USAGE: python analyze-log.py <path to log file> [gpr|1d|easy] [shift|alt|dist|lat|orient]')
         sys.exit()
         
     logfile = sys.argv[1]
-    one_d_only = len(sys.argv) > 2 and sys.argv[2] == '1d'
+    mode = sys.argv[2]
+    if len(sys.argv) > 3:
+        sc = 1
+        if sys.argv[3] == 'shift':
+            target = 'rel shift error (m/km)'
+        elif sys.argv[3] == 'alt':
+            target = 'altitude error'
+            sc = 1000
+        elif sys.argv[3] == 'dist':
+            target = 'dist error (m/km)'
+        elif sys.argv[3] == 'lat':
+            target = 'lat error (m/km)'
+        elif sys.argv[3] == 'orient':
+            target = 'rot error'
+        else:
+            assert False, 'unknown target: %s' % sys.argv[3]
 
-    if logfile[:4] == 'rose':
-        sm = RosettaSystemModel()
-    elif logfile[:4] == 'didy':
-        sm = DidymosSystemModel()
-    else:
-        print('defaulting to rosetta mission')
-        sm = RosettaSystemModel()
+    mission = logfile.split('-')[0]
+    sm = get_system_model(mission)
 
     predictors = (
         'sol elong',    # solar elongation
@@ -94,45 +109,67 @@ if __name__ == '__main__':
         'Distance (km)',
         'In camera view (%)',
     )
-    target = 'rel shift error' #'shift error km' #if not one_d_only else 'dist error'
+    target = target or 'rel shift error (m/km)'  #'shift error km' #if not one_d_only else 'dist error'
     
     # read data
-    X, yc, yr = read_data(sm, logfile, predictors, target)
-    X[:,1] = np.abs(tools.wrap_degs(X[:,1]))
+    X, yc, yr = read_data(sm, os.path.join(LOG_DIR, logfile), predictors, target)
+    X[:, 1] = np.abs(tools.wrap_degs(X[:, 1]))
+    yr *= sc
 
-    if one_d_only:
-        n_groups = 10
+    if mode in ('1d', 'easy'):
+        if mode == 'easy':
+            # more than 90deg sol elong, mostly in view (TODO: Debug)
+            I = np.logical_and(np.logical_and(X[:, 0] > 90, X[:, 3] >= 0.67), yc == 0)
+            X = X[I, :]
+            yc = yc[I]
+            yr = yr[I]
+            # lim = np.percentile(np.abs(yr[yc == 0]), 99)
+            # yc = np.logical_or(yc, np.abs(yr) >= lim)
+
+        n_groups = 6
         #yr = yr/1000
-        for idx in (0,1,2,):
+        for idx in (0, 1, 2,):
             xmin, xmax = np.min(X[:,idx]), np.max(X[:,idx])
             #x = [1/v for v in np.linspace(1/xmin, 1/xmax, n_groups+1)]
             x = np.linspace(xmin, xmax, n_groups + 1)
             y_grouped = [yr[np.logical_and(np.logical_not(yc), np.logical_and(X[:,idx]>x[i], X[:,idx]<x[i+1]))] for i in range(n_groups)]
-            means = [np.mean(yg) for yg in y_grouped]
-            stds = [np.std(yg) for yg in y_grouped]
+            means = np.array([np.mean(yg) for yg in y_grouped])
+            stds = np.array([np.std(yg) for yg in y_grouped])
             #means = [np.percentile(yg, 50) for yg in y_grouped]
             #stds = np.subtract([np.percentile(yg, 68) for yg in y_grouped], means)
             fig, ax = plt.subplots(figsize=(10, 4))
-            index = np.arange(n_groups)
-            bar_width = 0.35
-            opacity = 0.4
-            error_config = {'ecolor': '0.3'}
-            rects1 = ax.bar(index, means, bar_width,
-                            alpha=opacity, color='b',
-                            yerr=stds, error_kw=error_config,
-                            label='error')
+            ax.plot(X[:, idx], yr, 'x')
+
+            if False:
+                bar_width = (xmax - xmin)/n_groups * 0.2
+                rects1 = ax.bar((x[1:] + x[:-1]) * 0.5, stds, width=bar_width, bottom=means-stds/2,
+                                alpha=0.4, color='b',
+                                yerr=stds, error_kw={'ecolor': '0.3'},
+                                label='error')
+            else:
+                x = x.reshape((-1, 1))
+                stds = stds.reshape((-1, 1))
+                means = means.reshape((-1, 1))
+                xstep = np.concatenate((x, x), axis=1).flatten()[1:-1]
+                sstep = np.concatenate((stds, stds), axis=1).flatten()
+                mstep = np.concatenate((means, means), axis=1).flatten()
+                ax.plot(xstep, sstep, '-')
+                ax.plot(xstep, mstep, '-')
 
             ax.set_xlabel(predictor_labels[idx])
-            ax.set_ylabel('Error (m/km)')
-            ax.set_title('Error (m/km) by %s'%predictor_labels[idx])
-            ax.set_xticks(index + bar_width / 2)
-            ax.set_xticklabels(['%d-%d'%(x[i],x[i+1]) for i in range(n_groups)])
+            ax.set_ylabel(target)
+            ax.set_title('%s by %s' % (target, predictor_labels[idx]))
+            ax.set_xticks((x[1:] + x[:-1]) * 0.5)
+            #ax.set_xticklabels(['%.2f-%.2f' % (x[i], x[i+1]) for i in range(n_groups)])
             #ax.legend()
+
+            while(not plt.waitforbuttonpress()):
+                pass
 
             fig.tight_layout()
             plt.show()
 
-    else:
+    elif mode == 'gpr':
         pairs = (
             (0,1),
             (0,2),
@@ -190,4 +227,7 @@ if __name__ == '__main__':
             #plt.title("%s\n Log-Marginal-Likelihood:%.3f" % res, fontsize=12)
             plt.tight_layout()
             plt.show()
+    else:
+        assert False, 'wrong mode'
 
+    #plt.waitforbuttonpress()

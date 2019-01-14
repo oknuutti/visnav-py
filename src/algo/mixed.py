@@ -49,7 +49,7 @@ class MixedAlgo(AlgorithmBase):
 
             d2 = np.linalg.norm(self.system_model.spacecraft_pos)
             rel_q2 = self.system_model.sc_asteroid_rel_q()
-            d_ang = abs(tools.wrap_rads(tools.angle_between_q(rel_q1, rel_q2)))
+            d_ang = abs(tools.wrap_rads(tools.angle_between_q(rel_q1, rel_q2))) if fallback else None
             if fallback and (d2 > d1 * 1.2 or d_ang > math.radians(20)):
                 # if keypoint res distance significantly larger than from centroid method, override
                 # also, if orientation significantly different from initial, override

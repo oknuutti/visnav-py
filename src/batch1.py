@@ -1,16 +1,30 @@
-import math
-
-import settings
-from missions.didymos import DidymosSystemModel
-from missions.rosetta import RosettaSystemModel
-
-settings.BATCH_MODE = True
-
 import sys
-import os
 sys.tracebacklimit = 10
 
 from scipy import optimize
+
+from settings import *
+from missions.didymos import DidymosSystemModel
+from missions.rosetta import RosettaSystemModel
+from testloop import TestLoop
+
+
+def get_system_model(mission, hi_res_shape_model=False):
+    if mission == 'rose':
+        sm = RosettaSystemModel(hi_res_shape_model=hi_res_shape_model)
+    elif mission == 'didy1n':
+        sm = DidymosSystemModel(target_primary=True, hi_res_shape_model=hi_res_shape_model)
+    elif mission == 'didy1w':
+        sm = DidymosSystemModel(target_primary=True, hi_res_shape_model=hi_res_shape_model, use_narrow_cam=False)
+    elif mission == 'didy2n':
+        sm = DidymosSystemModel(target_primary=True, hi_res_shape_model=hi_res_shape_model)
+    elif mission == 'didy2w':
+        sm = DidymosSystemModel(target_primary=True, hi_res_shape_model=hi_res_shape_model, use_narrow_cam=False)
+    else:
+        assert False, 'Unknown mission given as argument: %s' % mission
+    assert mission == sm.mission_id, 'wrong system model mission id'
+
+    return sm
 
 
 if __name__ == '__main__':
@@ -77,7 +91,8 @@ if __name__ == '__main__':
         }
     elif method=='centroid':
         kwargs = {'method':'centroid'}
-        assert not set(m).union({'keypoint', 'orb', 'akaze', 'sift', 'surf'}), 'for args: first keypoint method, then centroid'
+        assert not set(m).intersection({'keypoint', 'orb', 'akaze', 'sift', 'surf'}), \
+            'for args: first keypoint method, then centroid'
     elif method=='keypoint':
         kwargs = {'method':'keypoint'}
     elif method=='orb':
@@ -114,27 +129,16 @@ if __name__ == '__main__':
         if noise:
             kwargs['add_noise'] = noise
 
-    if mission == 'rose':
-        sm = RosettaSystemModel(hi_res_shape_model=hi_res_shape_model)
-    elif mission == 'didy':
-        sm = DidymosSystemModel(hi_res_shape_model=hi_res_shape_model)
-    elif mission == 'didw':
-        sm = DidymosSystemModel(hi_res_shape_model=hi_res_shape_model, use_narrow_cam=False)
-    else:
-        assert False, 'Unknown mission given as argument: %s' % mission
-    assert mission == sm.mission_id, 'wrong system model mission id'
+    sm = get_system_model(mission, hi_res_shape_model=hi_res_shape_model)
 
     if 'fdb' in m:
         #sm.view_width = sm.cam.width
-        sm.view_width = 512
+        sm.view_width = VIEW_WIDTH
 
     if 'real' in m:
         kwargs['state_db_path'] = sm.asteroid.image_db_path
         #kwargs['scale_cam_img'] = True
         #kwargs['rotation_noise'] = False
-
-    from settings import *
-    from testloop import TestLoop
 
     tl = TestLoop(sm, far=(kwargs['method'] in ('centroid', 'keypoint+')))
     tl.run(count, log_prefix=mission+'-'+full_method+'-', **kwargs)

@@ -47,7 +47,7 @@ class AlgorithmBase:
         #       im_xoff, im_yoff, im_width and im_height
         x_fov = self._cam.x_fov * self.im_def_scale / self.im_scale
         y_fov = self._cam.y_fov * self.im_def_scale / self.im_scale
-        self.render_engine.set_frustum(x_fov, y_fov, self.system_model.min_altitude, self.system_model.max_distance)
+        self.render_engine.set_frustum(x_fov, y_fov, self.system_model.min_altitude*.1, self.system_model.max_distance)
 
     def load_target_image(self, src):
         tmp = cv2.imread(src, cv2.IMREAD_GRAYSCALE)

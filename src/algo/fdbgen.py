@@ -65,7 +65,7 @@ class FeatureDatabaseGenerator(AlgorithmBase):
 
         if save_progress and os.path.exists(save_file):
             # load existing fdb
-            status, sc_ast_perms, light_perms, fdb = FeatureDatabaseGenerator.load_fdb(save_file)
+            status, sc_ast_perms, light_perms, fdb = self.load_fdb(save_file)
             assert len(sc_ast_perms) == n1, \
                 'Wrong number of s/c - asteroid relative orientation scenes: %d vs %d'%(len(sc_ast_perms), n1)
             assert len(light_perms) == n2, \
@@ -371,7 +371,7 @@ class FeatureDatabaseGenerator(AlgorithmBase):
         else:
             status, fdb_sc_ast_perms, fdb_light_perms, fdb = tmp
 
-        assert status['stage'] >= 3, 'Incomplete FDB status: %s' % (status,)
+        # assert status['stage'] >= 3, 'Incomplete FDB status: %s' % (status,)
         return status, fdb_sc_ast_perms, fdb_light_perms, fdb
 
     def save_fdb(self, status, fdb, save_file):
@@ -400,28 +400,39 @@ if __name__ == '__main__':
     # * 10 deg, 128kb, 0.415, 1984MB
     # * 12 deg, 512kb, ?
 
+    # Didy - AKAZE:
+    # * 10 deg, 128kb,
+    # * 12 deg, 512kb,
+
     # Rose - ORB:
-    # - 9 deg, 96kb, 0.327, 1851MB
-    # * 10 deg, 128kb, 0.328, 1572MB
-    # * 12 deg, 512kb, 0.174, 1558MB
-    # * 15 deg, 2048kb?
+    # * 10 deg, 128kb, 0.469, 2246MB
+    # * 11 deg, 256kb,
+    # * 12 deg, 512kb, 0.267, 2393MB
 
     # Rose - AKAZE:
-    # * 10 deg, 128kb
+    # * 10 deg, 128kb, 0.558, 2670MB
+    # * 11 deg, 256kb, 0,291, 1948MB
     # * 12 deg, 512kb, 0.131, 1177MB
-    # * 15 deg, 2048kb?
 
-    # sm = RosettaSystemModel(hi_res_shape_model=True)                          # rose
-    # sm = DidymosSystemModel(hi_res_shape_model=True, use_narrow_cam=True)       # didy
-    sm = DidymosSystemModel(hi_res_shape_model=True, use_narrow_cam=False)      # didw
+    # Rose - SIFT:
+    # * 10 deg, 128kb, 0,441, 2111MB
+    # * 11 deg, 256kb,
+    # * 12 deg, 512kb, 0.217, 1945MB
+
+    # Rose - SURF:
+    # \* 10 deg, 128kb,
+    # \* 12 deg, 512kb,
+
+    sm = RosettaSystemModel(hi_res_shape_model=True)                          # rose
+    # sm = DidymosSystemModel(hi_res_shape_model=True, use_narrow_cam=True)   # didy
+    # sm = DidymosSystemModel(hi_res_shape_model=True, use_narrow_cam=False)  # didw
 
     # sm.view_width = sm.cam.width
     sm.view_width = 512
-    feat = KeypointAlgo.AKAZE
-    fdb_tol = math.radians(12)
-    maxmem = 512 * 1024
+    feat = KeypointAlgo.ORB
+    fdb_tol = math.radians(11)
+    maxmem = 256 * 1024
 
-    sm = RosettaSystemModel(hi_res_shape_model=True)
     re = RenderEngine(sm.view_width, sm.view_height, antialias_samples=0)
     obj_idx = re.load_object(sm.asteroid.real_shape_model, smooth=sm.asteroid.render_smooth_faces)
     fdbgen = FeatureDatabaseGenerator(sm, re, obj_idx)
@@ -430,7 +441,7 @@ if __name__ == '__main__':
         fdb = fdbgen.generate_fdb(feat, fdb_tol=fdb_tol, maxmem=maxmem, save_progress=True)
     else:
         fname = fdbgen.fdb_fname(feat, fdb_tol, maxmem)
-        status, sc_ast_perms, light_perms, fdb = FeatureDatabaseGenerator.load_fdb(fname)
+        status, sc_ast_perms, light_perms, fdb = fdbgen.load_fdb(fname)
         print('status: %s' % (status,))
         #fdbgen.estimate_mem_usage(12, 512, 0.25)
         #quit()

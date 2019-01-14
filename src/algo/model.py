@@ -243,6 +243,20 @@ class SystemModel(ABC):
     def spacecraft_dist(self):
         return math.sqrt(sum(x**2 for x in self.spacecraft_pos))
 
+    @property
+    def spacecraft_altitude(self):
+        sc_ast_v = tools.normalize_v(np.array(self.spacecraft_pos))
+        ast_vx = self.sc_asteroid_vertices()
+        min_distance = np.min(sc_ast_v.dot(ast_vx.T))
+        return min_distance
+
+    @property
+    def real_spacecraft_altitude(self):
+        sc_ast_v = tools.normalize_v(np.array(self.real_spacecraft_pos))
+        ast_vx = self.sc_asteroid_vertices(real=True)
+        min_distance = np.min(sc_ast_v.dot(ast_vx.T))
+        return min_distance
+
     def asteroid_rotation_from_model(self):
         self.ast_x_rot.value = math.degrees(self.asteroid.axis_latitude)
         self.ast_y_rot.value = math.degrees(self.asteroid.axis_longitude)
@@ -384,8 +398,7 @@ class SystemModel(ABC):
         sc_ast_q = self.real_sc_asteroid_rel_q() if real else self.sc_asteroid_rel_q()
         sc_pos = self.real_spacecraft_pos if real else self.spacecraft_pos
         
-        return tools.q_times_mx(sc_ast_q, np.array(self.asteroid.real_shape_model.vertices)) \
-                + tools.q_times_v(SystemModel.sc2gl_q, sc_pos)
+        return tools.q_times_mx(sc_ast_q, np.array(self.asteroid.real_shape_model.vertices)) + sc_pos
     
     def gl_light_rel_dir(self, err_q=False, discretize_tol=False):
         """ direction of light relative to spacecraft in opengl coords """
@@ -549,7 +562,7 @@ class Camera:
                         [0, 0, 1]], dtype="float")
 
     @staticmethod
-    @lru_cache(maxsize=None)
+    @lru_cache(maxsize=1)
     def _inv_intrinsic_camera_mx(w, h, xfov, yfov, legacy=True):
         return np.linalg.inv(Camera._intrinsic_camera_mx(w, h, xfov, yfov, legacy=legacy))
 
