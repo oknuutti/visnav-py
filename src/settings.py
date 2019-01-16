@@ -33,4 +33,4 @@ START_IN_THREAD = False
 BATCH_MODE = True          # used only in relation to visnav.py
 DEBUG = False
 
-ONLY_POPULATE_CACHE = False  # work-around for an unfixed bug
+ONLY_POPULATE_CACHE = True  # work-around for an unfixed bug

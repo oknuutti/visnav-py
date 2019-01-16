@@ -34,8 +34,8 @@ class DidymosSystemModel(SystemModel):
         )
 
         if target_primary:
-            if narrow_cam:
-                self.mission_id = 'didy1n'
+            if use_narrow_cam:
+                mission_id = 'didy1n'
                 limits = (
                     7.5,    # min_distance in km
                     8.5,    # min_med_distance in km
@@ -45,7 +45,7 @@ class DidymosSystemModel(SystemModel):
                     min_time,  # min time instant
                 )
             else:
-                self.mission_id = 'didy1w'
+                mission_id = 'didy1w'
                 limits = (
                     1.1,  # min_distance in km
                     1.1,  # min_med_distance in km
@@ -55,8 +55,8 @@ class DidymosSystemModel(SystemModel):
                     min_time,  # min time instant
                 )
         else:
-            if narrow_cam:
-                self.mission_id = 'didy2n'
+            if use_narrow_cam:
+                mission_id = 'didy2n'
                 limits = (
                     1.1,    # min_distance in km
                     1.8,    # min_med_distance in km
@@ -66,7 +66,7 @@ class DidymosSystemModel(SystemModel):
                     min_time,  # min time instant
                 )
             else:
-                self.mission_id = 'didy2w'
+                mission_id = 'didy2w'
                 limits = (
                     0.15,  # min_distance in km
                     0.25,  # min_med_distance in km
@@ -82,10 +82,7 @@ class DidymosSystemModel(SystemModel):
             camera=narrow_cam if use_narrow_cam else wide_cam,
             limits=limits,
         )
-        if target_primary:
-            self.mission_id = 'didy1n' if use_narrow_cam else 'didy1w'
-        else:
-            self.mission_id = 'didy2n' if use_narrow_cam else 'didy2w'  # was didy, didw
+        self.mission_id = mission_id
 
 
 class DidymosPrimary(Asteroid):

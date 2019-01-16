@@ -17,9 +17,9 @@ def get_system_model(mission, hi_res_shape_model=False):
     elif mission == 'didy1w':
         sm = DidymosSystemModel(target_primary=True, hi_res_shape_model=hi_res_shape_model, use_narrow_cam=False)
     elif mission == 'didy2n':
-        sm = DidymosSystemModel(target_primary=True, hi_res_shape_model=hi_res_shape_model)
+        sm = DidymosSystemModel(target_primary=False, hi_res_shape_model=hi_res_shape_model)
     elif mission == 'didy2w':
-        sm = DidymosSystemModel(target_primary=True, hi_res_shape_model=hi_res_shape_model, use_narrow_cam=False)
+        sm = DidymosSystemModel(target_primary=False, hi_res_shape_model=hi_res_shape_model, use_narrow_cam=False)
     else:
         assert False, 'Unknown mission given as argument: %s' % mission
     assert mission == sm.mission_id, 'wrong system model mission id'

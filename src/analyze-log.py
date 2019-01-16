@@ -120,6 +120,11 @@ if __name__ == '__main__':
         if mode == 'easy':
             # more than 90deg sol elong, mostly in view (TODO: Debug)
             I = np.logical_and(np.logical_and(X[:, 0] > 90, X[:, 3] >= 0.67), yc == 0)
+
+            # remove 0.3% worst as outliers
+            outlim = np.percentile(np.abs(yr[I]), 100 - 0.3)
+            I = np.logical_and(I, np.abs(yr) < outlim)
+
             X = X[I, :]
             yc = yc[I]
             yr = yr[I]
@@ -137,7 +142,7 @@ if __name__ == '__main__':
             stds = np.array([np.std(yg) for yg in y_grouped])
             #means = [np.percentile(yg, 50) for yg in y_grouped]
             #stds = np.subtract([np.percentile(yg, 68) for yg in y_grouped], means)
-            fig, ax = plt.subplots(figsize=(10, 4))
+            fig, ax = plt.subplots(figsize=(20, 18))
             ax.plot(X[:, idx], yr, 'x')
 
             if False:
@@ -156,18 +161,22 @@ if __name__ == '__main__':
                 ax.plot(xstep, sstep, '-')
                 ax.plot(xstep, mstep, '-')
 
+            ax.set_title('%s by %s' % (target, predictor_labels[idx]))
             ax.set_xlabel(predictor_labels[idx])
             ax.set_ylabel(target)
-            ax.set_title('%s by %s' % (target, predictor_labels[idx]))
-            ax.set_xticks((x[1:] + x[:-1]) * 0.5)
+            ax.set_xticks(x)
+            ax.set_yticks(range(-200, 201, 10))
+            plt.hlines(range(-200, 201, 10), xmin, xmax, '0.95', '--')
+            plt.hlines(range(-200, 201, 50), xmin, xmax, '0.7', '-')
+
+            #ax.set_xticks((x[1:] + x[:-1]) * 0.5)
             #ax.set_xticklabels(['%.2f-%.2f' % (x[i], x[i+1]) for i in range(n_groups)])
             #ax.legend()
 
+            plt.tight_layout()
             while(not plt.waitforbuttonpress()):
                 pass
 
-            fig.tight_layout()
-            plt.show()
 
     elif mode == 'gpr':
         pairs = (
