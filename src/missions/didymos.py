@@ -23,22 +23,22 @@ class DidymosSystemModel(SystemModel):
         narrow_cam = Camera(
             2048,   # width in pixels
             1944,   # height in pixels
-            6,   # x fov in degrees  (could be 6 & 5.695 or 5.15 & 4.89)
-            5.695,   # y fov in degrees
+            7.7,    # x fov in degrees  (could be 6 & 5.695, 5.15 & 4.89, 7.7 & 7.309)
+            7.309,  # y fov in degrees
         )
         wide_cam = Camera(
             2048,   # width in pixels
             1944,   # height in pixels
-            60,     # x fov in degrees
-            56.95,  # y fov in degrees
+            61.5,     # x fov in degrees
+            58.38,  # y fov in degrees
         )
 
         if target_primary:
             if use_narrow_cam:
                 mission_id = 'didy1n'
                 limits = (
-                    7.5,    # min_distance in km
-                    8.5,    # min_med_distance in km
+                    6.0,    # min_distance in km
+                    7.0,    # min_med_distance in km
                     10.5,   # max_med_distance in km
                     10.5,   # max_distance in km
                     45,     # min_elong in deg
@@ -59,7 +59,7 @@ class DidymosSystemModel(SystemModel):
                 mission_id = 'didy2n'
                 limits = (
                     1.1,    # min_distance in km
-                    1.8,    # min_med_distance in km
+                    1.4,    # min_med_distance in km
                     5.3,   # max_med_distance in km
                     5.3,   # max_distance in km
                     45,     # min_elong in deg
@@ -135,8 +135,8 @@ class DidymosPrimary(Asteroid):
 
         self.rotation_pm = math.radians(tpm)
         self.axis_latitude, self.axis_longitude = \
-            (math.radians(de), math.radians(ra)) if USE_ICRS else \
-                tools.equatorial_to_ecliptic(de * units.deg, ra * units.deg)
+            tuple(map(math.radians, (de, ra) if USE_ICRS else \
+                tools.equatorial_to_ecliptic(de * units.deg, ra * units.deg)))
 
         self.precession_cone_radius = None
         self.precession_period = None
@@ -195,8 +195,8 @@ class DidymosSecondary(Asteroid):
 
         self.rotation_pm = math.radians(tpm)
         self.axis_latitude, self.axis_longitude = \
-            (math.radians(de), math.radians(ra)) if USE_ICRS else \
-                tools.equatorial_to_ecliptic(de * units.deg, ra * units.deg)
+            tuple(map(math.radians, (de, ra) if USE_ICRS else \
+                tools.equatorial_to_ecliptic(de * units.deg, ra * units.deg)))
 
         self.precession_cone_radius = None
         self.precession_period = None

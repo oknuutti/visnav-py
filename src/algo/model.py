@@ -725,7 +725,7 @@ class Asteroid(ABC):
         v_ba = np.array([x.value, y.value, z.value])
         if not USE_ICRS:
             sc = SkyCoord(x=x, y=y, z=z, frame='icrs',
-                          representation='cartesian', obstime='J2000') \
+                          representation_type='cartesian', obstime='J2000') \
                 .transform_to('heliocentrictrueecliptic') \
                 .represent_as('cartesian')
             v_ba = np.array([sc.x.value, sc.y.value, sc.z.value])

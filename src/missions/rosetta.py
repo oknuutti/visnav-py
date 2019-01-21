@@ -114,8 +114,8 @@ class ChuryumovGerasimenko(Asteroid):
 
         self.rotation_pm = math.radians(tpm)
         self.axis_latitude, self.axis_longitude = \
-            (math.radians(tlat), math.radians(tlon)) if USE_ICRS else \
-                tools.equatorial_to_ecliptic(tlat * units.deg, tlon * units.deg)
+            tuple(map(math.radians, (tlat, tlon) if USE_ICRS else \
+                tools.equatorial_to_ecliptic(tlat * units.deg, tlon * units.deg)))
 
         self.precession_cone_radius = math.radians(0.14)  # other paper 0.15+-0.03 deg
         self.precession_period = 10.7 * 24 * 3600  # other paper had 11.5+-0.5 days

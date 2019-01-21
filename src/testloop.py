@@ -73,7 +73,7 @@ class TestLoop:
         self._noise_time = 0     # disabled as _noise_ast_phase_shift does same thing, was 95% within +-30s
         
         # uniform, max dev in deg
-        self._noise_ast_rot_axis = 10
+        self._noise_ast_rot_axis = 10       # 0 - 10 deg uniform
         self._noise_ast_phase_shift = 10/2  # 95% within 10 deg
 
         # s/c orientation noise, gaussian sd in deg
@@ -82,9 +82,9 @@ class TestLoop:
         self._noise_sco_rot = 2/2   # 95% within 2 deg
 
         # s/c position noise, gaussian sd in km per km of distance
-        self._enable_initial_location = False
+        self._enable_initial_location = True
         self._unknown_sc_pos = (0, 0, -self.system_model.min_med_distance)
-        self._noise_lateral = 0.005   # 0.0052 when calculated using centroid algo AND 5 deg fov
+        self._noise_lateral = 0.3     # sd in deg, 0.298 calculated using centroid algo AND 5 deg fov
         self._noise_altitude = 0.10   # 0.131 when calculated using centroid algo AND 5 deg fov
         
         # transients
@@ -321,8 +321,8 @@ class TestLoop:
         x, y, z = sm.real_spacecraft_pos
         d = np.linalg.norm((x, y, z))
         return (
-            x + d * np.random.normal(0, self._noise_lateral),
-            y + d * np.random.normal(0, self._noise_lateral),
+            x + d * np.random.normal(0, math.tan(math.radians(self._noise_lateral))),
+            y + d * np.random.normal(0, math.tan(math.radians(self._noise_lateral))),
             z + d * np.random.normal(0, self._noise_altitude),
         )
 
@@ -345,13 +345,13 @@ class TestLoop:
 
     def _fill_or_censor_init_sc_pos(self, sm, state_file):
         # generate and save if missing
-        if sm.spacecraft_pos == self._unknown_sc_pos or True:
+        if sm.spacecraft_pos == self._unknown_sc_pos:
             sm.spacecraft_pos = self._noisy_sc_position(sm)
             sm.save_state(state_file)
 
         # maybe censor
         if not self._enable_initial_location:
-            sm.spacecraft_pos = (0, 0, -sm.min_med_distance)
+            sm.spacecraft_pos = self._unknown_sc_pos
 
 
     def generate_noisy_shape_model(self, sm, i):
@@ -647,7 +647,9 @@ class TestLoop:
                 if self._enable_initial_location:
                     x, y, z = sm.spacecraft_pos
                     ix_off, iy_off = sm.cam.calc_img_xy(x, y, z)
-                    kwargs['match_mask_params'] = ix_off-sm.cam.width/2, iy_off-sm.cam.height/2, z
+                    uncertainty_radius = math.tan(math.radians(self._noise_lateral) * 2) \
+                                         * abs(z) * (1 + self._noise_altitude * 2)
+                    kwargs['match_mask_params'] = ix_off-sm.cam.width/2, iy_off-sm.cam.height/2, z, uncertainty_radius
 
                 self.keypoint.solve_pnp(imgfile, outfile, **kwargs)
                 #    tr.print_diff()

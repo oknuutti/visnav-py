@@ -13,6 +13,9 @@ from algo.tools import PositioningException
 
 
 class MixedAlgo(AlgorithmBase):
+    EXPECTED_LATERAL_ERR_ANGLE_SD = 0.30      # in deg
+    EXPECTED_RELATIVE_DISTANCE_ERR_SD = 0.10  # 0.1 == 10% err
+
     def __init__(self, centroid, keypoint, **kwargs):
         super(MixedAlgo, self).__init__(centroid.system_model, centroid.render_engine, centroid.obj_idx)
         self._centroid = centroid
@@ -33,7 +36,14 @@ class MixedAlgo(AlgorithmBase):
             #kwargs['init_z'] = centroid_result[2]
 
             x_off, y_off = self._cam.calc_img_xy(*centroid_result)
-            kwargs['match_mask_params'] = (x_off-self._cam.width/2, y_off-self._cam.height/2, centroid_result[2])
+            uncertainty_radius = math.tan(math.radians(MixedAlgo.EXPECTED_LATERAL_ERR_ANGLE_SD) * 2) \
+                                 * abs(centroid_result[2]) * (1 + MixedAlgo.EXPECTED_RELATIVE_DISTANCE_ERR_SD * 2)
+            kwargs['match_mask_params'] = (
+                x_off-self._cam.width/2,
+                y_off-self._cam.height/2,
+                centroid_result[2],
+                uncertainty_radius,
+            )
             d1 = np.linalg.norm(centroid_result)
         except PositioningException as e:
             if str(e) == 'No asteroid found':

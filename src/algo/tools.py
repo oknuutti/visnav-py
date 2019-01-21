@@ -122,7 +122,7 @@ def equatorial_to_ecliptic(ra, dec):
     """ translate from equatorial ra & dec to ecliptic ones """
     sc = SkyCoord(ra, dec, unit='deg', frame='icrs', obstime='J2000') \
             .transform_to('barycentrictrueecliptic')
-    return math.radians(sc.lat.value), math.radians(sc.lon.value)
+    return sc.lat.value, sc.lon.value
     
     
 def q_to_angleaxis(q, compact=False):
@@ -208,7 +208,7 @@ def solar_elongation(ast_v, sc_q):
     
     if USE_ICRS:
         sc = SkyCoord(x=ast_v[0], y=ast_v[1], z=ast_v[2], frame='icrs',
-                      unit='m', representation='cartesian', obstime='J2000')\
+                      unit='m', representation_type='cartesian', obstime='J2000')\
             .transform_to('hcrs')\
             .represent_as('cartesian')
         ast_v = np.array([sc.x.value, sc.y.value, sc.z.value])
@@ -605,6 +605,35 @@ def solve_q_bf(src_q, dst_q):
         d.append(angle_between_q(tq, dst_q))
     i = np.argmin(d)
     return qs[i]
+
+
+def hover_annotate(fig, ax, line, annotations):
+    annot = ax.annotate("", xy=(0, 0), xytext=(-20, 20), textcoords="offset points",
+                        bbox=dict(boxstyle="round", fc="w"),
+                        arrowprops=dict(arrowstyle="->"))
+    annot.set_visible(False)
+
+    def update_annot(ind):
+        x, y = line.get_data()
+        annot.xy = (x[ind["ind"][0]], y[ind["ind"][0]])
+        text = ", ".join([annotations[n] for n in ind["ind"]])
+        annot.set_text(text)
+        annot.get_bbox_patch().set_alpha(0.4)
+
+    def hover(event):
+        vis = annot.get_visible()
+        if event.inaxes == ax:
+            cont, ind = line.contains(event)
+            if cont:
+                update_annot(ind)
+                annot.set_visible(True)
+                fig.canvas.draw_idle()
+            else:
+                if vis:
+                    annot.set_visible(False)
+                    fig.canvas.draw_idle()
+
+    fig.canvas.mpl_connect("motion_notify_event", hover)
 
 
 #

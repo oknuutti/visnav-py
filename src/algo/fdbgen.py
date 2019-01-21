@@ -275,7 +275,7 @@ class FeatureDatabaseGenerator(AlgorithmBase):
             # solve pnp with ransac
             ref_kp_3d = sc2_kp_3d[[m.trainIdx for m in matches], :]
             sce_kp_2d = sc1_kp_2d[[m.queryIdx for m in matches], :]
-            rvec, tvec, inliers = KeypointAlgo.solve_pnp_ransac(self._cam, sce_kp_2d, ref_kp_3d, self._ransac_err)
+            rvec, tvec, inliers = KeypointAlgo.solve_pnp_ransac(self.system_model, sce_kp_2d, ref_kp_3d, self._ransac_err)
 
             # check if solution ok
             ok, err1, err2 = self.calc_err(rvec, tvec, idxs1[0], idxs2[0], warn=len(inliers) > 30)

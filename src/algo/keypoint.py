@@ -34,13 +34,13 @@ class KeypointAlgo(AlgorithmBase):
     FDB_REAL = True
     FDB_USE_ALL_FEATS = False
 
-    MIN_FEATURES = 10  # fail if less inliers at the end
+    MIN_FEATURES = 12  # fail if less inliers at the end
 
     # if want that mask radius is x when res 1024x1024 and ast dist 64km => coef = 64*x/1024
-    MATCH_MASK_COEF = 10  # 6.25, used only when running centroid algo before this one
-    LOWE_METHOD_COEF = 0.85  # default 0.7 (0.8)  # 0.825 vs 0.8 => less fails, worse accuracy
+    MATCH_MASK_RADIUS = 0.15  # ratio to max asteroid diameter
+    LOWE_METHOD_COEF = 0.875  # default 0.7 (0.8)  # 0.825 vs 0.8 => less fails, worse accuracy
 
-    RANSAC_ITERATIONS = 10000  # default 100
+    RANSAC_ITERATIONS = 20000  # default 100
     DEF_RANSAC_ERROR = 16  # default 8.0, for ORB: use half the error given here
     # (SOLVEPNP_ITERATIVE), SOLVEPNP_P3P, SOLVEPNP_AP3P, SOLVEPNP_EPNP, ?SOLVEPNP_UPNP, ?SOLVEPNP_DLS
     RANSAC_KERNEL = cv2.SOLVEPNP_AP3P
@@ -51,7 +51,7 @@ class KeypointAlgo(AlgorithmBase):
         self.sm_noise = 0
         self._noise_lv = False
 
-        self._pause = False
+        self._pause = DEBUG == 2
         self._shape_model_rng = None
         self._latest_detector = None
         self._ransac_err = None
@@ -118,8 +118,6 @@ class KeypointAlgo(AlgorithmBase):
             cv2.imwrite(self.debug_filebase+'a.png', np.concatenate((sce, ref_img), axis=1))
             if DEBUG:
                 cv2.imshow('compare', np.concatenate((sce, ref_img), axis=1))
-                if self._pause:
-                    cv2.waitKey()
             self.timer.start()
 
         # AKAZE, SIFT, SURF are truly scale invariant, couldnt get ORB to work as good
@@ -185,13 +183,16 @@ class KeypointAlgo(AlgorithmBase):
                                                              self._render_z, ref_img_sc)
 
                 # finally solve pnp with ransac
-                rvec, tvec, inliers = KeypointAlgo.solve_pnp_ransac(self._cam, sce_kp_2d, ref_kp_3d, self._ransac_err)
+                rvec, tvec, inliers = KeypointAlgo.solve_pnp_ransac(sm, sce_kp_2d, ref_kp_3d, self._ransac_err)
 
                 # debug by drawing inlier matches
                 self._draw_matches(sce_img, sce_img_sc, sce_kp, ref_img, ref_img_sc, ref_kp,
                                    [matches[i[0]] for i in inliers], label='c) inliers', pause=self._pause)
 
-                if len(inliers) < KeypointAlgo.MIN_FEATURES:
+                inlier_count = self.count_inliers(sce_kp, ref_kp, matches, inliers)
+                if DEBUG:
+                    print('inliers: %s/%s, ' % (inlier_count, len(matches)), end='', flush=True)
+                if inlier_count < KeypointAlgo.MIN_FEATURES:
                     raise PositioningException('RANSAC algorithm was left with too few inliers')
 
                 # dont try again if found enough inliers
@@ -218,8 +219,8 @@ class KeypointAlgo(AlgorithmBase):
             rp_err = KeypointAlgo.reprojection_error(self._cam, sce_kp_2d, ref_kp_3d, inliers, rvec, tvec)
             sh_err = sm.calc_shift_err()
 
-            print('inliers: %s/%s, repr-err: %.2f, rel-rot-err: %.2f°, dist-err: %.2f%%, lat-err: %.2f%%, shift-err: %.1fm'%(
-                len(inliers), len(matches), rp_err,
+            print('repr-err: %.2f, rel-rot-err: %.2f°, dist-err: %.2f%%, lat-err: %.2f%%, shift-err: %.1fm'%(
+                rp_err,
                 math.degrees(sm.rel_rot_err()),
                 sm.dist_pos_err()*100,
                 sm.lat_pos_err()*100,
@@ -232,6 +233,15 @@ class KeypointAlgo(AlgorithmBase):
             res_img = self.render(shadows=self.RENDER_SHADOWS)
             sce_img = cv2.resize(orig_sce_img, tuple(np.flipud(res_img.shape)))
             cv2.imwrite(self.debug_filebase+'d.png', np.concatenate((sce_img, res_img), axis=1))
+
+    def count_inliers(self, sce_kp, ref_kp, matches, inliers, div=2):
+        ref_i = [ref_kp[matches[i[0]].trainIdx] for i in inliers]
+        sce_i = [sce_kp[matches[i[0]].queryIdx] for i in inliers]
+
+        ref_count = len({(int(p.pt[0])//div, int(p.pt[1])//div) for p in ref_i})
+        sce_count = len({(int(p.pt[0])//div, int(p.pt[1])//div) for p in sce_i})
+
+        return min(ref_count, sce_count)
 
     def render_ref_img(self, ref_img_sc):
         sm = self.system_model
@@ -301,8 +311,8 @@ class KeypointAlgo(AlgorithmBase):
             'descriptor_type':cv2.AKAZE_DESCRIPTOR_MLDB, # default: cv2.AKAZE_DESCRIPTOR_MLDB
             'descriptor_channels':3,    # default: 3
             'descriptor_size':0,        # default: 0
-            'diffusivity':cv2.KAZE_DIFF_PM_G2, # default: cv2.KAZE_DIFF_PM_G2
-            'threshold':0.001,          # default: 0.001
+            'diffusivity':cv2.KAZE_DIFF_CHARBONNIER, # default: cv2.KAZE_DIFF_PM_G2
+            'threshold':0.0001,         # default: 0.001
             'nOctaves':4,               # default: 4
             'nOctaveLayers':4,          # default: 4
         }
@@ -313,8 +323,8 @@ class KeypointAlgo(AlgorithmBase):
         params = {
             'nfeatures':nfeats,
             'nOctaveLayers':3,          # default: 3
-            'contrastThreshold':0.04,   # default: 0.04
-            'edgeThreshold':10,         # default: 10
+            'contrastThreshold':0.01,   # default: 0.04
+            'edgeThreshold':25,         # default: 10
             'sigma':1.6,                # default: 1.6
         }
         return cv2.xfeatures2d.SIFT_create(**params)
@@ -331,18 +341,20 @@ class KeypointAlgo(AlgorithmBase):
         return cv2.xfeatures2d.SURF_create(**params)
 
     @staticmethod
-    def calc_match_mask(sm, sce_kp, ref_kp, render_z, sce_img_sc, ref_img_sc, ix_off, iy_off, ast_z):
-        n_sce_kp = (np.array([kp.pt for kp in sce_kp])
+    def calc_match_mask(sm, sce_kp, ref_kp, render_z, sce_img_sc, ref_img_sc,
+                        ix_off, iy_off, ast_z, uncertainty_radius):
+
+        n_sce_kp = np.tan((np.array([kp.pt for kp in sce_kp])
                         - np.array([ix_off + sm.cam.width/2, iy_off + sm.cam.height/2])*sce_img_sc
-                   ).reshape((-1, 1, 2)) * abs(ast_z)
-        n_ref_kp = (np.array([kp.pt for kp in ref_kp])
+                   ) * math.radians(sm.cam.x_fov) / sm.cam.width).reshape((-1, 1, 2)) * abs(ast_z)
+        n_ref_kp = np.tan((np.array([kp.pt for kp in ref_kp])
                         - np.array([sm.view_width/2, sm.view_height/2])*ref_img_sc
-                   ).reshape((1, -1, 2)) * abs(render_z)
+                   ) * math.radians(sm.cam.x_fov) / sm.cam.width).reshape((1, -1, 2)) * abs(render_z)
         O = np.repeat(n_sce_kp, n_ref_kp.shape[1], axis=1) - np.repeat(n_ref_kp, n_sce_kp.shape[0], axis=0)
         D = np.linalg.norm(O, axis=2)
 
-        # in px*km, if coef=6.25, cam res 1024x1024 and asteroid distance 64km => mask circle radius is 100px
-        return (D < KeypointAlgo.MATCH_MASK_COEF * min(sm.cam.width, sm.cam.height)).astype('uint8')
+        match_radius = uncertainty_radius + KeypointAlgo.MATCH_MASK_RADIUS * sm.asteroid.max_radius * 2 / 1000
+        return (D < match_radius).astype('uint8')
 
     @staticmethod
     def match_features(desc1, desc2, norm, mask=None, method='brute', symmetry_test=False, ratio_test=True):
@@ -392,7 +404,7 @@ class KeypointAlgo(AlgorithmBase):
             )
             if len(matches) < KeypointAlgo.MIN_FEATURES:
                 raise PositioningException('Too many features discarded')
-        
+
         return matches
 
     
@@ -440,12 +452,12 @@ class KeypointAlgo(AlgorithmBase):
         self.timer.start()
 
     @staticmethod
-    def solve_pnp_ransac(cam, sce_kp_2d, ref_kp_3d, ransac_err=DEF_RANSAC_ERROR,
+    def solve_pnp_ransac(sm, sce_kp_2d, ref_kp_3d, ransac_err=DEF_RANSAC_ERROR,
                          n_iter=RANSAC_ITERATIONS, kernel=RANSAC_KERNEL):
         
         # assuming no lens distortion
         dist_coeffs = None
-        cam_mx = cam.intrinsic_camera_mx()
+        cam_mx = sm.cam.intrinsic_camera_mx()
         ref_kp_3d = np.reshape(ref_kp_3d, (len(ref_kp_3d), 1, 3))
         sce_kp_2d = np.reshape(sce_kp_2d, (len(sce_kp_2d), 1, 2))
 
@@ -457,8 +469,10 @@ class KeypointAlgo(AlgorithmBase):
         
         if not retval:
             raise PositioningException('RANSAC algorithm returned False')
-        if np.linalg.norm(tvec) > 1280:
-            raise PositioningException('RANSAC estimated that asteroid at %s km' % (tvec,))
+        if len(inliers) >= KeypointAlgo.MIN_FEATURES and np.linalg.norm(tvec) > sm.max_distance * 1.1:
+            # BUG in solvePnPRansac: sometimes estimates object to be very far even though enough good inliers
+            # happens with all kernels, reprojectionErrors and iterationsCounts
+            raise PositioningException('RANSAC estimated that asteroid at %s km' % (tvec.T,))
 
         return rvec, tvec, inliers
 
@@ -566,7 +580,7 @@ class KeypointAlgo(AlgorithmBase):
                 # solve pnp with ransac
                 kp_3d = ref_kp_3d[[m.trainIdx for m in matches], :]
                 kp_2d = np.array([n_kp[m.queryIdx].pt for m in matches])
-                rvec, tvec, inliers = KeypointAlgo.solve_pnp_ransac(self._cam, kp_2d, kp_3d, self._ransac_err)
+                rvec, tvec, inliers = KeypointAlgo.solve_pnp_ransac(self.system_model, kp_2d, kp_3d, self._ransac_err)
 
                 # check that solution is correct
                 ok, err1, err2 = self._fdb_helper.calc_err(rvec, tvec, j1, i1, warn=len(inliers) > 30)

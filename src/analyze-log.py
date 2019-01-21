@@ -23,7 +23,7 @@ from algo import tools
 
 # read logfiles
 def read_data(sm, logfile, predictors, target):
-    X, y, aux = [], [], []
+    X, y, aux, labels = [], [], [], []
     
     with open(logfile, newline='') as csvfile:
         rad = sm.asteroid.mean_radius * 0.001
@@ -37,9 +37,14 @@ def read_data(sm, logfile, predictors, target):
                     trg_i = row.index(target)
                     rot_i = row.index('rot error')
                     pos_i = [row.index(p+' sc pos') for p in ('x','y','z')]
+                    lbl_i = row.index('iter')
                 else:
                     row = np.array(row)
-                    pos = row[pos_i].astype(np.float)
+                    try:
+                        pos = row[pos_i].astype(np.float)
+                    except ValueError as e:
+                        print('Can\'t convert cols %s to float on row %s' % (pos_i, row[0]))
+                        raise e
                     distance = np.sqrt(np.sum(pos**2))
                     xt = abs(pos[2])*math.tan(math.radians(sm.cam.x_fov)/2)
                     yt = abs(pos[2])*math.tan(math.radians(sm.cam.y_fov)/2)
@@ -56,6 +61,7 @@ def read_data(sm, logfile, predictors, target):
                     tmp = row[trg_i].astype(np.float) if len(row)>trg_i else float('nan')
                     y.append(tmp)
                     aux.append(row[rot_i].astype(np.float))
+                    labels.append(row[lbl_i])
     
     X = np.array(X)
     
@@ -68,7 +74,7 @@ def read_data(sm, logfile, predictors, target):
     yr = np.array(y)
     yr[np.isnan(yr)] = np.nanmax(yr)
     
-    return X, yc, yr
+    return X, yc, yr, labels
 
 
 if __name__ == '__main__':
@@ -76,7 +82,6 @@ if __name__ == '__main__':
         print('USAGE: python analyze-log.py <path to log file> [gpr|1d|easy] [shift|alt|dist|lat|orient]')
         sys.exit()
         
-    logfile = sys.argv[1]
     mode = sys.argv[2]
     if len(sys.argv) > 3:
         sc = 1
@@ -94,9 +99,6 @@ if __name__ == '__main__':
         else:
             assert False, 'unknown target: %s' % sys.argv[3]
 
-    mission = logfile.split('-')[0]
-    sm = get_system_model(mission)
-
     predictors = (
         'sol elong',    # solar elongation
         'total dev angle',  # total angle between initial estimate and actual relative orientation
@@ -110,27 +112,32 @@ if __name__ == '__main__':
         'In camera view (%)',
     )
     target = target or 'rel shift error (m/km)'  #'shift error km' #if not one_d_only else 'dist error'
-    
+
+    logfiles = sys.argv[1].split(" ")
+    mission = logfile.split('-')[0]
+    sm = get_system_model(mission)
+
     # read data
-    X, yc, yr = read_data(sm, os.path.join(LOG_DIR, logfile), predictors, target)
+    X, yc, yr, labels = read_data(sm, os.path.join(LOG_DIR, logfile), predictors, target)
     X[:, 1] = np.abs(tools.wrap_degs(X[:, 1]))
     yr *= sc
 
+    if mode == 'easy':
+        # more than 90deg sol elong, mostly in view (TODO: Debug)
+        I = np.logical_and(np.logical_and(X[:, 0] > 90, X[:, 3] >= 0.67), yc == 0)
+
+        # remove 0.3% worst as outliers
+        outlim = np.percentile(np.abs(yr[I]), 100 - 0.3)
+        I = np.logical_and(I, np.abs(yr) < outlim)
+
+        X = X[I, :]
+        yc = yc[I]
+        yr = yr[I]
+        labels = [labels[i] for i in np.where(I)[0]]
+        # lim = np.percentile(np.abs(yr[yc == 0]), 99)
+        # yc = np.logical_or(yc, np.abs(yr) >= lim)
+
     if mode in ('1d', 'easy'):
-        if mode == 'easy':
-            # more than 90deg sol elong, mostly in view (TODO: Debug)
-            I = np.logical_and(np.logical_and(X[:, 0] > 90, X[:, 3] >= 0.67), yc == 0)
-
-            # remove 0.3% worst as outliers
-            outlim = np.percentile(np.abs(yr[I]), 100 - 0.3)
-            I = np.logical_and(I, np.abs(yr) < outlim)
-
-            X = X[I, :]
-            yc = yc[I]
-            yr = yr[I]
-            # lim = np.percentile(np.abs(yr[yc == 0]), 99)
-            # yc = np.logical_or(yc, np.abs(yr) >= lim)
-
         n_groups = 6
         #yr = yr/1000
         for idx in (0, 1, 2,):
@@ -143,7 +150,7 @@ if __name__ == '__main__':
             #means = [np.percentile(yg, 50) for yg in y_grouped]
             #stds = np.subtract([np.percentile(yg, 68) for yg in y_grouped], means)
             fig, ax = plt.subplots(figsize=(20, 18))
-            ax.plot(X[:, idx], yr, 'x')
+            line, = ax.plot(X[:, idx], yr, 'x')
 
             if False:
                 bar_width = (xmax - xmin)/n_groups * 0.2
@@ -161,13 +168,14 @@ if __name__ == '__main__':
                 ax.plot(xstep, sstep, '-')
                 ax.plot(xstep, mstep, '-')
 
-            ax.set_title('%s by %s' % (target, predictor_labels[idx]))
+            ax.set_title('%s: %s by %s' % (logfile, target, predictor_labels[idx]))
             ax.set_xlabel(predictor_labels[idx])
             ax.set_ylabel(target)
             ax.set_xticks(x)
             ax.set_yticks(range(-200, 201, 10))
             plt.hlines(range(-200, 201, 10), xmin, xmax, '0.95', '--')
             plt.hlines(range(-200, 201, 50), xmin, xmax, '0.7', '-')
+            tools.hover_annotate(fig, ax, line, labels)
 
             #ax.set_xticks((x[1:] + x[:-1]) * 0.5)
             #ax.set_xticklabels(['%.2f-%.2f' % (x[i], x[i+1]) for i in range(n_groups)])
@@ -176,7 +184,6 @@ if __name__ == '__main__':
             plt.tight_layout()
             while(not plt.waitforbuttonpress()):
                 pass
-
 
     elif mode == 'gpr':
         pairs = (

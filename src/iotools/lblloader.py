@@ -82,7 +82,7 @@ def load_image_meta(src, sm):
         sun_sc_ec_p = np.array([sun_sc_eq_x, sun_sc_eq_y, sun_sc_eq_z])
     else:
         sc = SkyCoord(x=sun_sc_eq_x, y=sun_sc_eq_y, z=sun_sc_eq_z, unit='km',
-                frame='icrs', representation='cartesian', obstime='J2000')\
+                frame='icrs', representation_type='cartesian', obstime='J2000')\
                 .transform_to('heliocentrictrueecliptic')\
                 .represent_as('cartesian')
         sun_sc_ec_p = np.array([sc.x.value, sc.y.value, sc.z.value])
@@ -145,7 +145,7 @@ def load_image_meta(src, sm):
         sc_ast_ec_p = np.array([sc_ast_x, sc_ast_y, sc_ast_z])
     else:
         sc = SkyCoord(x=sc_ast_x, y=sc_ast_y, z=sc_ast_z, unit='km', frame='icrs',
-                representation='cartesian', obstime='J2000')\
+                representation_type='cartesian', obstime='J2000')\
                 .transform_to('barycentrictrueecliptic')\
                 .represent_as('cartesian')
         sc_ast_ec_p = np.array([sc.x.value, sc.y.value, sc.z.value])
