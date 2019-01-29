@@ -27,7 +27,7 @@ class KeypointAlgo(AlgorithmBase):
         SURF: 64,
     }
 
-    MAX_FEATURES = 3000         # upper limit of features to calculate from an image
+    MAX_FEATURES = 1200         # upper limit of features to calculate from an image
     MAX_WORK_MEM = 0*1024       # in bytes, usable for both ref and scene features, default 512kB
     FDB_MAX_MEM = 512*1024      # in bytes per scene, default 192kB
     FDB_TOL = math.radians(12)  # features from db never more than FDB_TOL off
@@ -36,12 +36,16 @@ class KeypointAlgo(AlgorithmBase):
 
     MIN_FEATURES = 12  # fail if less inliers at the end
 
+    # grid size in expected asteroid diameter fraction for discarding features too close to each other
+    FEATURE_SPARSIFICATION_FACTOR = 0.015
+    FEATURE_SPARSIFICATION_FALLBACK_EXTENT = 4  # grid in pixels for use if don't know extent
+
     # if want that mask radius is x when res 1024x1024 and ast dist 64km => coef = 64*x/1024
     MATCH_MASK_RADIUS = 0.15  # ratio to max asteroid diameter
-    LOWE_METHOD_COEF = 0.875  # default 0.7 (0.8)  # 0.825 vs 0.8 => less fails, worse accuracy
+    LOWE_METHOD_COEF = 0.85  # default 0.7 (0.8)  # 0.825 vs 0.8 => less fails, worse accuracy
 
     RANSAC_ITERATIONS = 20000  # default 100
-    DEF_RANSAC_ERROR = 16  # default 8.0, for ORB: use half the error given here
+    DEF_RANSAC_ERROR = 15  # default 8.0, for ORB: use half the error given here
     # (SOLVEPNP_ITERATIVE), SOLVEPNP_P3P, SOLVEPNP_AP3P, SOLVEPNP_EPNP, ?SOLVEPNP_UPNP, ?SOLVEPNP_DLS
     RANSAC_KERNEL = cv2.SOLVEPNP_AP3P
 
@@ -109,7 +113,9 @@ class KeypointAlgo(AlgorithmBase):
             ref_img, depth_result = self.render_ref_img(ref_img_sc)
 
             # get keypoints and descriptors
-            ref_kp, ref_desc, self._latest_detector = KeypointAlgo.detect_features(ref_img, feat, maxmem=ref_max_mem, for_ref=True)
+            ee = sm.pixel_extent(abs(self._render_z))
+            ref_kp, ref_desc, self._latest_detector = KeypointAlgo.detect_features(ref_img, feat, maxmem=ref_max_mem,
+                                                                                   for_ref=True, expected_pixel_extent=ee)
 
         if BATCH_MODE and self.debug_filebase:
             # save start situation in log archive
@@ -138,7 +144,9 @@ class KeypointAlgo(AlgorithmBase):
 
                 # detect features in scene image
                 sce_max_mem = KeypointAlgo.MAX_WORK_MEM - (KeypointAlgo.BYTES_PER_FEATURE[feat] + 12)*len(ref_desc)
-                sce_kp, sce_desc, self._latest_detector = KeypointAlgo.detect_features(sce_img, feat, maxmem=sce_max_mem)
+                ee = sm.pixel_extent(abs(match_mask_params[2])) if match_mask_params is not None else 0
+                sce_kp, sce_desc, self._latest_detector = KeypointAlgo.detect_features(sce_img, feat, maxmem=sce_max_mem,
+                                                                                       expected_pixel_extent=ee)
                 if len(sce_kp) < KeypointAlgo.MIN_FEATURES:
                     raise PositioningException('Too few (%d) scene features found' % (len(sce_kp),))
 
@@ -259,10 +267,31 @@ class KeypointAlgo(AlgorithmBase):
 
     @staticmethod
     def detect_features(img, feat, maxmem, max_feats=MAX_FEATURES, for_ref=False, **kwargs):
+        expected_pixel_extent = abs(kwargs.pop('expected_pixel_extent', 0))
         detector, nfeats = KeypointAlgo.get_detector(feat, maxmem, max_feats, for_ref, **kwargs)
         kp, dc = detector.detectAndCompute(img, None)
         if kp is None:
             return None
+
+        if KeypointAlgo.FEATURE_SPARSIFICATION_FACTOR > 0:
+            if expected_pixel_extent > 0:
+                f = KeypointAlgo.FEATURE_SPARSIFICATION_FACTOR * expected_pixel_extent
+            else:
+                f = KeypointAlgo.FEATURE_SPARSIFICATION_FALLBACK_EXTENT
+
+            ng = img.shape[0] // f * (img.shape[1] // f + 1) + img.shape[1] // f + 1
+            offsets = [(0, 0), (f//2, f//2)]
+            groups = {}
+            for i, p in enumerate(kp):
+                for j, (xoff, yoff) in enumerate(offsets):
+                    group = (p.pt[0] + xoff)//f \
+                            + ((p.pt[1]+yoff)//f)*(img.shape[1]//f + 1) \
+                            + j * ng
+                    if group not in groups or groups[group][0] < p.response:
+                        groups[group] = (p.response, i)
+            idxs = {i for r, i in groups.values()}
+            kp = [kp[i] for i in idxs]
+            dc = [dc[i] for i in idxs]
 
         idxs = np.argsort([-p.response for p in kp])
         return [kp[i] for i in idxs[:nfeats]], [dc[i] for i in idxs[:nfeats]], detector
@@ -312,7 +341,7 @@ class KeypointAlgo(AlgorithmBase):
             'descriptor_channels':3,    # default: 3
             'descriptor_size':0,        # default: 0
             'diffusivity':cv2.KAZE_DIFF_CHARBONNIER, # default: cv2.KAZE_DIFF_PM_G2
-            'threshold':0.0001,         # default: 0.001
+            'threshold':0.00005,         # default: 0.001
             'nOctaves':4,               # default: 4
             'nOctaveLayers':4,          # default: 4
         }

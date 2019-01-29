@@ -267,6 +267,10 @@ class SystemModel(ABC):
         self.asteroid.axis_longitude = math.radians(self.ast_y_rot.value)
         self.asteroid.rotation_pm = math.radians(self.ast_z_rot.value)
 
+    def pixel_extent(self, distance=None):
+        distance = abs(self.z_off) if distance is None else distance
+        return self.cam.width * math.atan(self.asteroid.mean_radius/1000/distance)*2 / math.radians(self.cam.x_fov)
+
     @property
     def real_spacecraft_pos(self):
         return self.x_off.real_value, self.y_off.real_value, self.z_off.real_value

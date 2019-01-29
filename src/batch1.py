@@ -27,11 +27,7 @@ def get_system_model(mission, hi_res_shape_model=False):
     return sm
 
 
-if __name__ == '__main__':
-    mission = sys.argv[1]
-    full_method = sys.argv[2]
-    count = sys.argv[3] if len(sys.argv)>3 else 10
-    
+def run_batch(mission, full_method, count):
     m = full_method.split('+')
     method=m[0]
     
@@ -142,3 +138,11 @@ if __name__ == '__main__':
 
     tl = TestLoop(sm, far=(kwargs['method'] in ('centroid', 'keypoint+')))
     tl.run(count, log_prefix=mission+'-'+full_method+'-', **kwargs)
+
+
+if __name__ == '__main__':
+    mission = sys.argv[1]
+    full_method = sys.argv[2]
+    count = sys.argv[3] if len(sys.argv) > 3 else 10
+
+    run_batch(mission, full_method, count)

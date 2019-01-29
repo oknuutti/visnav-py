@@ -113,79 +113,100 @@ if __name__ == '__main__':
     )
     target = target or 'rel shift error (m/km)'  #'shift error km' #if not one_d_only else 'dist error'
 
-    logfiles = sys.argv[1].split(" ")
-    mission = logfile.split('-')[0]
-    sm = get_system_model(mission)
+    data = []
+    for logfile in sys.argv[1].split(" "):
+        mission = logfile.split('-')[0]
+        sm = get_system_model(mission)
 
-    # read data
-    X, yc, yr, labels = read_data(sm, os.path.join(LOG_DIR, logfile), predictors, target)
-    X[:, 1] = np.abs(tools.wrap_degs(X[:, 1]))
-    yr *= sc
+        # read data
+        X, yc, yr, labels = read_data(sm, os.path.join(LOG_DIR, logfile), predictors, target)
+        X[:, 1] = np.abs(tools.wrap_degs(X[:, 1]))
+        yr *= sc
 
-    if mode == 'easy':
-        # more than 90deg sol elong, mostly in view (TODO: Debug)
-        I = np.logical_and(np.logical_and(X[:, 0] > 90, X[:, 3] >= 0.67), yc == 0)
+        if mode == 'easy':
+            # more than 90deg sol elong, mostly in view (TODO: Debug)
+            I = np.logical_and(np.logical_and(X[:, 0] > 90, X[:, 3] >= 0.67), yc == 0)
 
-        # remove 0.3% worst as outliers
-        outlim = np.percentile(np.abs(yr[I]), 100 - 0.3)
-        I = np.logical_and(I, np.abs(yr) < outlim)
+            # remove 0.3% worst as outliers
+            outlim = np.percentile(np.abs(yr[I]), 100 - 0.3)
+            I = np.logical_and(I, np.abs(yr) < outlim)
 
-        X = X[I, :]
-        yc = yc[I]
-        yr = yr[I]
-        labels = [labels[i] for i in np.where(I)[0]]
-        # lim = np.percentile(np.abs(yr[yc == 0]), 99)
-        # yc = np.logical_or(yc, np.abs(yr) >= lim)
+            X = X[I, :]
+            yc = yc[I]
+            yr = yr[I]
+            labels = [labels[i] for i in np.where(I)[0]]
+            # lim = np.percentile(np.abs(yr[yc == 0]), 99)
+            # yc = np.logical_or(yc, np.abs(yr) >= lim)
+        data.append((logfile, X, yc, yr, labels))
+
 
     if mode in ('1d', 'easy'):
         n_groups = 6
         #yr = yr/1000
         for idx in (0, 1, 2,):
-            xmin, xmax = np.min(X[:,idx]), np.max(X[:,idx])
-            #x = [1/v for v in np.linspace(1/xmin, 1/xmax, n_groups+1)]
-            x = np.linspace(xmin, xmax, n_groups + 1)
-            y_grouped = [yr[np.logical_and(np.logical_not(yc), np.logical_and(X[:,idx]>x[i], X[:,idx]<x[i+1]))] for i in range(n_groups)]
-            means = np.array([np.mean(yg) for yg in y_grouped])
-            stds = np.array([np.std(yg) for yg in y_grouped])
-            #means = [np.percentile(yg, 50) for yg in y_grouped]
-            #stds = np.subtract([np.percentile(yg, 68) for yg in y_grouped], means)
-            fig, ax = plt.subplots(figsize=(20, 18))
-            line, = ax.plot(X[:, idx], yr, 'x')
+            fig, axs = plt.subplots(len(data), 1, figsize=(20, 18), sharex=True)
+            for i, (logfile, X, yc, yr, labels) in enumerate(data):
+                xmin, xmax = np.min(X[:, idx]), np.max(X[:, idx])
+                #x = [1/v for v in np.linspace(1/xmin, 1/xmax, n_groups+1)]
+                x = np.linspace(xmin, xmax, n_groups + 1)
+                y_grouped = [yr[np.logical_and(np.logical_not(yc), np.logical_and(X[:,idx]>x[i], X[:,idx]<x[i+1]))] for i in range(n_groups)]
+                means = np.array([np.mean(yg) for yg in y_grouped])
+                stds = np.array([np.std(yg) for yg in y_grouped])
+                #means = [np.percentile(yg, 50) for yg in y_grouped]
+                #stds = np.subtract([np.percentile(yg, 68) for yg in y_grouped], means)
+                ax = axs[i] if len(data)>1 else axs
+                line, = ax.plot(X[:, idx], yr, 'x')
 
-            if False:
-                bar_width = (xmax - xmin)/n_groups * 0.2
-                rects1 = ax.bar((x[1:] + x[:-1]) * 0.5, stds, width=bar_width, bottom=means-stds/2,
-                                alpha=0.4, color='b',
-                                yerr=stds, error_kw={'ecolor': '0.3'},
-                                label='error')
-            else:
-                x = x.reshape((-1, 1))
-                stds = stds.reshape((-1, 1))
-                means = means.reshape((-1, 1))
-                xstep = np.concatenate((x, x), axis=1).flatten()[1:-1]
-                sstep = np.concatenate((stds, stds), axis=1).flatten()
-                mstep = np.concatenate((means, means), axis=1).flatten()
-                ax.plot(xstep, sstep, '-')
-                ax.plot(xstep, mstep, '-')
+                if False:
+                    bar_width = (xmax - xmin)/n_groups * 0.2
+                    rects1 = ax.bar((x[1:] + x[:-1]) * 0.5, stds, width=bar_width, bottom=means-stds/2,
+                                    alpha=0.4, color='b',
+                                    yerr=stds, error_kw={'ecolor': '0.3'},
+                                    label='error')
+                else:
+                    x = x.reshape((-1, 1))
+                    stds = stds.reshape((-1, 1))
+                    means = means.reshape((-1, 1))
+                    xstep = np.concatenate((x, x), axis=1).flatten()[1:-1]
+                    sstep = np.concatenate((stds, stds), axis=1).flatten()
+                    mstep = np.concatenate((means, means), axis=1).flatten()
+                    ax.plot(xstep, sstep, '-')
+                    ax.plot(xstep, mstep, '-')
 
-            ax.set_title('%s: %s by %s' % (logfile, target, predictor_labels[idx]))
-            ax.set_xlabel(predictor_labels[idx])
-            ax.set_ylabel(target)
-            ax.set_xticks(x)
-            ax.set_yticks(range(-200, 201, 10))
-            plt.hlines(range(-200, 201, 10), xmin, xmax, '0.95', '--')
-            plt.hlines(range(-200, 201, 50), xmin, xmax, '0.7', '-')
-            tools.hover_annotate(fig, ax, line, labels)
+                ax.set_title('%s: %s by %s' % (logfile, target, predictor_labels[idx]))
+                ax.set_xlabel(predictor_labels[idx])
+                ax.set_ylabel(target)
+                if idx==2:
+                    ax.set_xticks(np.arange(0.1, 10.5, 0.2))
+                ax.set_yticks(range(-200, 201, 50))
+                ax.hlines(range(-200, 201, 10), xmin, xmax, '0.95', '--')
+                ax.hlines(range(-200, 201, 50), xmin, xmax, '0.7', '-')
+                if True and idx==2:
+                    if i==0:
+                        ax.axvspan(1.1, 1.3, facecolor='cyan', alpha=0.3)
+                        ax.axvspan(3.8, 4.2, facecolor='orange', alpha=0.3)
+                    elif i==1:
+                        ax.axvspan(0.15, 0.3, facecolor='pink', alpha=0.5)
+                        ax.axvspan(1.1, 1.3, facecolor='cyan', alpha=0.3)
+                    elif i==3:
+                        ax.axvspan(1.1, 1.3, facecolor='cyan', alpha=0.3)
+                        ax.axvspan(2.8, 5.2, facecolor='orange', alpha=0.3)
+                plt.setp(ax.get_xticklabels(), rotation='vertical', fontsize=14)
+                plt.setp(ax.get_yticklabels(), fontsize=14)
 
-            #ax.set_xticks((x[1:] + x[:-1]) * 0.5)
-            #ax.set_xticklabels(['%.2f-%.2f' % (x[i], x[i+1]) for i in range(n_groups)])
-            #ax.legend()
+                tools.hover_annotate(fig, ax, line, labels)
+
+                #ax.set_xticks((x[1:] + x[:-1]) * 0.5)
+                #ax.set_xticklabels(['%.2f-%.2f' % (x[i], x[i+1]) for i in range(n_groups)])
+                #ax.legend()
 
             plt.tight_layout()
-            while(not plt.waitforbuttonpress()):
+            while(plt.waitforbuttonpress() == False):
                 pass
 
     elif mode == 'gpr':
+        logfile, X, yc, yr, labels = data[0]
+
         pairs = (
             (0,1),
             (0,2),

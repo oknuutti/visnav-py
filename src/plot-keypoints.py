@@ -33,6 +33,6 @@ if __name__ == '__main__':
     d = KeypointAlgo(None, None)
     for feat, method in feats.items():
         kp, desc = d.detect_features(img, feat, 0, nfeats=100)
-        out = cv2.drawKeypoints(img, kp, img.copy(), (0,0, 255), flags=cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
+        out = cv2.drawKeypoints(img, kp, img.copy(), (0, 0, 255), flags=cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
         cv2.imshow('%d %s keypoints'%(len(kp), method.upper()), out)
     cv2.waitKey()
