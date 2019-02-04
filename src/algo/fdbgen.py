@@ -50,7 +50,7 @@ class FeatureDatabaseGenerator(AlgorithmBase):
             'wrong size render engine: (%d, %d)' % (self.render_engine.width, self.render_engine.height)
 
         self._ref_img_sc = self._cam.width / view_width
-        self._ransac_err = KeypointAlgo.DEF_RANSAC_ERROR * (0.5 if feat == KeypointAlgo.ORB else 1)
+        self._ransac_err = KeypointAlgo.DEF_RANSAC_ERROR
 
         self.set_mesh(*self.calc_mesh(fdb_tol))
         n1 = len(self._fdb_sc_ast_perms)

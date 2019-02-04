@@ -27,12 +27,12 @@ class RosettaSystemModel(SystemModel):
                 5,          # y fov in degrees
             ),
             limits=(
-                64,         # min_distance in km
-                64,         # min_med_distance in km
-                480,        # max_med_distance in km #640
-                1280,       # max_distance in km
-                45,         # min_elong in deg
-                min_time,   # min time instant
+                50,  # min_distance in km
+                70,  # min_med_distance in km
+                350,  # max_med_distance in km #640
+                1250,  # max_distance in km
+                60,  # min_elong in deg
+                min_time,  # min time instant
             )
         )
         self.mission_id = 'rose'
@@ -46,13 +46,16 @@ class ChuryumovGerasimenko(Asteroid):
         # from http://imagearchives.esac.esa.int/index.php?/category/167/start-224
         # self._image_db_path = os.path.join(SCRIPT_DIR, '../data/rosetta-mtp017')
         self.image_db_path = os.path.join(BASE_DIR, 'data/rosetta-mtp006')
-        self.target_model_file = os.path.join(BASE_DIR, 'data/CSHP_DV_130_01_XLRESb_00200.obj') # _XLRES_, _LORES_
-        self.hires_target_model_file = os.path.join(BASE_DIR, 'data/CSHP_DV_130_01_LORES_00200.obj') # _XLRES_, _LORES_
+        self.target_model_file = os.path.join(BASE_DIR, 'data/67p-17k.obj')
+        self.hires_target_model_file = os.path.join(BASE_DIR, 'data/67p-83k-b.obj')
         self.render_smooth_faces = False
-        # HIRES_TARGET_MODEL_FILE = os.path.join(SCRIPT_DIR, '../data/CSHP_DV_130_01_HIRESb_00200.obj') # _XLRES_, _LORES_
-        # HIRES_TARGET_MODEL_FILE = os.path.join(SCRIPT_DIR, '../data/CSHP_DV_130_01_XLRESb_00200.obj') # _XLRES_, _LORES_
-        # TARGET_MODEL_FILE = os.path.join(SCRIPT_DIR, '../data/test-ball-hires.obj')
-        # TARGET_MODEL_FILE = os.path.join(SCRIPT_DIR, '../data/test-ball.obj')
+
+        # done using `make-const-noise-shapemodel.py data/67p-83k-b.obj data/67p-17k.obj data/67p-17k.nsm`
+        self.constant_noise_shape_model = {
+            '' : os.path.join(BASE_DIR, 'data/67p-17k.nsm'),   # same as target_model_file but includes error estimate
+            'lo': os.path.join(BASE_DIR, 'data/67p-4k.nsm'),  # 1/4 the vertices
+            'hi': os.path.join(BASE_DIR, 'data/67p-1k.nsm'),  # 1/17 the vertices
+        }
 
         sample_image = 'ROS_CAM1_20150720T113057'
         self.sample_image_file = os.path.join(self.image_db_path, sample_image + '_P.png')

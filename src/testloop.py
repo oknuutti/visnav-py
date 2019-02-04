@@ -82,7 +82,7 @@ class TestLoop:
         self._noise_sco_rot = 2/2   # 95% within 2 deg
 
         # s/c position noise, gaussian sd in km per km of distance
-        self._enable_initial_location = True
+        self.enable_initial_location = True
         self._unknown_sc_pos = (0, 0, -self.system_model.min_med_distance)
         self._noise_lateral = 0.3     # sd in deg, 0.298 calculated using centroid algo AND 5 deg fov
         self._noise_altitude = 0.10   # 0.131 when calculated using centroid algo AND 5 deg fov
@@ -102,6 +102,7 @@ class TestLoop:
         self._L = None
         self._state_list = None
         self._rotation_noise = None
+        self._loaded_sm_noise = None
 
         def handle_close():
             self.exit = True
@@ -110,10 +111,12 @@ class TestLoop:
 
 
     # main method
-    def run(self, times, log_prefix='test-', smn_type='', state_db_path=None, rotation_noise=True, **kwargs):
+    def run(self, times, log_prefix='test-', smn_type='', constant_sm_noise=True, state_db_path=None,
+            rotation_noise=True, **kwargs):
         self._smn_cache_id = smn_type
         self._state_db_path = state_db_path
         self._rotation_noise = rotation_noise
+        self._constant_sm_noise = constant_sm_noise
 
         skip = 0
         if isinstance(times, str):
@@ -137,7 +140,7 @@ class TestLoop:
             
             # maybe generate new noise for shape model
             sm_noise = 0
-            if self._smn_cache_id:
+            if self._smn_cache_id or self._constant_sm_noise:
                 sm_noise = self.load_noisy_shape_model(sm, i)
                 if sm_noise is None:
                     if DEBUG:
@@ -309,7 +312,7 @@ class TestLoop:
             sm.spacecraft_rot = map(deg, (meas_sc_lat, meas_sc_lon, meas_sc_rot))
         
         # - spacecraft position noise
-        if self._enable_initial_location:
+        if self.enable_initial_location:
             sm.spacecraft_pos = self._noisy_sc_position(sm)
         else:
             sm.spacecraft_pos = self._unknown_sc_pos
@@ -350,7 +353,7 @@ class TestLoop:
             sm.save_state(state_file)
 
         # maybe censor
-        if not self._enable_initial_location:
+        if not self.enable_initial_location:
             sm.spacecraft_pos = self._unknown_sc_pos
 
 
@@ -372,13 +375,20 @@ class TestLoop:
     
     def load_noisy_shape_model(self, sm, i):
         try:
-            fname = self._cache_file(i, prefix=self.noisy_sm_prefix)+'_'+self._smn_cache_id+'.nsm'
+            if self._constant_sm_noise:
+                if self._loaded_sm_noise is not None:
+                    return self._loaded_sm_noise
+                fname = sm.asteroid.constant_noise_shape_model[self._smn_cache_id]
+            else:
+                fname = self._cache_file(i, prefix=self.noisy_sm_prefix)+'_'+self._smn_cache_id+'.nsm'
+
             with open(fname, 'rb') as fh:
-                noisy_model, sm_noise = pickle.load(fh)
+                noisy_model, self._loaded_sm_noise = pickle.load(fh)
             self.render_engine.load_object(objloader.ShapeModel(data=noisy_model), self.obj_idx, smooth=self._smooth_faces)
         except (FileNotFoundError, EOFError):
-            sm_noise = None
-        return sm_noise
+            self._loaded_sm_noise = None
+
+        return self._loaded_sm_noise
 
     def render_navcam_image(self, sm, i):
         if self._synth_navcam is None:
@@ -454,7 +464,7 @@ class TestLoop:
         dev_angle = deg(angle_between_ypr(map(rad, ast_rot_noise),
                                           map(rad, sc_rot_noise)))
 
-        if self._enable_initial_location:
+        if self.enable_initial_location:
             sc_loc_noise = tuple(np.array(initial['sc_pos']) - np.array(sm.real_spacecraft_pos))
         else:
             sc_loc_noise = ('', '', '')
@@ -644,7 +654,7 @@ class TestLoop:
                 # try using pympler to find memory leaks, fail: crashes always
                 #    from pympler import tracker
                 #    tr = tracker.SummaryTracker()
-                if self._enable_initial_location:
+                if self.enable_initial_location:
                     x, y, z = sm.spacecraft_pos
                     ix_off, iy_off = sm.cam.calc_img_xy(x, y, z)
                     uncertainty_radius = math.tan(math.radians(self._noise_lateral) * 2) \

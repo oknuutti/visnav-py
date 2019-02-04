@@ -13,8 +13,11 @@ if __name__ == '__main__':
 
     start_date = datetime.datetime.strptime(sys.argv[1]+' '+sys.argv[2], '%Y-%m-%d %H:%M:%S')
     adjust_expiry = datetime.datetime.strptime('2018-09-21 14:27:00', '%Y-%m-%d %H:%M:%S')
-    n_noise = 3
-    n_col = 4
+    noise_rows = ['17k', '4k', '1k']
+
+    n_noise = len(noise_rows)
+    n_col = 8
+    nofdb = True
 
     setups = [
         "orb",
@@ -70,32 +73,41 @@ if __name__ == '__main__':
         "sift+fdb+smn_+real",
     ]
 
-    table_header = ['method'] + [
+    if nofdb:
+        setups = [s for s in setups if 'fdb' not in s]
+
+    table_header = ['method', 'vertices'] + [
         "time ms",
         "fail %",
-        "err-p68  m/km",
-        "err-p95  m/km",
-    ] * n_noise
+        "dist err-p68 m/km",
+        "dist err-p95 m/km",
+        "lat err-p68 m/km",
+        "lat err-p95 m/km",
+        "orient err-p68 deg",
+        "orient err-p95 deg",
+    ]
 
     # initialize
     methods = []
     synth_table = {}
     real_table = {}
     for s in setups:
-        m = re.sub("\+(smn_?|real)", "", s)
+        m = re.sub(r"\+(smn_?|real)", "", s)
         if m not in methods:
             methods.append(m)
-            synth_table[m] = [""]*(n_noise*n_col)
-            real_table[m] = [""]*(n_noise*n_col)
+            for n in noise_rows:
+                synth_table['%s-%s' % (m, n)] = [""] * n_col
+                real_table['%s-%s' % (m, n)] = [""] * n_col
 
     # find most recent log files
     logfiles = {}
     dates = {}
     for fname in os.listdir(LOG_DIR):
-        match = re.match("([^-]+)-(\d+-\d+)\.log", fname)
+        match = re.match(r"([^-]+)-([^-]+)-(\d+-\d+)\.log", fname)
         if match is not None:
-            s = match[1]
-            t = datetime.datetime.strptime(match[2], "%Y%m%d-%H%M%S")
+            mission = match[1]
+            s = match[2]
+            t = datetime.datetime.strptime(match[3], "%Y%m%d-%H%M%S")
             if t > start_date and (s not in dates or dates[s] < t):
                 dates[s] = t
                 logfiles[s] = fname
@@ -109,41 +121,54 @@ if __name__ == '__main__':
         with open(os.path.join(LOG_DIR, fname)) as fh:
             line = fh.readline()
 
-        adj = 0.001 if adjust_expiry > dates[s] else 1
-
-        match = re.match("[^(]+\((\d+)([^(]+\(){3}[\d.]+,\s([\d.]+),\s([\d.]+).*?fail:\s([\d.]+)", line)
+        match = re.match(
+              r"[^(]+\((\d+)"               # start=>time, m[1]:  time
+            + r"[^(]+\("+r"([\d.]+)[,)\s]+"*3   # =>Le, m[2:5]:  Le p50 p68 p95
+            + r"[^(]+\("+r"([\d.]+)[,)\s]+"*3   # =>De, m[5:8]:  De p50 p68 p95
+            + r"[^(]+\("+r"([\d.]+)[,)\s]+"*3   # =>De, m[8:11]:  Se p50 p68 p95
+            + r"[^(]+\("+r"([\d.]+)[,)\s]+"*3   # =>Re, m[11:14]: Re p50 p68 p95
+            + r"[^f]*fail:\s([\d.]+).*"         # =>fail, m[14]:  fail %, => end
+            , line)
         if match is not None:
             data[s] = [
                 match[1],
-                match[5],
-                '%.3f'%(float(match[3])*adj),
-                '%.3f'%(float(match[4])*adj),
+                match[14],
+                '%.3f' % (float(match[6])),  # dist p68
+                '%.3f' % (float(match[7])),  # dist p95
+                '%.3f' % (float(match[3])),  # lateral p68
+                '%.3f' % (float(match[4])),  # lateral p95
+                '%.3f' % (float(match[12])),  # orient p68
+                '%.3f' % (float(match[13])),  # orient p95
             ]
         else:
-            data[s] = [""]*4
+            data[s] = [""]*n_col
 
         assert len(data[s]) == n_col
 
     # arrange data to suitable rows
     for s, d in data.items():
-        m = re.sub("\+(smn_?|real)", "", s)
-        i = 2 if "smn_" in s else 1 if "smn" in s else 0
-        assert 0 <= i < n_noise
+        m = re.sub(r"\+(smn_?|real)", "", s)
+        n = noise_rows[2 if "smn_" in s else 1 if "smn" in s else 0]
 
+        key = '%s-%s' % (m, n)
         if "real" in s:
-            real_table[m][(i * n_col):((i + 1) * n_col)] = d
+            real_table[key][:] = d
         else:
-            synth_table[m][(i * n_col):((i + 1) * n_col)] = d
+            synth_table[key][:] = d
 
     # write tables to file
     fname = os.path.join(LOG_DIR, "result-tables.csv")
     with open(fname, 'w') as fh:
         fh.write("Synthetic\n")
         fh.write("\t".join(table_header) + "\n")
-        for m in methods:
-            fh.write(m + "\t" + "\t".join(synth_table[m]) + "\n")
+        for n in noise_rows:
+            for m in methods:
+                key = '%s-%s' % (m, n)
+                fh.write(m + "\t" + n + "\t" + "\t".join(synth_table[key]) + "\n")
 
         fh.write("\n\nReal\n")
         fh.write("\t".join(table_header) + "\n")
-        for m in methods:
-            fh.write(m + "\t" + "\t".join(real_table[m]) + "\n")
+        for n in noise_rows:
+           for m in methods:
+                key = '%s-%s' % (m, n)
+                fh.write(m + "\t" + n + "\t" + "\t".join(real_table[key]) + "\n")

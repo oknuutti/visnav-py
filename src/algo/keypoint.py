@@ -37,8 +37,10 @@ class KeypointAlgo(AlgorithmBase):
     MIN_FEATURES = 12  # fail if less inliers at the end
 
     # grid size in expected asteroid diameter fraction for discarding features too close to each other
-    FEATURE_SPARSIFICATION_FACTOR = 0.015
-    FEATURE_SPARSIFICATION_FALLBACK_EXTENT = 4  # grid in pixels for use if don't know extent
+    FEATURE_FILTERING_RELATIVE_GRID_SIZE = 0.015
+    FEATURE_FILTERING_FALLBACK_GRID_SIZE = 2  # grid in pixels for use if don't know extent
+    (FFS_NONE, FFS_SIMPLE_GRID, FFS_OVERLAPPING_GRID) = range(3)
+    FEATURE_FILTERING_SCHEME = FFS_OVERLAPPING_GRID
 
     # if want that mask radius is x when res 1024x1024 and ast dist 64km => coef = 64*x/1024
     MATCH_MASK_RADIUS = 0.15  # ratio to max asteroid diameter
@@ -81,7 +83,7 @@ class KeypointAlgo(AlgorithmBase):
         # set max mem usable by reference features, scene features use rest of MAX_WORK_MEM
         ref_max_mem = KeypointAlgo.FDB_MAX_MEM if use_feature_db else KeypointAlgo.MAX_WORK_MEM/2
         sm = self.system_model
-        self._ransac_err = KeypointAlgo.DEF_RANSAC_ERROR * (0.5 if feat == KeypointAlgo.ORB else 1)
+        self._ransac_err = KeypointAlgo.DEF_RANSAC_ERROR
         self._render_z = -sm.min_med_distance
         init_z = kwargs.get('init_z', self._render_z)
         ref_img_sc = min(1, self._render_z / init_z) * (sm.view_width if scale_cam_img else self._cam.width) / sm.view_width
@@ -115,6 +117,7 @@ class KeypointAlgo(AlgorithmBase):
             # get keypoints and descriptors
             ee = sm.pixel_extent(abs(self._render_z))
             ref_kp, ref_desc, self._latest_detector = KeypointAlgo.detect_features(ref_img, feat, maxmem=ref_max_mem,
+                                                                                   max_feats=KeypointAlgo.MAX_FEATURES,
                                                                                    for_ref=True, expected_pixel_extent=ee)
 
         if BATCH_MODE and self.debug_filebase:
@@ -146,6 +149,7 @@ class KeypointAlgo(AlgorithmBase):
                 sce_max_mem = KeypointAlgo.MAX_WORK_MEM - (KeypointAlgo.BYTES_PER_FEATURE[feat] + 12)*len(ref_desc)
                 ee = sm.pixel_extent(abs(match_mask_params[2])) if match_mask_params is not None else 0
                 sce_kp, sce_desc, self._latest_detector = KeypointAlgo.detect_features(sce_img, feat, maxmem=sce_max_mem,
+                                                                                       max_feats=KeypointAlgo.MAX_FEATURES,
                                                                                        expected_pixel_extent=ee)
                 if len(sce_kp) < KeypointAlgo.MIN_FEATURES:
                     raise PositioningException('Too few (%d) scene features found' % (len(sce_kp),))
@@ -265,27 +269,38 @@ class KeypointAlgo(AlgorithmBase):
         ref_img = cv2.resize(ref_img, None, fx=ref_img_sc, fy=ref_img_sc, interpolation=cv2.INTER_CUBIC)
         return ref_img, depth
 
-    @staticmethod
-    def detect_features(img, feat, maxmem, max_feats=MAX_FEATURES, for_ref=False, **kwargs):
+    @classmethod
+    def detect_features(cls, img, feat, maxmem, max_feats=MAX_FEATURES, for_ref=False, **kwargs):
         expected_pixel_extent = abs(kwargs.pop('expected_pixel_extent', 0))
-        detector, nfeats = KeypointAlgo.get_detector(feat, maxmem, max_feats, for_ref, **kwargs)
+
+        t_max_feats = max_feats
+        if cls.FEATURE_FILTERING_SCHEME is not cls.FFS_NONE and feat == KeypointAlgo.ORB:
+            # in opencv orb it's impossible to control detection threshold directly,
+            # it's set based on target feature count, TODO: implement better
+            t_max_feats = 30000
+
+        detector, nfeats = cls.get_detector(feat, maxmem, t_max_feats, for_ref, **kwargs)
+        nfeats = min(max_feats, nfeats)
+
         kp, dc = detector.detectAndCompute(img, None)
         if kp is None:
             return None
 
-        if KeypointAlgo.FEATURE_SPARSIFICATION_FACTOR > 0:
-            if expected_pixel_extent > 0:
-                f = KeypointAlgo.FEATURE_SPARSIFICATION_FACTOR * expected_pixel_extent
+        if cls.FEATURE_FILTERING_SCHEME is not cls.FFS_NONE:
+            if cls.FEATURE_FILTERING_RELATIVE_GRID_SIZE > 0 and expected_pixel_extent > 0:
+                grid = cls.FEATURE_FILTERING_RELATIVE_GRID_SIZE * expected_pixel_extent
             else:
-                f = KeypointAlgo.FEATURE_SPARSIFICATION_FALLBACK_EXTENT
+                grid = cls.FEATURE_FILTERING_FALLBACK_GRID_SIZE
 
-            ng = img.shape[0] // f * (img.shape[1] // f + 1) + img.shape[1] // f + 1
-            offsets = [(0, 0), (f//2, f//2)]
+            ng = img.shape[0] // grid * (img.shape[1] // grid + 1) + img.shape[1] // grid + 1
+            offsets = [(0, 0)]
+            if cls.FEATURE_FILTERING_SCHEME == cls.FFS_OVERLAPPING_GRID:
+                offsets.append((grid // 2, grid // 2))
             groups = {}
             for i, p in enumerate(kp):
                 for j, (xoff, yoff) in enumerate(offsets):
-                    group = (p.pt[0] + xoff)//f \
-                            + ((p.pt[1]+yoff)//f)*(img.shape[1]//f + 1) \
+                    group = (p.pt[0] + xoff) // grid \
+                            + ((p.pt[1]+yoff) // grid) * (img.shape[1] // grid + 1) \
                             + j * ng
                     if group not in groups or groups[group][0] < p.response:
                         groups[group] = (p.response, i)
@@ -324,7 +339,7 @@ class KeypointAlgo(AlgorithmBase):
         params = {
             'nfeatures':nfeats,         # default: 500
             'edgeThreshold':31,         # default: 31
-            'fastThreshold':20,         # default: 20
+            'fastThreshold':10,         # default: 20
             'firstLevel':0,             # always 0
             'nlevels':8,                # default: 8
             'patchSize':31,             # default: 31

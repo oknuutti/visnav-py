@@ -96,6 +96,12 @@ class DidymosPrimary(Asteroid):
         self.target_model_file = os.path.join(BASE_DIR, 'data/ryugu-big-lo-res.obj')
         self.hires_target_model_file = os.path.join(BASE_DIR, 'data/ryugu-big-hi-res.obj')
 
+        self.constant_noise_shape_model = {
+            '' : os.path.join(BASE_DIR, 'data/ryugu_baseline.nsm'),   # same as target_model_file but includes error estimate
+            'lo': os.path.join(BASE_DIR, 'data/ryugu_lo_noise.nsm'),  # 1/3 the vertices
+            'hi': os.path.join(BASE_DIR, 'data/ryugu_hi_noise.nsm'),  # 1/10 the vertices
+        }
+
         self.sample_image_file = None
         self.sample_image_meta_file = None
 

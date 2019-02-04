@@ -264,10 +264,22 @@ class RenderEngine:
 if __name__ == '__main__':
     from settings import *
     import cv2
-    sm = DidymosSystemModel(use_narrow_cam=False)
+#    sm = DidymosSystemModel(use_narrow_cam=False)
+    sm = RosettaSystemModel()
     re = RenderEngine(sm.cam.width, sm.cam.height)
-    obj_idx = re.load_object(sm.asteroid.target_model_file)
-    re.set_frustum(sm.cam.x_fov, sm.cam.y_fov, sm.min_altitude, sm.max_distance)
+
+    if True:
+        #obj_idx = re.load_object(sm.asteroid.hires_target_model_file)
+        #obj_idx = re.load_object('../data/67p-17k.obj')
+        #obj_idx = re.load_object('../data/67p-4k.obj')
+        obj_idx = re.load_object('../data/67p-1k.obj')
+    else:
+        obj = ShapeModel(fname=os.path.join(BASE_DIR, 'data/test-ball.obj'))
+        obj, _, _ = tools.apply_noise(obj, len_sc=SHAPE_MODEL_NOISE_LEN_SC,
+                                         noise_lv=SHAPE_MODEL_NOISE_LV['hi'])
+        obj_idx = re.load_object(obj)
+
+    re.set_frustum(sm.cam.x_fov, sm.cam.y_fov, sm.min_altitude*0.5, sm.max_distance)
 
     q = tools.angleaxis_to_q((math.radians(10), 0, 1, 0))
     if False:
@@ -277,7 +289,7 @@ if __name__ == '__main__':
             cv2.waitKey()
 
     if True:
-        image, depth = re.render(obj_idx, [0, 0, -sm.min_med_distance], q ** 5, np.array([1, 0, 0]) / math.sqrt(1), get_depth=True)
-        cv2.imshow('depth', np.clip((sm.min_med_distance+sm.asteroid.mean_radius - depth)/5, 0, 1))
+        image, depth = re.render(obj_idx, [0, 0, -sm.min_med_distance*0.65], q ** 5, np.array([1, 0, 0]) / math.sqrt(1), get_depth=True)
+        #cv2.imshow('depth', np.clip((sm.min_med_distance+sm.asteroid.mean_radius - depth)/5, 0, 1))
         cv2.imshow('image', image)
         cv2.waitKey()

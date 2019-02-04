@@ -163,8 +163,8 @@ def load_image_meta(src, sm):
     sc_ast_p = scub.dot(sc_ast_ec_p.transpose())
 
     sm.real_spacecraft_pos = sc_ast_p
-    if USE_IMG_LABEL_FOR_SC_POS:
-        sm.spacecraft_pos = sc_ast_p
+    # if USE_IMG_LABEL_FOR_SC_POS:
+    #    sm.spacecraft_pos = sc_ast_p
     ##
     ## done setting spacecraft position
 

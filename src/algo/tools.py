@@ -4,6 +4,7 @@ import time
 from functools import lru_cache
 
 import numpy as np
+import numba as nb
 import quaternion
 import sys
 from astropy.coordinates import SkyCoord
@@ -226,6 +227,14 @@ def solar_elongation(ast_v, sc_q):
 
     return elong, direc
 
+@nb.njit(nb.f8[:](nb.f8[:], nb.f8[:]))
+def cross3d(left, right):
+    # for short vectors cross product is faster in pure python than with numpy.cross
+    x = ((left[1] * right[2]) - (left[2] * right[1]))
+    y = ((left[2] * right[0]) - (left[0] * right[2]))
+    z = ((left[0] * right[1]) - (left[1] * right[0]))
+    return np.array((x, y, z))
+
 def find_nearest(array, value):
     idx = (np.abs(array-value)).argmin()
     return array[idx], idx
@@ -362,14 +371,89 @@ def mv_normal(mean, cov=None, L=None, size=None):
     x.shape = tuple(final_shape)
     
     return x, L
-    
+
+
+#@nb.njit(nb.f8[:](nb.f8[:, :], nb.f8[:, :]), nogil=True)
+@nb.njit(nb.f8(nb.f8[:, :], nb.f8[:, :]), nogil=True, cache=True)
+def poly_line_intersect(poly, line):
+#    extend_line = True
+    eps = 1e-6
+    none = np.inf  # np.zeros(1)
+
+    v0v1 = poly[1, :] - poly[0, :]
+    v0v2 = poly[2, :] - poly[0, :]
+
+    dir = line[1, :] - line[0, :]
+    line_len = math.sqrt(np.sum(dir**2))
+    if line_len < eps:
+        return none
+
+    dir = dir/line_len
+    pvec = cross3d(dir, v0v2)
+    det = v0v1.dot(pvec)
+    if abs(det) < eps:
+        return none
+
+    # backface culling
+    if False and det < 0:
+        return none
+
+    # frontface culling
+    if False and det > 0:
+        return none
+
+    inv_det = 1.0 / det
+    tvec = line[0, :] - poly[0, :]
+    u = tvec.dot(pvec) * inv_det
+
+    if u + eps < 0 or u - eps > 1:
+        return none
+
+    qvec = cross3d(tvec, v0v1)
+    v = dir.dot(qvec) * inv_det
+
+    if v + eps < 0 or u + v - eps > 1:
+        return none
+
+    t = v0v2.dot(qvec) * inv_det
+    if True:
+        # return error directly
+        return t - line_len
+    else:
+        # return actual 3d intersect point
+        if not extend_line and t - eps > line_len:
+            return none
+        return line[0, :] + t*dir
+
+
+# INVESTIGATE: parallel = True does not speed up at all (or marginally) for some reason even though all cores are in use
+@nb.njit(nb.f8(nb.u4[:, :], nb.f8[:, :], nb.f8[:, :]), nogil=True, parallel=False, cache=True)
+def intersections(faces, vertices, line):
+    #pts = np.zeros((10, 3))
+    #i = 0
+    min_err = np.ones(faces.shape[0])*np.inf
+    for k in nb.prange(1, faces.shape[0]):
+        err = poly_line_intersect(vertices[faces[k, :], :], line)
+        min_err[k] = err
+#        if abs(err) < min_err:
+#            min_err = err
+        # if len(pt) == 3:
+        #     pts[i, :] = pt
+        #     i += 1
+        #     if i >= pts.shape[0]:
+        #         print('too many intersects')
+        #         i -= 1
+
+    i = np.argmin(np.abs(min_err))
+    return min_err[i]  # pts[0:i, :]
+
 
 def apply_noise(model, support=None, L=None, len_sc=SHAPE_MODEL_NOISE_LEN_SC, 
                 noise_lv=SHAPE_MODEL_NOISE_LV['lo'], only_z=False):
     
     noisy_points, avg_dev, L = points_with_noise(points=np.array(model.vertices),
             support=support, L=L, len_sc=len_sc, noise_lv=noise_lv, only_z=only_z)
-                
+
     data = model.as_dict()
     data['vertices'] = noisy_points
     from iotools import objloader

@@ -137,6 +137,18 @@ def run_batch(mission, full_method, count):
         #kwargs['rotation_noise'] = False
 
     tl = TestLoop(sm, far=(kwargs['method'] in ('centroid', 'keypoint+')))
+
+    if sm.mission_id == 'rose':
+        tl.enable_initial_location = False
+        ka = tl.keypoint.__class__
+        ka.FEATURE_FILTERING_RELATIVE_GRID_SIZE = 0.01
+        ka.FEATURE_FILTERING_FALLBACK_GRID_SIZE = 2
+        ka.FEATURE_FILTERING_SCHEME = ka.FFS_SIMPLE_GRID
+        ka.MAX_FEATURES = 2000
+        if kwargs.get('feat', -1) == ka.ORB:
+            ka.DEF_RANSAC_ERROR = 10
+            #ka.LOWE_METHOD_COEF = 0.825
+
     tl.run(count, log_prefix=mission+'-'+full_method+'-', **kwargs)
 
 
