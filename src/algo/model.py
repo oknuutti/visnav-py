@@ -463,7 +463,30 @@ class SystemModel(ABC):
     def dist_pos_err(self):
         real_d = self.real_spacecraft_pos[2]
         return abs(self.spacecraft_pos[2] - real_d) / abs(real_d)
-        
+
+    def export_state(self, filename):
+        """ saves state in an easy to access format """
+
+        qn = ('w', 'x', 'y', 'z')
+        vn = ('x', 'y', 'z')
+        lines = [['type'] + ['ast_q' + i for i in qn] + ['sc_q' + i for i in qn]
+                 + ['ast_sc_v' + i for i in vn] + ['sun_ast_v' + i for i in vn]]
+
+        for t in ('initial', 'real'):
+            # if settings.USE_ICRS, all in solar system barycentric equatorial frame
+            ast_q = self.asteroid.rotation_q(self.time.value)
+            sc_q = self.spacecraft_q()
+            ast_sc_v = tools.q_times_v(sc_q, self.spacecraft_pos)
+            sun_ast_v = self.asteroid.position(self.time.value)
+
+            lines.append((t,) + tuple('%f'%f for f in (tuple(ast_q.components) + tuple(sc_q.components)
+                      + tuple(ast_sc_v) + tuple(sun_ast_v))))
+            self.swap_values_with_real_vals()
+
+        with open(filename, 'w') as f:
+            f.write('\n'.join(['\t'.join(l) for l in lines]))
+
+
     def save_state(self, filename, printout=False):
         config = configparser.ConfigParser()
         filename = filename+('.lbl' if len(filename)<5 or filename[-4:]!='.lbl' else '')
@@ -490,7 +513,7 @@ class SystemModel(ABC):
     def load_state(self, filename, sc_ast_vertices=False):
         if not os.path.isfile(filename):
             raise FileNotFoundError(filename)
-        
+
         config = configparser.ConfigParser()
         filename = filename+('.lbl' if len(filename)<5 or filename[-4:]!='.lbl' else '')
         config.read(filename)

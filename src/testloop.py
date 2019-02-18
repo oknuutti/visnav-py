@@ -421,7 +421,7 @@ class TestLoop:
             quit()
 
         cache_file = self._cache_file(i)+'.png'
-        cv2.imwrite(cache_file, img)
+        cv2.imwrite(cache_file, img, [cv2.IMWRITE_PNG_COMPRESSION, 9])
         return cache_file
 
     def load_navcam_image(self, i):

@@ -565,9 +565,9 @@ def foreground_idxs(array, max_val=None):
     idxs = np.concatenate(((iy,), (ix,)), axis=0).T
     return idxs
 
-def interp2(array, x, y, max_val=None, max_dist=30, idxs=None):
+def interp2(array, x, y, max_val=None, max_dist=30, idxs=None, discard_bg=False):
     assert y<array.shape[0] and x<array.shape[1], 'out of bounds %s: %s'%(array.shape, (y, x))
-    
+
     v = array[int(y):int(y)+2, int(x):int(x)+2]
     xf = x-int(x)
     yf = y-int(y)
@@ -586,6 +586,10 @@ def interp2(array, x, y, max_val=None, max_dist=30, idxs=None):
     if w_sum>0:
         # ignore background values
         val = np.sum(w.reshape(1,-1)[idx] * v.reshape(1,-1)[idx]) / w_sum
+
+    elif discard_bg:
+        return float('nan')
+
     else:
         # no foreground values in 2x2 matrix, find nearest foreground value
         if idxs is None:

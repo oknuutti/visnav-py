@@ -42,6 +42,8 @@ class KeypointAlgo(AlgorithmBase):
     (FFS_NONE, FFS_SIMPLE_GRID, FFS_OVERLAPPING_GRID) = range(3)
     FEATURE_FILTERING_SCHEME = FFS_OVERLAPPING_GRID
 
+    DISCARD_OFF_OBJECT_FEATURES = False
+
     # if want that mask radius is x when res 1024x1024 and ast dist 64km => coef = 64*x/1024
     MATCH_MASK_RADIUS = 0.15  # ratio to max asteroid diameter
     LOWE_METHOD_COEF = 0.85  # default 0.7 (0.8)  # 0.825 vs 0.8 => less fails, worse accuracy
@@ -49,6 +51,8 @@ class KeypointAlgo(AlgorithmBase):
     RANSAC_ITERATIONS = 20000  # default 100
     DEF_RANSAC_ERROR = 15  # default 8.0, for ORB: use half the error given here
     # (SOLVEPNP_ITERATIVE), SOLVEPNP_P3P, SOLVEPNP_AP3P, SOLVEPNP_EPNP, ?SOLVEPNP_UPNP, ?SOLVEPNP_DLS
+    # AP3P seemed best, related paper: https://arxiv.org/pdf/1701.08237.pdf
+    #  - related c-code: https://git.codingcafe.org/Mirrors/opencv/opencv/blob/master/modules/calib3d/src/ap3p.cpp
     RANSAC_KERNEL = cv2.SOLVEPNP_AP3P
 
     def __init__(self, system_model, render_engine, obj_idx):
@@ -194,6 +198,14 @@ class KeypointAlgo(AlgorithmBase):
                     ref_kp_3d = KeypointAlgo.inverse_project(sm, [ref_kp[m.trainIdx].pt for m in matches], depth_result,
                                                              self._render_z, ref_img_sc)
 
+                if KeypointAlgo.DISCARD_OFF_OBJECT_FEATURES:
+                    I = np.where(np.logical_not(np.isnan(ref_kp_3d[:, 0])))[0]
+                    if len(I) < self.MIN_FEATURES:
+                        raise PositioningException('Too few matches found')
+                    sce_kp_2d = sce_kp_2d[I, :]
+                    ref_kp_3d = ref_kp_3d[I, :]
+                    matches = [matches[i] for i in I]
+
                 # finally solve pnp with ransac
                 rvec, tvec, inliers = KeypointAlgo.solve_pnp_ransac(sm, sce_kp_2d, ref_kp_3d, self._ransac_err)
 
@@ -286,12 +298,12 @@ class KeypointAlgo(AlgorithmBase):
         if kp is None:
             return None
 
-        if cls.FEATURE_FILTERING_SCHEME is not cls.FFS_NONE:
-            if cls.FEATURE_FILTERING_RELATIVE_GRID_SIZE > 0 and expected_pixel_extent > 0:
-                grid = cls.FEATURE_FILTERING_RELATIVE_GRID_SIZE * expected_pixel_extent
-            else:
-                grid = cls.FEATURE_FILTERING_FALLBACK_GRID_SIZE
+        if cls.FEATURE_FILTERING_RELATIVE_GRID_SIZE > 0 and expected_pixel_extent > 0:
+            grid = cls.FEATURE_FILTERING_RELATIVE_GRID_SIZE * expected_pixel_extent
+        else:
+            grid = cls.FEATURE_FILTERING_FALLBACK_GRID_SIZE
 
+        if cls.FEATURE_FILTERING_SCHEME is not cls.FFS_NONE and grid > 0:
             ng = img.shape[0] // grid * (img.shape[1] // grid + 1) + img.shape[1] // grid + 1
             offsets = [(0, 0)]
             if cls.FEATURE_FILTERING_SCHEME == cls.FFS_OVERLAPPING_GRID:
@@ -534,10 +546,12 @@ class KeypointAlgo(AlgorithmBase):
         cam = system_model.cam
         sc = img_sc * system_model.view_width/cam.width
         max_val = system_model.max_distance-3
-        idxs = tools.foreground_idxs(depths, max_val=max_val)
+        discard_bg = KeypointAlgo.DISCARD_OFF_OBJECT_FEATURES
+        idxs = None if discard_bg else tools.foreground_idxs(depths, max_val=max_val)
 
         def invproj(xi, yi):
-            z = -tools.interp2(depths, xi/img_sc, yi/img_sc, idxs=idxs, max_val=max_val, max_dist=max_dist)
+            z = -tools.interp2(depths, xi/img_sc, yi/img_sc, idxs=idxs, max_val=max_val, max_dist=max_dist,
+                               discard_bg=discard_bg)
             x, y = cam.calc_xy(xi/sc, yi/sc, z)
             return x, -y, -(z-render_z) # same as rotate using cv2gl_q
         

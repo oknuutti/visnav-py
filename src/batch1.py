@@ -142,8 +142,8 @@ def run_batch(mission, full_method, count):
         tl.enable_initial_location = False
         ka = tl.keypoint.__class__
         ka.FEATURE_FILTERING_RELATIVE_GRID_SIZE = 0.01
-        ka.FEATURE_FILTERING_FALLBACK_GRID_SIZE = 2
-        ka.FEATURE_FILTERING_SCHEME = ka.FFS_SIMPLE_GRID
+        ka.FEATURE_FILTERING_FALLBACK_GRID_SIZE = 0
+        ka.FEATURE_FILTERING_SCHEME = ka.FFS_NONE  # ka.FFS_SIMPLE_GRID
         ka.MAX_FEATURES = 2000
         if kwargs.get('feat', -1) == ka.ORB:
             ka.DEF_RANSAC_ERROR = 10
