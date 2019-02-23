@@ -69,12 +69,13 @@ class AlgorithmBase:
     def load_obj(self, obj_file, obj_idx=None):
         self.obj_idx = self.render_engine.load_object(obj_file, obj_idx)
 
-    def render(self, center=False, depth=False, discretize_tol=False, shadows=False, lambertian=False):
+    def render(self, center=False, depth=False, discretize_tol=False, shadows=False, gamma=1.8,
+               reflection=RenderEngine.REFLMOD_LUNAR_LAMBERT):
         assert not discretize_tol, 'discretize_tol deprecated at render function'
 
         rel_pos_v, rel_rot_q, light_v = self._render_params(discretize_tol, center)
-        res = self.render_engine.render(self.obj_idx, rel_pos_v, rel_rot_q, light_v,
-                                         get_depth=depth, shadows=shadows, lambertian=lambertian)
+        res = self.render_engine.render(self.obj_idx, rel_pos_v, rel_rot_q, light_v, get_depth=depth, shadows=shadows,
+                                        gamma=gamma, reflection=reflection)
         if depth:
             img, dth = res
         else:
@@ -132,28 +133,31 @@ class AlgorithmBase:
 
 if __name__ == '__main__':
     sm = RosettaSystemModel()
-    lblloader.load_image_meta(sm.asteroid.sample_image_meta_file, sm)
-    re = RenderEngine(sm.view_width, sm.view_height, antialias_samples=0)
-    obj_idx = re.load_object(sm.asteroid.real_shape_model, smooth=True)
+    #img = 'ROS_CAM1_20140823T021833'
+    img = 'ROS_CAM1_20140808T140718'
 
+    lblloader.load_image_meta(os.path.join(sm.asteroid.image_db_path, img + '.LBL'), sm)
+    sm.swap_values_with_real_vals()
+
+    re = RenderEngine(sm.cam.width, sm.cam.height, antialias_samples=16)
+    obj_idx = re.load_object(sm.asteroid.hires_target_model_file, smooth=False)
     ab = AlgorithmBase(sm, re, obj_idx)
-    #sm.z_off.value = -70
-    #sm.z_off.value = -1275
 
-    if False:
-        image, depth = ab.render(depth=True)
-        cv2.imshow('depth', np.clip((72.5-depth)/5, 0, 1))
-        cv2.imshow('image', image)
-        cv2.waitKey()
+    hapke = True
+    model = RenderEngine.REFLMOD_HAPKE if hapke else RenderEngine.REFLMOD_LUNAR_LAMBERT
+    size = (1024, 1024)  # (256, 256)
 
-    if True:
-        real = cv2.imread(sm.asteroid.sample_image_file, cv2.IMREAD_GRAYSCALE)
-        synth2 = ab.render(shadows=True)
-        #synth1 = ab.render()
-        #synth0 = ab.render(lambertian=True)
+    real = cv2.imread(os.path.join(sm.asteroid.image_db_path, img + '_P.png'), cv2.IMREAD_GRAYSCALE)
+    real = cv2.resize(real, size)
 
-        cv2.imshow('real', real)
-        cv2.imshow('LL with shadows', synth2)
-        #cv2.imshow('Lunar-Lambertian', synth1)
-        #cv2.imshow('Lambertian', synth0)
-        cv2.waitKey()
+    synth = []
+#    for i, p in enumerate(np.linspace(0, 30, 11)):
+#        if hapke:
+            # L, th, w, b (scattering anisotropy), c (scattering direction from forward to back)
+#            RenderEngine.REFLMOD_PARAMS[model][0:5] = [600, p, 0.052, -0.42, 0]
+    synth.append(cv2.resize(ab.render(shadows=True, reflection=model), size))
+#        if not hapke:
+#            break
+
+    cv2.imshow('real vs synthetic', np.concatenate([real, 255*np.ones((real.shape[0], 1), dtype='uint8')] + synth, axis=1))
+    cv2.waitKey()

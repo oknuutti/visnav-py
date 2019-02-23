@@ -12,7 +12,7 @@ out vec3 vertexPosition_shadowFrame;
 uniform mat4 mvp;
 uniform mat4 mv;
 //uniform mat4 inv_mv;
-uniform bool lambertian;
+uniform int reflection_model;
 uniform bool shadows;
 uniform mat4 shadow_mvp;
 
@@ -22,7 +22,7 @@ void main()
     gl_Position = mvp * vec4(vertexPosition_modelFrame, 1.0);
 
     vertexNormal_viewFrame = (mv * vec4(vertexNormal_modelFrame, 0)).xyz;
-    if (!lambertian) {
+    if (reflection_model > 0) {
         vertexPosition_viewFrame = (mv * vec4(vertexPosition_modelFrame, 1.0)).xyz;
     }
     if (shadows) {

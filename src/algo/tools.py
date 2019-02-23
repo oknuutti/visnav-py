@@ -3,6 +3,7 @@ import math
 import time
 from functools import lru_cache
 
+import cv2
 import numpy as np
 import numba as nb
 import quaternion
@@ -695,6 +696,16 @@ def solve_q_bf(src_q, dst_q):
     return qs[i]
 
 
+def adjust_gamma(image, gamma=1.0):
+    # build a lookup table mapping the pixel values [0, 255] to
+    # their adjusted gamma values
+    invGamma = 1.0 / gamma
+    table = np.array([((i / 255.0) ** invGamma) * 255 for i in np.arange(0, 256)]).astype("uint8")
+
+    # apply gamma correction using the lookup table
+    return cv2.LUT(image, table)
+
+
 def hover_annotate(fig, ax, line, annotations):
     annot = ax.annotate("", xy=(0, 0), xytext=(-20, 20), textcoords="offset points",
                         bbox=dict(boxstyle="round", fc="w"),
@@ -702,8 +713,14 @@ def hover_annotate(fig, ax, line, annotations):
     annot.set_visible(False)
 
     def update_annot(ind):
-        x, y = line.get_data()
-        annot.xy = (x[ind["ind"][0]], y[ind["ind"][0]])
+        idx = ind["ind"][0]
+        try:
+            # for regular plots
+            x, y = line.get_data()
+            annot.xy = (x[idx], y[idx])
+        except AttributeError:
+            # for scatter plots
+            annot.xy = tuple(line.get_offsets()[idx])
         text = ", ".join([annotations[n] for n in ind["ind"]])
         annot.set_text(text)
         annot.get_bbox_patch().set_alpha(0.4)
@@ -794,3 +811,16 @@ def display_top(top_stats, key_type='lineno', limit=10):
         print("%s other: %.1f MB" % (len(other), size/1024/1024))
     total = sum(stat.size for stat in top_stats)
     print("Total allocated size: %.1f MB" % (total/1024/1024))
+
+
+def smooth1d(xt, x, Y, weight_fun=lambda d: 0.9**abs(d)):
+    if xt.ndim != 1 or x.ndim != 1:
+        raise ValueError("smooth1d only accepts 1 dimension arrays for location")
+    if x.shape[0] != Y.shape[0]:
+        raise ValueError("different lenght x and Y")
+
+    D = np.repeat(np.expand_dims(xt, 1), len(x), axis=1) - np.repeat(np.expand_dims(x, 0), len(xt), axis=0)
+    weights = np.array(list(map(weight_fun, D.flatten()))).reshape(D.shape)
+    Yt = np.sum(Y*weights, axis=1) / np.sum(weights, axis=1)
+
+    return Yt

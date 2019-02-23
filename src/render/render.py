@@ -14,6 +14,57 @@ from missions.rosetta import RosettaSystemModel
 
 
 class RenderEngine:
+    (
+        REFLMOD_LAMBERT,
+        REFLMOD_LUNAR_LAMBERT,
+        REFLMOD_HAPKE,   ## NOTE : DOES NOT SEEM TO WORK AS IMPOSSIBLE TO GET THE "HIGHLIGHTS"
+    ) = range(3)
+
+    REFLMOD_PARAMS = {
+        REFLMOD_LAMBERT: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+
+        # Lunar-Lambert coefficients were fitted using iotools/approx-lunar-lambert.py
+        REFLMOD_LUNAR_LAMBERT: [1.00000e+00, -6.17114e-03, 2.25606e-05, -2.33487e-06, 2.46344e-08, -5.89110e-11, 8.32932e-01, 0, 0, 0],
+        # REFLMOD_LUNAR_LAMBERT: [1, -0.019, 2.42e-4, -1.46e-6, 0, 0, 1, 0, 0, 0],  # old values used
+
+        # Details for from book by Hapke, 2012, "Theory of Reflectance and Emittance Spectroscopy"
+        # NOTE : DOES NOT SEEM TO WORK AS IMPOSSIBLE TO GET THE "HIGHLIGHTS"
+
+        REFLMOD_HAPKE: [
+            # J, brightness scaling
+            482.87,
+
+            # th_p, average surface slope (deg), effective roughness, theta hat sub p
+            16.898,
+
+            # w, single scattering albedo (w, omega, SSA), range 0-1
+            0.0520,
+
+            # b, SPPF asymmetry parameter (sometimes g?),
+            #   if single-term HG, range is [-1, 1], from backscattering to isotropic to forward scattering
+            #   if two-term HG (c>0), range is [0, 1], from isotropic to scattering in a single direction
+            0.3463,
+
+            # c, second HG term for a more complex SPPF. Range [0, 1], from forward scattering to backward scattering.
+            0.7794,
+
+            # B_SH0, or B0, amplitude of shadow-hiding opposition effect (shoe). If zero, dont use.
+            0,
+
+            # hs, or h or k, angular half width of shoe
+            0.005,
+
+            # B_CB0, amplitude of coherent backscatter opposition effect (cboe). If zero, dont use.
+            0,
+
+            # hc, angular half width of cboe
+            0.005,
+
+            # extra mode selection, first bit: use K or not
+            0,
+        ],
+    }
+
     def __init__(self, view_width, view_height, antialias_samples=0):
         self._ctx = moderngl.create_standalone_context()
         self._width = view_width
@@ -110,10 +161,12 @@ class RenderEngine:
 
         return len(self._objs)-1
 
-    def render(self, obj_idxs, rel_pos_v, rel_rot_q, light_v, get_depth=False, shadows=True, lambertian=False):
+    def render(self, obj_idxs, rel_pos_v, rel_rot_q, light_v, get_depth=False, shadows=True,
+               gamma=1.0, reflection=REFLMOD_LUNAR_LAMBERT):
+
         obj_idxs = [obj_idxs] if isinstance(obj_idxs, int) else obj_idxs
 
-        self._set_params(np.array(rel_pos_v), rel_rot_q, np.array(light_v), lambertian)
+        self._set_params(np.array(rel_pos_v), rel_rot_q, np.array(light_v), reflection)
         if shadows:
             self._render_shadowmap(obj_idxs, rel_rot_q, light_v)
 
@@ -149,9 +202,12 @@ class RenderEngine:
             depth = np.divide(1.0, (2.0 * a) * depth - (a - b))  # 1/((2*X-1)*a+b)
             depth = np.flipud(depth)
 
+        if gamma != 1.0:
+            data = tools.adjust_gamma(data, gamma)
+
         return (data, depth) if get_depth else data
 
-    def _set_params(self, rel_pos_v, rel_rot_q, light_v, lambertian=False):
+    def _set_params(self, rel_pos_v, rel_rot_q, light_v, reflection=REFLMOD_LUNAR_LAMBERT):
         self._model_mx = np.identity(4)
         self._model_mx[:3, :3] = quaternion.as_rotation_matrix(rel_rot_q)
         self._model_mx[:3, 3] = rel_pos_v
@@ -161,8 +217,9 @@ class RenderEngine:
         self._prog['mv'].write((mv.T).astype('float32').tobytes())
         # self._prog['inv_mv'].write((np.linalg.inv(mv).T).astype('float32').tobytes())
         self._prog['mvp'].write((mvp.T).astype('float32').tobytes())
-        self._prog['lightDirection_viewFrame'].value = tuple(-light_v) # already in view frame
-        self._prog['lambertian'].value = lambertian
+        self._prog['lightDirection_viewFrame'].value = tuple(-light_v)  # already in view frame
+        self._prog['reflection_model'].value = reflection
+        self._prog['model_coefs'].value = RenderEngine.REFLMOD_PARAMS[reflection]
         self._prog['shadows'].value = False
 
     def _render_shadowmap(self, obj_idxs, rel_rot_q, light_v):
@@ -268,28 +325,33 @@ if __name__ == '__main__':
     sm = RosettaSystemModel()
     re = RenderEngine(sm.cam.width, sm.cam.height)
 
-    if True:
+    if False:
         #obj_idx = re.load_object(sm.asteroid.hires_target_model_file)
         #obj_idx = re.load_object('../data/67p-17k.obj')
         obj_idx = re.load_object('../data/67p-4k.obj')
         #obj_idx = re.load_object('../data/67p-1k.obj')
     else:
         obj = ShapeModel(fname=os.path.join(BASE_DIR, 'data/test-ball.obj'))
-        obj, _, _ = tools.apply_noise(obj, len_sc=SHAPE_MODEL_NOISE_LEN_SC,
-                                         noise_lv=SHAPE_MODEL_NOISE_LV['hi'])
+#        obj, _, _ = tools.apply_noise(obj, len_sc=SHAPE_MODEL_NOISE_LEN_SC,
+#                                         noise_lv=SHAPE_MODEL_NOISE_LV['hi'])
         obj_idx = re.load_object(obj)
 
     re.set_frustum(sm.cam.x_fov, sm.cam.y_fov, sm.min_altitude*0.5, sm.max_distance)
 
     q = tools.angleaxis_to_q((math.radians(10), 0, 0.5, 0.5))
-    if True:
+    if False:
         for i in range(36):
             image = re.render(obj_idx, [0, 0, -sm.min_med_distance*3], q**i, np.array([1, 0, 0])/math.sqrt(1), get_depth=False)
             cv2.imshow('image', image)
             cv2.waitKey()
 
     elif True:
-        image, depth = re.render(obj_idx, [0, 0, -sm.min_med_distance*0.8], q ** 5, np.array([1, 0, 0]) / math.sqrt(1), get_depth=True)
+        hapke = True
+        model = RenderEngine.REFLMOD_HAPKE if hapke else RenderEngine.REFLMOD_LUNAR_LAMBERT
+        if hapke:
+            RenderEngine.REFLMOD_PARAMS[model][0:5] = [300, 0, 0.052, -0.42, 0]
+        image, depth = re.render(obj_idx, [0, 0, -sm.min_med_distance*0.8*2], q ** 5, np.array([1, 0, 0]) / math.sqrt(1),
+                                 get_depth=True, reflection=model)
         #cv2.imshow('depth', np.clip((sm.min_med_distance+sm.asteroid.mean_radius - depth)/5, 0, 1))
         cv2.imshow('image', image)
         cv2.waitKey()

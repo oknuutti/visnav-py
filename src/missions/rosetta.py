@@ -27,11 +27,11 @@ class RosettaSystemModel(SystemModel):
                 5,          # y fov in degrees
             ),
             limits=(
-                50,  # min_distance in km
+                25,  # min_distance in km
                 70,  # min_med_distance in km
-                350,  # max_med_distance in km #640
+                400,  # max_med_distance in km #640
                 1250,  # max_distance in km
-                60,  # min_elong in deg
+                40,  # min_elong in deg
                 min_time,  # min time instant
             )
         )
@@ -57,7 +57,7 @@ class ChuryumovGerasimenko(Asteroid):
             'hi': os.path.join(BASE_DIR, 'data/67p-1k.nsm'),  # 1/17 the vertices
         }
 
-        sample_image = 'ROS_CAM1_20150720T113057'
+        sample_image = 'ROS_CAM1_20140808T140718'
         self.sample_image_file = os.path.join(self.image_db_path, sample_image + '_P.png')
         self.sample_image_meta_file = os.path.join(self.image_db_path, sample_image + '.LBL')
 

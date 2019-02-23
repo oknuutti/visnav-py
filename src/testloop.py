@@ -242,12 +242,28 @@ class TestLoop:
             # s/c to asteroid vector
             sc_ast_v = -np.array([sc_ex, sc_ey, sc_ez])
 
-            # sc orientation: uniform, center of asteroid at edge of screen - some margin
-            da = np.random.uniform(0, rad(min(sm.cam.x_fov, sm.cam.y_fov)/2))
-            dd = np.random.uniform(0, 2*math.pi)
-            sco_lat = wrap_rads(-sc_lat + da*math.sin(dd))
-            sco_lon = wrap_rads(math.pi + sc_lon + da*math.cos(dd))
-            sco_rot = np.random.uniform(-math.pi, math.pi)  # rotation around camera axis
+            # sc orientation: uniform, center of asteroid at edge of screen
+            if False:
+                # always get at least 50% of astroid in view
+                da = np.random.uniform(0, rad(min(sm.cam.x_fov, sm.cam.y_fov)/2))
+                dd = np.random.uniform(0, 2*math.pi)
+                sco_lat = wrap_rads(-sc_lat + da*math.sin(dd))
+                sco_lon = wrap_rads(math.pi + sc_lon + da*math.cos(dd))
+                sco_rot = np.random.uniform(-math.pi, math.pi)  # rotation around camera axis
+            else:
+                # follows the screen edges so that get more partial views, always at least 25% in view
+                # TODO: add/subtract some margin
+                sco_lat = wrap_rads(-sc_lat)
+                sco_lon = wrap_rads(math.pi + sc_lon)
+                sco_rot = np.random.uniform(-math.pi, math.pi)  # rotation around camera axis
+                sco_q = ypr_to_q(sco_lat, sco_lon, sco_rot)
+
+                ast_ang_r = math.atan(sm.asteroid.mean_radius/1000/sc_r)  # if asteroid close, allow s/c to look at limb
+                dx = max(rad(sm.cam.x_fov/2), ast_ang_r)
+                dy = max(rad(sm.cam.y_fov/2), ast_ang_r)
+                disturbance_q = ypr_to_q(np.random.uniform(-dy, dy), np.random.uniform(-dx, dx), 0)
+                sco_lat, sco_lon, sco_rot = q_to_ypr(sco_q * disturbance_q)
+
             sco_q = ypr_to_q(sco_lat, sco_lon, sco_rot)
             
             # sc_ast_p ecliptic => sc_ast_p open gl -z aligned view
@@ -402,11 +418,15 @@ class TestLoop:
         light, _ = sm.gl_light_rel_dir()
         sm.swap_values_with_real_vals()
 
-        img, depth = self._synth_navcam.render(self._hires_obj_idx, pos, q, light, get_depth=True, shadows=True)
+        img, depth = self._synth_navcam.render(self._hires_obj_idx, pos, q, light,
+                                               get_depth=True, shadows=True, reflection=RenderEngine.REFLMOD_HAPKE)
         img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
 
         # coef=2 gives reasonably many stars
         img = ImageProc.add_stars(img.astype('float'), mask=depth>=sm.max_distance-0.1, coef=2.5)
+
+        # do same gamma correction as the available rosetta navcam images have
+        img = tools.adjust_gamma(img, 1.8)
 
         # ratio seems too low but blurring in images match actual Rosetta navcam images
         img = ImageProc.apply_point_spread_fn(img, ratio=0.2)
