@@ -24,7 +24,7 @@ class PhaseCorrelationAlgo(AlgorithmBase):
         self.errval  = None
         self.iter_count = 0
         self.start_time = None
-        self.optfun_values = []
+        self.extra_values = []
 
         self._image = None
         self._image_file = None
@@ -47,7 +47,7 @@ class PhaseCorrelationAlgo(AlgorithmBase):
         err = self.errfun()
 
         # log result
-        self.optfun_values.append(err)
+        self.extra_values.append(err)
         
         # enable events again
         #self.system_model.param_change_events(True)
@@ -188,7 +188,7 @@ class PhaseCorrelationAlgo(AlgorithmBase):
             if not ok:
                 return False
         
-        self.optfun_values = []
+        self.extra_values = []
         
         #hwsize = kwargs.get('hwin_size', 4)
         #tmp = cv2.createHanningWindow((hwsize, hwsize), cv2.CV_32F)

@@ -1,3 +1,4 @@
+import re
 import sys
 sys.tracebacklimit = 10
 
@@ -10,8 +11,12 @@ from testloop import TestLoop
 
 
 def get_system_model(mission, hi_res_shape_model=False):
-    if mission == 'rose':
-        sm = RosettaSystemModel(hi_res_shape_model=hi_res_shape_model)
+    rose = re.match(r'^rose(\d{3})?$', mission)
+
+    if rose:
+        mission = 'rose'
+        batch = rose[1] if rose[1] else '006'
+        sm = RosettaSystemModel(hi_res_shape_model=hi_res_shape_model, rosetta_batch='mtp'+batch)
     elif mission == 'didy1n':
         sm = DidymosSystemModel(target_primary=True, hi_res_shape_model=hi_res_shape_model)
     elif mission == 'didy1w':

@@ -422,11 +422,11 @@ class TestLoop:
                                                get_depth=True, shadows=True, reflection=RenderEngine.REFLMOD_HAPKE)
         img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
 
-        # coef=2 gives reasonably many stars
-        img = ImageProc.add_stars(img.astype('float'), mask=depth>=sm.max_distance-0.1, coef=2.5)
-
         # do same gamma correction as the available rosetta navcam images have
         img = tools.adjust_gamma(img, 1.8)
+
+        # coef=2 gives reasonably many stars, star brightness was tuned without gamma correction
+        img = ImageProc.add_stars(img.astype('float'), mask=depth>=sm.max_distance-0.1, coef=2.5)
 
         # ratio seems too low but blurring in images match actual Rosetta navcam images
         img = ImageProc.apply_point_spread_fn(img, ratio=0.2)
@@ -453,9 +453,12 @@ class TestLoop:
 
     def calculate_result(self, sm, i, imgfile, ok, initial, **kwargs):
         # save function values from optimization
-        fvals = self._phasecorr.optfun_values \
-                if np.all(ok) and kwargs.get('method', False) == 'phasecorr' \
-                else None
+        fvals = getattr({
+            'phasecorr': self.phasecorr,
+            'keypoint+': self.mixedalgo,
+            'keypoint': self.keypoint,
+            'centroid': self.centroid,
+        }[kwargs['method']], 'extra_values', None)
         final_fval = fvals[-1] if fvals else None
 
         real_rel_rot = q_to_ypr(sm.real_sc_asteroid_rel_q())
@@ -535,7 +538,24 @@ class TestLoop:
                                           if f[-4:]=='.LBL' and f[:-4] not in ignore])
         return len(self._state_list)
     
-    
+    @staticmethod
+    def log_columns():
+        return (
+                'iter', 'date', 'execution time',
+                'time', 'ast lat', 'ast lon', 'ast rot',
+                'sc lat', 'sc lon', 'sc rot',
+                'sol elong', 'light dir', 'x sc pos', 'y sc pos', 'z sc pos', 'sc altitude',
+                'rel yaw', 'rel pitch', 'rel roll',
+                'imgfile', 'extra val', 'shape model noise',
+                'sc pos x dev', 'sc pos y dev', 'sc pos z dev',
+                'time dev', 'ast lat dev', 'ast lon dev', 'ast rot dev',
+                'sc lat dev', 'sc lon dev', 'sc rot dev', 'total dev angle',
+                'x est sc pos', 'y est sc pos', 'z est sc pos', 'altitude est sc',
+                'yaw rel est', 'pitch rel est', 'roll rel est',
+                'x err sc pos', 'y err sc pos', 'z err sc pos', 'rot error',
+                'shift error km', 'altitude error', 'lat error (m/km)', 'dist error (m/km)', 'rel shift error (m/km)',
+            )
+
     def _init_log(self, log_prefix):
         os.makedirs(LOG_DIR, exist_ok=True)
 
@@ -546,21 +566,7 @@ class TestLoop:
         self._fval_logfile = LOG_DIR + logbody + '-fvals.log'
         self._logfile = LOG_DIR + logbody + '.log'
         with open(self._logfile, 'w') as file:
-            file.write(' '.join(sys.argv)+'\n'+ '\t'.join((
-                'iter', 'date', 'execution time',
-                'time', 'ast lat', 'ast lon', 'ast rot',
-                'sc lat', 'sc lon', 'sc rot', 
-                'sol elong', 'light dir', 'x sc pos', 'y sc pos', 'z sc pos', 'sc altitude',
-                'rel yaw', 'rel pitch', 'rel roll', 
-                'imgfile', 'optfun val', 'shape model noise',
-                'sc pos x dev', 'sc pos y dev', 'sc pos z dev',
-                'time dev', 'ast lat dev', 'ast lon dev', 'ast rot dev',
-                'sc lat dev', 'sc lon dev', 'sc rot dev', 'total dev angle',
-                'x est sc pos', 'y est sc pos', 'z est sc pos', 'altitude est sc',
-                'yaw rel est', 'pitch rel est', 'roll rel est',
-                'x err sc pos', 'y err sc pos', 'z err sc pos', 'rot error',
-                'shift error km', 'altitude error', 'lat error (m/km)', 'dist error (m/km)', 'rel shift error (m/km)',
-            ))+'\n')
+            file.write(' '.join(sys.argv)+'\n'+ '\t'.join(self.log_columns())+'\n')
             
         self._run_times = []
         self._laterrs = []
@@ -602,23 +608,34 @@ class TestLoop:
         # log opt fun values in other file
         if fvals:
             with open(self._fval_logfile, 'a') as file:
-                file.write('\t'.join(map(str, fvals))+'\n')
+                file.write(str(i)+'\t'+'\t'.join(map(str, fvals))+'\n')
+
+    def _close_log(self, samples):
+        self._timer.stop()
+
+        summary = self.calc_err_summary(self._timer.elapsed, samples, self._fails, self._run_times,
+                                        self._laterrs, self._disterrs, self._shifterrs, self._roterrs)
         
-        
-    def _close_log(self, times):
-        if len(self._laterrs):
-            prctls = (50, 68, 95) + ((99.7,) if times>=2000 else tuple())
+        with open(self._logfile, 'r') as org: data = org.read()
+        with open(self._logfile, 'w') as mod: mod.write(summary + data)
+        print("\n" + summary)
+
+    @staticmethod
+    def calc_err_summary(runtime, samples, fails, runtimes, laterrs, disterrs, shifterrs, roterrs):
+        disterrs = np.abs(disterrs)
+        if len(laterrs):
+            prctls = (50, 68, 95) + ((99.7,) if samples >= 2000 else tuple())
             calc_prctls = lambda errs: \
-                    ', '.join('%.2f' % p
-                    for p in np.nanpercentile(errs, prctls))
+                ', '.join('%.2f' % p
+                          for p in np.nanpercentile(errs, prctls))
             try:
-                laterr_pctls = calc_prctls(self._laterrs)
-                disterr_pctls = calc_prctls(self._disterrs)
-                shifterr_pctls = calc_prctls(self._shifterrs)
+                laterr_pctls = calc_prctls(laterrs)
+                disterr_pctls = calc_prctls(disterrs)
+                shifterr_pctls = calc_prctls(shifterrs)
                 roterr_pctls = ', '.join(
-                        ['%.2f'%p for p in np.nanpercentile(self._roterrs, prctls)])
+                    ['%.2f' % p for p in np.nanpercentile(roterrs, prctls)])
             except Exception as e:
-                print('Error calculating quantiles: %s'%e)
+                print('Error calculating quantiles: %s' % e)
                 laterr_pctls = 'error'
                 disterr_pctls = 'error'
                 shifterr_pctls = 'error'
@@ -626,37 +643,33 @@ class TestLoop:
 
             # a summary line
             summary_data = (
-                sum(self._laterrs)/len(self._laterrs),
+                np.nanmean(laterrs),
                 laterr_pctls,
-                sum(self._disterrs)/len(self._disterrs),
+                np.nanmean(disterrs),
                 disterr_pctls,
-                sum(self._shifterrs)/len(self._shifterrs),
+                np.nanmean(shifterrs),
                 shifterr_pctls,
-                sum(self._roterrs)/len(self._roterrs),
+                np.nanmean(roterrs),
                 roterr_pctls,
             )
         else:
-            summary_data = tuple(np.ones(8)*float('nan'))
-        
-        self._timer.stop()
-        summary = (
-            '%s - t: %.1fmin (%.0fms), '
-            + 'Le: %.3f m/km (%s), '
-            + 'De: %.3f m/km (%s), '
-            + 'Se: %.3f m/km (%s), '
-            + 'Re: %.3f° (%s), '
-            + 'fail: %.2f%% \n'
+            summary_data = tuple(np.ones(8) * float('nan'))
+
+        return (
+              '%s - t: %.1fmin (%.0fms), '
+              + 'Le: %.3f m/km (%s), '
+              + 'De: %.3f m/km (%s), '
+              + 'Se: %.3f m/km (%s), '
+              + 'Re: %.3f° (%s), '
+              + 'fail: %.2f%% \n'
         ) % (
-            dt.now().strftime("%Y-%m-%d %H:%M:%S"),
-            self._timer.elapsed/60,
-            1000*np.nanmean(self._run_times) if len(self._run_times) else float('nan'),            
-            *summary_data,
-            100*self._fails/times,
+              dt.now().strftime("%Y-%m-%d %H:%M:%S"),
+              runtime / 60,
+              1000 * np.nanmean(runtimes) if len(runtimes) else float('nan'),
+              *summary_data,
+              100 * fails / samples,
         )
-        
-        with open(self._logfile, 'r') as org: data = org.read()
-        with open(self._logfile, 'w') as mod: mod.write(summary + data)
-        print("\n" + summary)
+
 
     def _run_algo(self, imgfile, outfile, **kwargs):
         ok, rtime = False, False

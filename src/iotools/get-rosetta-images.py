@@ -1,8 +1,12 @@
 import os
 import re
 import time
+import re
+
 import requests
 import urllib.request
+
+import sys
 from bs4 import BeautifulSoup
 
 def get_file(url, path):
@@ -24,20 +28,44 @@ def get_file(url, path):
 
 
 if __name__ == '__main__':
+    try:
+        m = re.match(r'mtp\d{3}', sys.argv[1])
+        batch = m[0]
+        skip = int(sys.argv[2]) if len(sys.argv) > 2 else 0
+    except:
+        print('USAGE: python %s <mtpxxx> [skip-count]' % sys.argv[0])
+
     base = 'https://imagearchives.esac.esa.int'
     script_dir = os.path.dirname(__file__)
-    save_dir = os.path.join(script_dir, '../../data/rosetta-mtp025')
-    ## PRELANDING MTP006: cid=63, pid_s=6971, pn=770
-    # COMET ESCORT 2 MTP015: cid=119, pid_s=28703, pn=438
-    # COMET ESCORT 2 MTP016: cid=140, pid_s=31996, pn=277
-    ## COMET ESCORT 2 MTP017: cid=139, pid_s=32273, pn=404
-    # COMET ESCORT 4 MTP023: cid=275, pid_s=66085, pn=397
-    ## ROSETTA EXTENSION 1 MTP025: cid=237, pid_s=55584, pn=532
-    
-    cid = 237
-    skip = 198
-    pid_s = 55584+skip
-    pn = 532-skip
+    save_dir = os.path.join(script_dir, '../../data/rosetta-'+batch)
+
+    # cid (class id), pid_s (starting img id), pn (image count)
+    ids = {
+        ## PRELANDING
+        'mtp006': (63, 6971, 770),    # done
+        'mtp007': (62, 7561, 527),    #
+
+        ## COMET ESCORT 2
+        'mtp015': (119, 28703, 438),
+        'mtp016': (140, 31996, 277),
+        'mtp017': (139, 32273, 404),  # done
+
+        ## COMET ESCORT 3
+        'mtp018': (167, 38173, 320),
+
+        ## COMET ESCORT 4
+        'mtp023': (275, 66085, 397),
+        'mtp024': (236, 55132, 452),  #
+
+        ## ROSETTA EXTENSION 1
+        'mtp025': (237, 55584, 532),  # done
+        'mtp026': (238, 56116, 819),  #
+    }
+    cid, pid_s, pn = ids[batch]
+
+    skip = 0
+    pid_s += skip
+    pn -= skip
 
     print('000', end='', flush=True)
     for pid in range(pid_s, pid_s+pn):
@@ -45,7 +73,7 @@ if __name__ == '__main__':
         soup = BeautifulSoup(page.content, 'html.parser')
         imgele = soup.find(id="theMainImage")
         imgurl = base+imgele['src'][7:-7]+'.png'
-        imgname = imgele['alt']
+        imgname = imgele['alt'].replace('F._P.', '_P.')
         get_file(imgurl, os.path.join(save_dir, imgname))
 
         lblurl = soup.find(class_="download_link", href=re.compile("LBL$"))['href']

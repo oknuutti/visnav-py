@@ -2,7 +2,7 @@
 import os
 import re
 
-from settings import CACHE_DIR
+from settings import *
 
 if False:
     for fn in os.listdir(CACHE_DIR):
@@ -15,7 +15,7 @@ if False:
 
         if nfn is not None:
             os.rename(os.path.join(CACHE_DIR, fn), os.path.join(CACHE_DIR, nfn))
-else:
+elif False:
     # ^iteration_ => rose_
     # ^far => rose_far_
     # ^shapemodel_ => rose_
@@ -28,3 +28,12 @@ else:
             #print('%s => %s'%(fn, nfn))
             os.rename(os.path.join(CACHE_DIR, fn), os.path.join(CACHE_DIR, nfn))
 
+else:
+    # replace('F._P.', '_P.')
+    for batch in ('mtp024', 'mtp025', 'mtp026'):
+        path = os.path.join(BASE_DIR, 'data/rosetta-' + batch)
+        for fn in os.listdir(path):
+            m = re.match(r'.*?F\._P\.png$', fn)
+            if m:
+                nfn = fn.replace('F._P.', '_P.')
+                os.rename(os.path.join(path, fn), os.path.join(path, nfn))

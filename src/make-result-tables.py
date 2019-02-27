@@ -7,14 +7,18 @@ import settings
 from settings import LOG_DIR
 
 if __name__ == '__main__':
-    if len(sys.argv) < 3:
+    postfix = None
+    try:
+        if len(sys.argv) > 2:
+            start_date = datetime.datetime.strptime(sys.argv[1]+' '+sys.argv[2], '%Y-%m-%d %H:%M:%S')
+            adjust_expiry = datetime.datetime.strptime('2018-09-21 14:27:00', '%Y-%m-%d %H:%M:%S')
+        else:
+            postfix = sys.argv[1]
+    except:
         print('USAGE: python %s <yyyy-mm-dd> <HH:MM:SS>\n\tuses logs dated after given datetime'%(sys.argv[0],))
         quit()
 
-    start_date = datetime.datetime.strptime(sys.argv[1]+' '+sys.argv[2], '%Y-%m-%d %H:%M:%S')
-    adjust_expiry = datetime.datetime.strptime('2018-09-21 14:27:00', '%Y-%m-%d %H:%M:%S')
     noise_rows = ['17k', '4k', '1k']
-
     n_noise = len(noise_rows)
     n_col = 8
     nofdb = True
@@ -103,14 +107,18 @@ if __name__ == '__main__':
     logfiles = {}
     dates = {}
     for fname in os.listdir(LOG_DIR):
-        match = re.match(r"([^-]+)-([^-]+)-(\d+-\d+)\.log", fname)
+        mstr3 = postfix if postfix else r'(\d+-\d+)'
+        match = re.match(r"([^-]+)-([^-]+)-" + mstr3 + r"\.log", fname)
         if match is not None:
             mission = match[1]
             s = match[2]
-            t = datetime.datetime.strptime(match[3], "%Y%m%d-%H%M%S")
-            if t > start_date and (s not in dates or dates[s] < t):
-                dates[s] = t
+            if postfix:
                 logfiles[s] = fname
+            else:
+                t = datetime.datetime.strptime(match[3], "%Y%m%d-%H%M%S")
+                if t > start_date and (s not in dates or dates[s] < t):
+                    dates[s] = t
+                    logfiles[s] = fname
 
     # read data from logfiles
     data = {}

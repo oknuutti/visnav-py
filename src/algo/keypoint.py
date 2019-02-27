@@ -55,11 +55,13 @@ class KeypointAlgo(AlgorithmBase):
     #  - related c-code: https://git.codingcafe.org/Mirrors/opencv/opencv/blob/master/modules/calib3d/src/ap3p.cpp
     RANSAC_KERNEL = cv2.SOLVEPNP_AP3P
 
-    def __init__(self, system_model, render_engine, obj_idx):
+    def __init__(self, system_model, render_engine, obj_idx, est_real_ast_orient=False):
         super(KeypointAlgo, self).__init__(system_model, render_engine, obj_idx)
 
         self.sm_noise = 0
         self._noise_lv = False
+        self.extra_values = None
+        self.est_real_ast_orient = est_real_ast_orient
 
         self._pause = DEBUG == 2
         self._shape_model_rng = None
@@ -91,6 +93,7 @@ class KeypointAlgo(AlgorithmBase):
         self._render_z = -sm.min_med_distance
         init_z = kwargs.get('init_z', self._render_z)
         ref_img_sc = min(1, self._render_z / init_z) * (sm.view_width if scale_cam_img else self._cam.width) / sm.view_width
+        self.extra_values = None
 
         if use_feature_db and self._fdb_helper is None:
             from algo.fdbgen import FeatureDatabaseGenerator
@@ -127,10 +130,11 @@ class KeypointAlgo(AlgorithmBase):
         if BATCH_MODE and self.debug_filebase:
             # save start situation in log archive
             self.timer.stop()
-            sce = cv2.resize(orig_sce_img, tuple(np.flipud(ref_img.shape)))
-            cv2.imwrite(self.debug_filebase+'a.png', np.concatenate((sce, ref_img), axis=1))
+            img1 = cv2.resize(orig_sce_img, (sm.view_width, sm.view_height))
+            img2 = cv2.resize(ref_img, (sm.view_width, sm.view_height))
+            cv2.imwrite(self.debug_filebase+'a.png', np.concatenate((img1, img2), axis=1))
             if DEBUG:
-                cv2.imshow('compare', np.concatenate((sce, ref_img), axis=1))
+                cv2.imshow('compare', np.concatenate((img1, img2), axis=1))
             self.timer.start()
 
         # AKAZE, SIFT, SURF are truly scale invariant, couldnt get ORB to work as good
@@ -587,12 +591,29 @@ class KeypointAlgo(AlgorithmBase):
         else:
             sc2cv_q = sm.frm_conv_q(sm.SPACECRAFT_FRAME, sm.OPENCV_FRAME)
             sc_q = sm.spacecraft_q()
-            
+
             frame_q = sc_q * err_q * sc2cv_q
             ast_delta_q = frame_q * cv_cam_delta_q * frame_q.conj()
             
             err_corr_q = sc_q * err_q.conj() * sc_q.conj()
             sm.rotate_asteroid(err_corr_q * ast_delta_q)
+
+            if self.est_real_ast_orient:
+                # so that can track rotation of 67P
+
+                r_sc_q = sm.real_spacecraft_q()
+                r_frame_q = r_sc_q * err_q * sc2cv_q
+                r_ast_delta_q = r_frame_q * cv_cam_delta_q * r_frame_q.conj()
+                r_err_corr_q = r_sc_q * err_q.conj() * r_sc_q.conj()
+                r_ast_q0 = sm.real_asteroid_q()
+
+                sm.swap_values_with_real_vals()
+                sm.rotate_asteroid(r_err_corr_q * r_ast_delta_q)
+                sm.swap_values_with_real_vals()
+
+                r_ast_q = sm.real_asteroid_q()
+                r_err = math.degrees(tools.angle_between_q(r_ast_q0, r_ast_q))
+                self.extra_values = list(quaternion.as_float_array(r_ast_q)) + [sm.time.real_value, r_err]
 
     def _fake_fdb(self, feat):
         if self._fdb_sc_ast_perms is None or self._fdb_light_perms is None:

@@ -12,14 +12,14 @@ from algo.model import SystemModel, Asteroid, Camera
 
 
 class RosettaSystemModel(SystemModel):
-    def __init__(self, hi_res_shape_model=False):
+    def __init__(self, hi_res_shape_model=False, rosetta_batch='mtp006'):
         # gives some unnecessary warning about "dubious year" even when trying to ignore it
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             min_time = Time('2015-01-01 00:00:00', scale='utc', format='iso')
 
         super(RosettaSystemModel, self).__init__(
-            asteroid=ChuryumovGerasimenko(hi_res_shape_model=hi_res_shape_model),
+            asteroid=ChuryumovGerasimenko(hi_res_shape_model=hi_res_shape_model, rosetta_batch=rosetta_batch),
             camera=Camera(
                 1024,       # width in pixels
                 1024,       # height in pixels
@@ -39,13 +39,14 @@ class RosettaSystemModel(SystemModel):
 
 
 class ChuryumovGerasimenko(Asteroid):
-    def __init__(self, hi_res_shape_model=False):
+    def __init__(self, hi_res_shape_model=False, rosetta_batch='mtp006'):
         super(ChuryumovGerasimenko, self).__init__()
         self.name = '67P/Churyumov-Gerasimenko'
 
         # from http://imagearchives.esac.esa.int/index.php?/category/167/start-224
         # self._image_db_path = os.path.join(SCRIPT_DIR, '../data/rosetta-mtp017')
-        self.image_db_path = os.path.join(BASE_DIR, 'data/rosetta-mtp006')
+        self.rosetta_batch = rosetta_batch
+        self.image_db_path = os.path.join(BASE_DIR, 'data/rosetta-'+self.rosetta_batch)
         self.target_model_file = os.path.join(BASE_DIR, 'data/67p-17k.obj')
         self.hires_target_model_file = os.path.join(BASE_DIR, 'data/67p-83k-b.obj')
         self.render_smooth_faces = False
@@ -57,7 +58,14 @@ class ChuryumovGerasimenko(Asteroid):
             'hi': os.path.join(BASE_DIR, 'data/67p-1k.nsm'),  # 1/17 the vertices
         }
 
-        sample_image = 'ROS_CAM1_20140808T140718'
+        sample_image = {
+            'mtp006': 'ROS_CAM1_20140808T140718',
+            'mtp007': 'ROS_CAM1_20140902T113852',          # ROS_CAM1_20140902T113852, ROS_CAM1_20140923T060854
+            'mtp017': 'ROS_CAM1_20150630T230217',          # ROS_CAM1_20150603T094509, ROS_CAM1_20150612T230217
+            'mtp024': 'ROS_CAM1_20160112T230217',          # ROS_CAM1_20151216T060218, ROS_CAM1_20160112T230217
+            'mtp025': 'ROS_CAM1_20160209T231753',          # ROS_CAM1_20160113T060218, ROS_CAM1_20160209T231753
+            'mtp026': 'ROS_CAM1_20160301T131104',          # ROS_CAM1_20160210T060423, ROS_CAM1_20160301T131104, ROS_CAM1_20160308T231754
+        }[self.rosetta_batch]
         self.sample_image_file = os.path.join(self.image_db_path, sample_image + '_P.png')
         self.sample_image_meta_file = os.path.join(self.image_db_path, sample_image + '.LBL')
 
@@ -102,8 +110,16 @@ class ChuryumovGerasimenko(Asteroid):
         if False:
             self.rotation_velocity = 2 * math.pi / 12.4043 / 3600
         else:
-            # 2014-08-01 - 2014-09-02: 0.4/25
-            self.rotation_velocity = 2 * math.pi / 12.4043 / 3600 - math.radians(0.4 / 25) / 24 / 3600  # 0.3754
+            # variable rotation velocity correction in degrees per day
+            correction = {
+                'mtp006': -0.4/25,    # 2014-08-01 - 2014-09-02
+                'mtp007': -0.146887,  # 2014-09-02 - 2014-09-23
+                'mtp017': -0.402352,  # 2015-06-03 - 2015-06-30
+                'mtp024': 19.018865,  # 2015-12-16 - 2016-01-12
+                'mtp025': 19.640677,  # 2016-01-13 - 2016-02-09
+                'mtp026': 19.780821,  # 2016-02-10 - 2016-03-08
+            }[self.rosetta_batch]
+            self.rotation_velocity = 2 * math.pi / 12.4043 / 3600 + math.radians(correction) / 24 / 3600  # 0.3754
 
         # for rotation phase shift, will use as equatorial longitude of
         #   asteroid zero longitude (cheops) at J2000, based on 20150720T165249
@@ -112,8 +128,16 @@ class ChuryumovGerasimenko(Asteroid):
         if False:
             tlat, tlon, tpm = 69.54, 64.11, 114
         else:
-            # pm: 2014-08-01 - 2014-09-02: -9; 2015-06-13: -143
-            tlat, tlon, tpm = 64.11, 69.54, -9
+            # rotation phase shift in degrees for different batches
+            tpm = {
+                'mtp006': -9,       # 2014-08-01 - 2014-09-02
+                'mtp007': -23.69,   # 2014-09-02 - 2014-09-23
+                'mtp017': -122.17,  # 2015-06-03 - 2015-06-30
+                'mtp024': -106.93,  # 2015-12-16 - 2016-01-12
+                'mtp025': -149.66,  # 2016-01-13 - 2016-02-09
+                'mtp026': 106.59,   # 2016-02-10 - 2016-03-08
+            }[self.rosetta_batch]
+            tlat, tlon = 64.11, 69.54
 
         self.rotation_pm = math.radians(tpm)
         self.axis_latitude, self.axis_longitude = \

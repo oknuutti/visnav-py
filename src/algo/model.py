@@ -694,8 +694,12 @@ class Asteroid(ABC):
     def rotation_period(self):
         return 2 * math.pi / self.rotation_velocity
 
+    @lru_cache(maxsize=1)
+    def rot_epoch_unix(self):
+        return (self.rot_epoch - Time(0, format='unix')).sec
+
     def rotation_theta(self, timestamp):
-        dt = (Time(timestamp, format='unix') - self.rot_epoch).sec
+        dt = timestamp - self.rot_epoch_unix()
         theta = (self.rotation_pm + self.rotation_velocity * dt) % (2 * math.pi)
         return theta
 

@@ -69,8 +69,8 @@ def est_refl_model(hapke=True, iters=1, init_noise=0.0, verbose=True):
 
     if hapke:
         # L, th, w, b (scattering anisotropy), c (scattering direction from forward to back), B0, hs
-        real_ini_x = [515, 16.42, 0.3057, 0.8746]
-        # real_ini_x = defs[:7]
+        #real_ini_x = [515, 16.42, 0.3057, 0.8746]
+        real_ini_x = defs[:2] + defs[3:5]
         # scales = np.array((1e2, 1, 1e-2, 1e-1))
         scales = np.array((500, 20, 3e-1, 3e-1))
     else:
@@ -214,7 +214,7 @@ if __name__ == '__main__':
     if False:
         x = get_L_from_graph()
         # print(' '.join(['%+.4e%s'%(f, '*a'*i) for i, f in enumerate(x)]))
-    elif True:
+    elif False:
         print("== HAPKE ==")
         x = est_refl_model(hapke=True, iters=5, init_noise=0.3, verbose=False)
         print(', '.join(['%.5e' % f for i, f in enumerate(x)]))

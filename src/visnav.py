@@ -16,6 +16,10 @@ from PyQt5.QtWidgets import (QApplication, QHBoxLayout, QVBoxLayout,
 
 from algo.base import AlgorithmBase
 from missions.rosetta import RosettaSystemModel
+from render.render import RenderEngine
+import settings
+settings.BATCH_MODE = False
+
 from settings import *
 from algo import tools
 from algo.model import SystemModel
@@ -57,8 +61,9 @@ class Window(QWidget):
     
     def __init__(self):
         super(Window, self).__init__()
-        
-        self.systemModel = RosettaSystemModel()
+
+        sm = RosettaSystemModel()
+        self.systemModel = sm
         self.glWidget = GLWidget(self.systemModel, parent=self)
         self.closing = []
         
@@ -88,10 +93,11 @@ class Window(QWidget):
         topLayout.addWidget(self.sliders['time'])
 
         bottomLayout = QHBoxLayout()
-        self.phasecorr = PhaseCorrelationAlgo(self.systemModel, self.glWidget)
-        self.keypoint = KeypointAlgo(self.systemModel, self.glWidget)
-        self.centroid = CentroidAlgo(self.systemModel, self.glWidget,
-                                     bg_threshold=self.glWidget.image_bg_threshold)
+        render_engine = RenderEngine(sm.view_width, sm.view_width)
+        obj_idx = render_engine.load_object(os.path.join(BASE_DIR, 'data/67p-4k.obj'))
+        self.phasecorr = PhaseCorrelationAlgo(sm, render_engine, obj_idx)
+        self.keypoint = KeypointAlgo(sm, render_engine, obj_idx)
+        self.centroid = CentroidAlgo(sm, render_engine, obj_idx)
         self.mixed = MixedAlgo(self.centroid, self.keypoint)
         
         self.buttons = dict(
@@ -128,7 +134,7 @@ class Window(QWidget):
                 self.centroid.adjust_iteratively(self.glWidget.image_file, LOG_DIR)
             except PositioningException as e:
                 print('algorithm failed: %s' % e)
-        self.test1 = QPushButton('T1', self)
+        self.test1 = QPushButton('Ctrd', self)
         self.test1.clicked.connect(testfun1)
         bottomLayout.addWidget(self.test1)
         
@@ -139,12 +145,12 @@ class Window(QWidget):
                 self.keypoint.solve_pnp(self.glWidget.image_file, LOG_DIR, init_z=init_z)
             except PositioningException as e:
                 print('algorithm failed: %s' % e)
-        self.test2 = QPushButton('T2', self)
+        self.test2 = QPushButton('KP', self)
         self.test2.clicked.connect(testfun2)
         bottomLayout.addWidget(self.test2)
 
         # test lunar lambert rendering
-        ab = AlgorithmBase(self.systemModel)
+        ab = AlgorithmBase(sm, render_engine, obj_idx)
         def testfun3():
             def testfun3i():
                 image = ab.render()
@@ -153,7 +159,7 @@ class Window(QWidget):
                 _thread.start_new_thread(testfun3i, tuple(), dict())
             except Exception as e:
                 print('failed: %s'%e)
-        self.test3 = QPushButton('T3', self)
+        self.test3 = QPushButton('LL', self)
         self.test3.clicked.connect(testfun3)
         bottomLayout.addWidget(self.test3)
 
@@ -196,10 +202,10 @@ class Window(QWidget):
             import cProfile
             ls = locals()
             ls.update({'self':self, 'm':m})
-            cProfile.runctx('self.phasecorr.findstate(TARGET_IMAGE_FILE, method=m.lower())', 
+            cProfile.runctx('self.phasecorr.findstate(self.systemModel.asteroid.sample_image_file, method=m.lower())',
                     globals(), ls, PROFILE_OUT_FILE)
         def handler():
-            self.phasecorr.findstate(TARGET_IMAGE_FILE, method=m.lower())
+            self.phasecorr.findstate(self.systemModel.asteroid.sample_image_file, method=m.lower())
         
         btn.clicked.connect(profhandler if PROFILE else handler)
         layout.addWidget(btn)
@@ -233,7 +239,8 @@ class GLWidget(QOpenGLWidget):
         self.iter_count = 0
         self.image = None
         self.image_file = None
-        
+
+        self._show_target_image = True
         self.full_image = None
         self.image_bg_threshold = None
         self.latest_rendered_image = None
@@ -292,7 +299,7 @@ class GLWidget(QOpenGLWidget):
         self.setClearColor(self._bgColor)
         self.loadObject()
         if not BATCH_MODE:
-            self.loadTargetImageMeta(TARGET_IMAGE_META_FILE)        
+            self.loadTargetImageMeta(self.systemModel.asteroid.sample_image_meta_file)
 
         self.gl.glEnable(self.gl.GL_CULL_FACE)
 
@@ -306,7 +313,7 @@ class GLWidget(QOpenGLWidget):
             self._projOpts()
 
         if not BATCH_MODE:
-            self.loadTargetImage(TARGET_IMAGE_FILE)
+            self.loadTargetImage(self.systemModel.asteroid.sample_image_file)
 #            if not USE_IMG_LABEL_FOR_SC_POS:
 #                CentroidAlgo.update_sc_pos(self.systemModel, self.full_image)
         
@@ -560,8 +567,8 @@ class GLWidget(QOpenGLWidget):
         self.im_height = im_height or self.systemModel.cam.height
         self.im_scale = im_scale
         
-        self.image = ImageProc.crop_and_zoom_image(self.full_image, im_xoff, im_yoff,
-                                                   im_width, im_height, im_scale)
+        self.image = ImageProc.crop_and_zoom_image(self.full_image, self.im_xoff, self.im_yoff,
+                                                   self.im_width, self.im_height, self.im_scale)
         self._image_h = self.image.shape[0]
         self._image_w = self.image.shape[1]
         
@@ -639,17 +646,17 @@ class GLWidget(QOpenGLWidget):
         #self.gl.glMaterialfv(self.gl.GL_FRONT, self.gl.GL_SPECULAR, (0,0,0,1));
         #self.gl.glMaterialfv(self.gl.GL_FRONT, self.gl.GL_SHININESS, (0,));
         
-        if self.systemModel.real_shape_model is None:
-            rsm = self.systemModel.asteroid.real_shape_model = objloader.ShapeModel(fname=TARGET_MODEL_FILE)
+        if self.systemModel.asteroid.real_shape_model is None:
+            rsm = self.systemModel.asteroid.real_shape_model = objloader.ShapeModel(fname=self.systemModel.asteroid.target_model_file)
         else:
             rsm = self.systemModel.asteroid.real_shape_model
         
         if noisy_model is not None:
             sm = noisy_model
-        elif self._add_shape_model_noise and not BATCH_MODE:
+#        elif self._add_shape_model_noise and not BATCH_MODE:
             #sup = objloader.ShapeModel(fname=SHAPE_MODEL_NOISE_SUPPORT)
             #sm, noise, L = tools.apply_noise(rsm, support=np.array(sup.vertices))
-            sm, noise, L = tools.apply_noise(rsm)
+#            sm, noise, L = tools.apply_noise(rsm)
         else:
             sm = rsm
         
@@ -657,7 +664,7 @@ class GLWidget(QOpenGLWidget):
             self.triangle(sm.vertices[triangle[0]],
                           sm.vertices[triangle[1]],
                           sm.vertices[triangle[2]],
-                          norm)
+                          sm.normals[norm])
         
         self.gl.glEnd()
         self.gl.glEndList()

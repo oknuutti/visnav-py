@@ -33,8 +33,8 @@ if __name__ == '__main__':
 
     # i = 0
     for fn in os.listdir(cache_path):
-        m = re.match(r'^(.*?)\.lbl$', fn)
-        if m:
+        m = re.match('^(' + mission + r'_(\d+))\.lbl$', fn)
+        if m and float(m[2]) < 2000:
             base_path = os.path.join(cache_path, m[1])
             sm.load_state(base_path + '.lbl')
 
