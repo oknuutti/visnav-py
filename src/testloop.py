@@ -37,8 +37,9 @@ from settings import *
 class TestLoop:
     UNIFORM_DISTANCE_GENERATION = True
 
-    def __init__(self, system_model, far=False):
+    def __init__(self, system_model, far=False, est_real_ast_orient=False):
         self.system_model = system_model
+        self.est_real_ast_orient = est_real_ast_orient
 
         self.exit = False
         self._algorithm_finished = None
@@ -60,7 +61,7 @@ class TestLoop:
         self.render_engine = RenderEngine(system_model.view_width, system_model.view_height)
         self.obj_idx = self.render_engine.load_object(self.system_model.asteroid.real_shape_model, smooth=self._smooth_faces)
 
-        self.keypoint = KeypointAlgo(self.system_model, self.render_engine, self.obj_idx)
+        self.keypoint = KeypointAlgo(self.system_model, self.render_engine, self.obj_idx, est_real_ast_orient=est_real_ast_orient)
         self.centroid = CentroidAlgo(self.system_model, self.render_engine, self.obj_idx)
         self.phasecorr = PhaseCorrelationAlgo(self.system_model, self.render_engine, self.obj_idx)
         self.mixedalgo = MixedAlgo(self.centroid, self.keypoint)
@@ -354,6 +355,9 @@ class TestLoop:
         }
     
     def load_state(self, sm, i):
+        if self.est_real_ast_orient:
+            return None
+
         try:
             sm.load_state(self._cache_file(i)+'.lbl', sc_ast_vertices=True)
             self._fill_or_censor_init_sc_pos(sm, self._cache_file(i)+'.lbl')
@@ -423,7 +427,7 @@ class TestLoop:
         img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
 
         # do same gamma correction as the available rosetta navcam images have
-        img = tools.adjust_gamma(img, 1.8)
+        img = ImageProc.adjust_gamma(img, 1.8)
 
         # coef=2 gives reasonably many stars, star brightness was tuned without gamma correction
         img = ImageProc.add_stars(img.astype('float'), mask=depth>=sm.max_distance-0.1, coef=2.5)

@@ -8,6 +8,7 @@ import moderngl
 from moderngl.ext.obj import Obj
 
 from algo import tools
+from algo.image import ImageProc
 from iotools.objloader import ShapeModel
 from missions.didymos import DidymosSystemModel
 from missions.rosetta import RosettaSystemModel
@@ -203,7 +204,7 @@ class RenderEngine:
             depth = np.flipud(depth)
 
         if gamma != 1.0:
-            data = tools.adjust_gamma(data, gamma)
+            data = ImageProc.adjust_gamma(data, gamma)
 
         return (data, depth) if get_depth else data
 

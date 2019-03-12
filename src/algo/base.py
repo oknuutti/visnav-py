@@ -132,15 +132,21 @@ class AlgorithmBase:
 
 
 if __name__ == '__main__':
-    sm = RosettaSystemModel()
+    sm = RosettaSystemModel(rosetta_batch='mtp006')
     #img = 'ROS_CAM1_20140823T021833'
-    img = 'ROS_CAM1_20140808T140718'
+    img = 'ROS_CAM1_20140822T020718'
+    #img = 'ROS_CAM1_20150606T213002'  # 017
 
     lblloader.load_image_meta(os.path.join(sm.asteroid.image_db_path, img + '.LBL'), sm)
     sm.swap_values_with_real_vals()
 
-    re = RenderEngine(sm.cam.width, sm.cam.height, antialias_samples=16)
-    obj_idx = re.load_object(sm.asteroid.hires_target_model_file, smooth=False)
+    if False:
+        re = RenderEngine(sm.cam.width, sm.cam.height, antialias_samples=16)
+        obj_idx = re.load_object(sm.asteroid.hires_target_model_file, smooth=False)
+    else:
+        re = RenderEngine(sm.cam.width, sm.cam.height, antialias_samples=0)
+        obj_idx = re.load_object(sm.asteroid.target_model_file, smooth=False)
+
     ab = AlgorithmBase(sm, re, obj_idx)
 
     hapke = True
@@ -148,7 +154,6 @@ if __name__ == '__main__':
     size = (1024, 1024)  # (256, 256)
 
     real = cv2.imread(os.path.join(sm.asteroid.image_db_path, img + '_P.png'), cv2.IMREAD_GRAYSCALE)
-    real = cv2.resize(real, size)
 
     synth = []
 #    for i, p in enumerate(np.linspace(0, 30, 11)):
@@ -158,6 +163,10 @@ if __name__ == '__main__':
     synth.append(cv2.resize(ab.render(shadows=True, reflection=model), size))
 #        if not hapke:
 #            break
+    #synth[0] = ImageProc.equalize_brightness(synth[0], real, percentile=99.999, image_gamma=1.8)
+    synth[0] = ImageProc.adjust_gamma(synth[0], 1/4)
+    real = ImageProc.adjust_gamma(real, 1/4)
 
+    real = cv2.resize(real, size)
     cv2.imshow('real vs synthetic', np.concatenate([real, 255*np.ones((real.shape[0], 1), dtype='uint8')] + synth, axis=1))
     cv2.waitKey()

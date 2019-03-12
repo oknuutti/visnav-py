@@ -94,30 +94,31 @@ if __name__ == '__main__':
     setups = {setup: (sorted(files, key=lambda f: f[0]), data) for setup, (files, data) in setups.items()}
 
     # read data from logfiles
-    data = {}
     for s, (files, data) in setups.items():
         for t, fname in files:
             with open(os.path.join(LOG_DIR, fname)) as fh:
                 offset = 0
+                prefix = ''
                 if mission == 'rose':
                     m = re.match(r'^rose(\d{3})?-.*?$', fname)
                     batch = m[1] if m[1] else '006'
                     offsets = np.cumsum([0, 718, 517, 393, 407, 487])
                     offset = offsets[['006', '007', '017', '024', '025', '026'].index(batch)]
+                    prefix = batch + '-'
                 for line in fh.readlines():
                     match = re.match(r"^(\d+)\t", line)
                     if match:
                         i = int(match[1]) + offset
                         if i >= len(data):
                             data.extend(['%d\t' % j for j in range(len(data), i+1)])
-                        data[i] = line
+                        data[i] = prefix + line
 
     # write output
     columns = TestLoop.log_columns()
     for s, (files, rdata) in setups.items():
         fname = mission+"-"+s+"-"+postfix+".log"
         data = np.array([r.split('\t') for r in rdata])
-        assert len(data.shape) == 2, 'missing values at %s' % (np.where(np.array([len(d) for d in data])==2),)
+        assert len(data.shape) == 2, '%s: missing values at %s' % (s, np.where(np.array([len(d) for d in data]) == 2),)
 
         if len(data) > 0:
             runtimes = data[:, columns.index('execution time')].astype('float')

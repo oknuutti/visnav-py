@@ -27,21 +27,30 @@ class ImageProc():
                         None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
         
     @staticmethod
-    def equalize_brightness(image, ref_image, percentile=98):
+    def equalize_brightness(image, ref_image, percentile=98, image_gamma=1):
+        image = ImageProc.adjust_gamma(image, 1/image_gamma)
         ip = np.percentile(image, percentile)
-        rp = np.percentile(ref_image, percentile)
-        return cv2.convertScaleAbs(image, None, rp/ip, 0)
+        rp = np.percentile(ImageProc.adjust_gamma(ref_image, 1/image_gamma), percentile)
+        image = cv2.convertScaleAbs(image, None, rp/ip, 0)
+        return ImageProc.adjust_gamma(image, image_gamma)
     
     @staticmethod
     def adjust_gamma(image, gamma):
+        if gamma == 1:
+            return image
+
         # build a lookup table mapping the pixel values [0, 255] to
         # their adjusted gamma values
         invGamma = 1.0 / gamma
-        table = np.array([((i / 255.0) ** invGamma) * 255
-            for i in np.arange(0, 256)]).astype("uint8")
+
+        if image.dtype == 'uint8':
+            table = np.array([((i / 255.0) ** invGamma) * 255 for i in np.arange(0, 256)]).astype("uint8")
+            adj_img = cv2.LUT(image, table)
+        else:
+            adj_img = ((image / 255.0) ** invGamma) * 255
 
         # apply gamma correction using the lookup table
-        return cv2.LUT(image, table)
+        return adj_img
 
     @staticmethod
     def add_stars(img, mask, coef=2):

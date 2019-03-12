@@ -376,8 +376,14 @@ class SystemModel(ABC):
         self.spacecraft_rot = org_sc_rot
         self.asteroid_axis = org_ast_axis
         return q_tot
-    
-    
+
+
+    def reset_to_real_vals(self):
+        for n, p in self.get_params(True):
+            assert p.real_value is not None, 'real value missing for %s'%n
+            p.value = p.real_value
+
+
     def swap_values_with_real_vals(self):
         for n, p in self.get_params(True):
             assert p.real_value is not None, 'real value missing for %s'%n
@@ -385,7 +391,7 @@ class SystemModel(ABC):
             tmp = p.value
             p.value = p.real_value
             p.real_value = tmp
-    
+
     def calc_shift_err(self):
         est_vertices = self.sc_asteroid_vertices()
         self.swap_values_with_real_vals()

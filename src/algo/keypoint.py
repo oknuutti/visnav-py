@@ -7,6 +7,10 @@ import quaternion
 import cv2
 
 from algo.base import AlgorithmBase
+from algo.image import ImageProc
+from iotools import lblloader
+from missions.rosetta import RosettaSystemModel
+from render.render import RenderEngine
 from settings import *
 from algo import tools
 from algo.tools import PositioningException, Stopwatch
@@ -83,7 +87,7 @@ class KeypointAlgo(AlgorithmBase):
         self.RENDER_SHADOWS = True
 
 
-    def solve_pnp(self, orig_sce_img, outfile, feat=ORB, use_feature_db=False, 
+    def solve_pnp(self, orig_sce_img, outfile, feat=ORB, use_feature_db=False, adjust_sc_rot = False,
             add_noise=False, scale_cam_img=False, vary_scale=False, match_mask_params=None, **kwargs):
 
         # set max mem usable by reference features, scene features use rest of MAX_WORK_MEM
@@ -94,6 +98,10 @@ class KeypointAlgo(AlgorithmBase):
         init_z = kwargs.get('init_z', self._render_z)
         ref_img_sc = min(1, self._render_z / init_z) * (sm.view_width if scale_cam_img else self._cam.width) / sm.view_width
         self.extra_values = None
+
+        if self.est_real_ast_orient:
+            # so that can track rotation of 67P
+            sm.reset_to_real_vals()
 
         if use_feature_db and self._fdb_helper is None:
             from algo.fdbgen import FeatureDatabaseGenerator
@@ -120,6 +128,15 @@ class KeypointAlgo(AlgorithmBase):
         else:
             # render model image
             ref_img, depth_result = self.render_ref_img(ref_img_sc)
+
+            if False:
+                # normalize ref_img to match sce_img
+                ref_img = ImageProc.equalize_brightness(ref_img, orig_sce_img, percentile=99.999, image_gamma=1.8)
+
+            if False:
+                gamma = 1.0/1.8
+                ref_img = ImageProc.adjust_gamma(ref_img, gamma)
+                orig_sce_img = ImageProc.adjust_gamma(orig_sce_img, gamma)
 
             # get keypoints and descriptors
             ee = sm.pixel_extent(abs(self._render_z))
@@ -240,7 +257,7 @@ class KeypointAlgo(AlgorithmBase):
         self.timer.stop()
         
         # set model params to solved pose & pos
-        self._set_sc_from_ast_rot_and_trans(rvec, tvec, self.latest_discretization_err_q)
+        self._set_sc_from_ast_rot_and_trans(rvec, tvec, self.latest_discretization_err_q, rotate_sc=adjust_sc_rot)
 
         # debugging
         if not BATCH_MODE or DEBUG:
@@ -276,9 +293,6 @@ class KeypointAlgo(AlgorithmBase):
         orig_z = sm.z_off.value
         sm.z_off.value = self._render_z
         ref_img, depth = self.render(center=True, depth=True, shadows=self.RENDER_SHADOWS)
-        # ref_img = ImageProc.equalize_brightness(ref_img, orig_sce_img)
-        # orig_sce_img = ImageProc.adjust_gamma(orig_sce_img, 0.5)
-        # ref_img = ImageProc.adjust_gamma(ref_img, 0.5)
         sm.z_off.value = orig_z
 
         # scale to match scene image asteroid extent in pixels
@@ -596,24 +610,14 @@ class KeypointAlgo(AlgorithmBase):
             ast_delta_q = frame_q * cv_cam_delta_q * frame_q.conj()
             
             err_corr_q = sc_q * err_q.conj() * sc_q.conj()
+            ast_q0 = sm.asteroid_q()
             sm.rotate_asteroid(err_corr_q * ast_delta_q)
 
             if self.est_real_ast_orient:
                 # so that can track rotation of 67P
-
-                r_sc_q = sm.real_spacecraft_q()
-                r_frame_q = r_sc_q * err_q * sc2cv_q
-                r_ast_delta_q = r_frame_q * cv_cam_delta_q * r_frame_q.conj()
-                r_err_corr_q = r_sc_q * err_q.conj() * r_sc_q.conj()
-                r_ast_q0 = sm.real_asteroid_q()
-
-                sm.swap_values_with_real_vals()
-                sm.rotate_asteroid(r_err_corr_q * r_ast_delta_q)
-                sm.swap_values_with_real_vals()
-
-                r_ast_q = sm.real_asteroid_q()
-                r_err = math.degrees(tools.angle_between_q(r_ast_q0, r_ast_q))
-                self.extra_values = list(quaternion.as_float_array(r_ast_q)) + [sm.time.real_value, r_err]
+                ast_q = sm.asteroid_q()
+                err_deg = math.degrees(tools.angle_between_q(ast_q0, ast_q))
+                self.extra_values = list(quaternion.as_float_array(ast_q)) + [sm.time.value, err_deg]
 
     def _fake_fdb(self, feat):
         if self._fdb_sc_ast_perms is None or self._fdb_light_perms is None:
@@ -722,3 +726,47 @@ class KeypointAlgo(AlgorithmBase):
                 assert False, 'Couldn\'t find feature db file %s' % fname
         self.timer.start()
 
+
+if __name__ == '__main__':
+    """
+    This code here tries to probe the accuracy of the system model "real" values
+    """
+
+    sm = RosettaSystemModel(rosetta_batch='mtp025')
+    #img = 'ROS_CAM1_20140823T021833'
+    #img = 'ROS_CAM1_20140822T020718'
+    img = 'ROS_CAM1_20160208T070515'
+
+    lblloader.load_image_meta(os.path.join(sm.asteroid.image_db_path, img + '.LBL'), sm)
+
+    re = RenderEngine(sm.view_width, sm.view_height, antialias_samples=0)
+    obj_idx = re.load_object(sm.asteroid.target_model_file, smooth=False)
+
+    algo = KeypointAlgo(sm, re, obj_idx)
+    model = RenderEngine.REFLMOD_LUNAR_LAMBERT
+    size = (1024, 1024)  # (256, 256)
+
+    orig_real = cv2.imread(os.path.join(sm.asteroid.image_db_path, img + '_P.png'), cv2.IMREAD_GRAYSCALE)
+    real = cv2.resize(orig_real, size)
+    bar = 255*np.ones((real.shape[0], 1), dtype='uint8')
+
+    sm.reset_to_real_vals()
+    orig_pose = cv2.resize(algo.render(shadows=True, reflection=model), size)
+
+    # adjust s/c pose based on algo
+    algo_sc_res = []
+    for i in range(1):
+        algo.solve_pnp(orig_real, None, algo.AKAZE, adjust_sc_rot=True)
+        algo_sc_res.extend([bar, cv2.resize(algo.render(shadows=True, reflection=model), size)])
+    print('s/c pose adjusted shift error: %f' % sm.calc_shift_err())
+
+    algo_ast_res = []
+    sm.reset_to_real_vals()
+    for i in range(1):
+        algo.solve_pnp(orig_real, None, algo.AKAZE, adjust_sc_rot=False)
+        algo_ast_res.extend([bar, cv2.resize(algo.render(shadows=True, reflection=model), size)])
+    print('ast pose adjusted shift error: %f' % sm.calc_shift_err())
+
+    cv2.imshow('real img, rosetta pose based, adj s/c pose, adj ast pose',
+               np.concatenate([real, bar, orig_pose] + algo_sc_res + algo_ast_res, axis=1))
+    cv2.waitKey()

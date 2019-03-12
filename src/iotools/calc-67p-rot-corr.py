@@ -46,18 +46,19 @@ if __name__ == '__main__':
         manual_approach()
         quit()
 
-    fname = sys.argv[1] if len(sys.argv)>1 else 'rose-akaze+real-20190227-001506-fvals.log'
+    # *-fvals.log file generated when batch1.py called with "ear", e.g. `python batch1.py rose006 akaze+real 1000 ear`
+    fname = sys.argv[1] if len(sys.argv)>1 else 'rose026-akaze+real-20190307-161859-fvals.log'
     with open(os.path.join(LOG_DIR, fname)) as fh:
         data = np.array([line.split('\t') for line in fh.readlines()]).astype('float')
 
-    sm = RosettaSystemModel()
+    sm = RosettaSystemModel(rosetta_batch='mtp026')
     Y = quaternion.from_float_array(data[:, 1:5])
     T = data[:, 5]
 
     # n=195
-    I = data[:, 6] < 30
-    T = T[I]
-    Y = Y[I]
+#    I = data[:, 6] < 30
+#    T = T[I]
+#    Y = Y[I]
 
     def costfun(x, sm, T, Y, verbose=0):
         sm.asteroid.rotation_pm = tools.wrap_rads(x[0])
@@ -66,18 +67,19 @@ if __name__ == '__main__':
         if len(x) > 2:
             sm.asteroid.axis_latitude = x[2]
             sm.asteroid.axis_longitude = x[3]
+        sm.asteroid_rotation_from_model()
 
         errs = []
         for i, y in enumerate(Y):
             sm.time.value = T[i]
             ast_q = sm.asteroid_q()
-            errs.append(tools.wrap_degs(math.degrees(tools.angle_between_q(ast_q, y))))
+            errs.append(np.abs(tools.wrap_degs(math.degrees(tools.angle_between_q(ast_q, y)))))
         errs = np.array(errs)
-        max_err = np.percentile(np.abs(errs), 99)+100
-        err = np.mean(errs[np.abs(errs) < max_err]**2)
+        max_err = np.percentile(np.abs(errs), 99)
+        I = np.abs(errs) < max_err
+        err = np.sqrt(np.mean(errs[I]**2))
 
         if verbose > 1:
-            I = np.abs(errs) < max_err
             #plt.plot((T[I]-np.min(T))/np.ptp(T), errs[I])
             plt.plot(errs[I])
             plt.show()
@@ -97,10 +99,21 @@ if __name__ == '__main__':
     if False:
         inival += [ast.axis_latitude, ast.axis_longitude]
 
-    res = minimize(costfun, inival, args=(sm, T, Y, 1),
-                   #method="BFGS", options={'maxiter': 10, 'eps': 1e-3, 'gtol': 1e-3})
-                   method="Nelder-Mead", options={'maxiter': 120, 'xtol': 1e-4, 'ftol': 1e-4})
-                   #method="COBYLA", options={'rhobeg': 1.0, 'maxiter': 200, 'disp': False, 'catol': 0.0002})
+    global_min = False
+    best = None
+    for i in range(20 if global_min else 1):
+        tmp = [
+            np.random.uniform(-math.pi, math.pi),  # phase angle
+            inival[1] + np.random.normal(0, inival[1]/30),   # angular velocity
+        ] if global_min else inival
+        print('%s: '%(tmp,), end='')
+        res = minimize(costfun, tmp, args=(sm, T, Y, 0 if global_min else 1),
+                       #method="BFGS", options={'maxiter': 10, 'eps': 1e-3, 'gtol': 1e-3})
+                       method="Nelder-Mead", options={'maxiter': 120, 'xtol': 1e-4, 'ftol': 1e-4})
+                       #method="COBYLA", options={'rhobeg': 1.0, 'maxiter': 200, 'disp': False, 'catol': 0.0002})
+        if global_min:
+            costfun(res.x, sm, T, Y, 1)
+        if best is None or best.fun > res.fun:
+            best = res
 
-    print('%s' % res)
-    costfun(res.x, sm, T, Y, 2)
+    costfun(best.x, sm, T, Y, 2)

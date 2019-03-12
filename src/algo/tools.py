@@ -696,21 +696,6 @@ def solve_q_bf(src_q, dst_q):
     return qs[i]
 
 
-def adjust_gamma(image, gamma=1.0):
-    # build a lookup table mapping the pixel values [0, 255] to
-    # their adjusted gamma values
-    invGamma = 1.0 / gamma
-
-    if image.dtype == 'uint8':
-        table = np.array([((i / 255.0) ** invGamma) * 255 for i in np.arange(0, 256)]).astype("uint8")
-        adj_img = cv2.LUT(image, table)
-    else:
-        adj_img = ((image / 255.0) ** invGamma) * 255
-
-    # apply gamma correction using the lookup table
-    return adj_img
-
-
 def hover_annotate(fig, ax, line, annotations):
     annot = ax.annotate("", xy=(0, 0), xytext=(-20, 20), textcoords="offset points",
                         bbox=dict(boxstyle="round", fc="w"),
@@ -745,6 +730,27 @@ def hover_annotate(fig, ax, line, annotations):
 
     fig.canvas.mpl_connect("motion_notify_event", hover)
 
+def plot_quats(quats, conseq=True, wait=True):
+    import matplotlib.pyplot as plt
+    from mpl_toolkits.mplot3d import Axes3D
+
+    fig = plt.figure()
+    ax = Axes3D(fig)
+    ax.set_xlabel('x')
+    ax.set_ylabel('y')
+    ax.set_zlabel('z')
+    if conseq:
+        ax.set_prop_cycle('color', map(lambda c: '%f' % c, np.linspace(1, 0, len(quats))))
+    for i, q in enumerate(quats):
+        if q is not None:
+            w, *v1 = q_to_angleaxis(q)
+            v1 = normalize_v(np.array(v1))
+            v2 = (v1 + normalize_v(np.cross(np.cross(v1, np.array([0, 0, 1])), v1))*0.1)*0.85
+            v2 = q_times_v(q, v2)
+            ax.plot((0, v1[0], v2[0]), (0, v1[1], v2[1]), (0, v1[2], v2[2]))
+
+    while(wait and not plt.waitforbuttonpress()):
+        pass
 
 #
 # Not sure if unitbase_to_q works, haven't deleted just in case still need:
@@ -816,6 +822,14 @@ def display_top(top_stats, key_type='lineno', limit=10):
         print("%s other: %.1f MB" % (len(other), size/1024/1024))
     total = sum(stat.size for stat in top_stats)
     print("Total allocated size: %.1f MB" % (total/1024/1024))
+
+
+def show_progress(tot, i):
+    digits = int(math.ceil(math.log10(tot+1)))
+    if i == 0:
+        print('%s/%d' % ('0' * digits, tot), end='', flush=True)
+    else:
+        print(('%s%0' + str(digits) + 'd/%d') % ('\b' * (digits * 2 + 1), i + 1, tot), end='', flush=True)
 
 
 def smooth1d(xt, x, Y, weight_fun=lambda d: 0.9**abs(d)):

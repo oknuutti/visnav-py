@@ -32,7 +32,7 @@ def get_system_model(mission, hi_res_shape_model=False):
     return sm
 
 
-def run_batch(mission, full_method, count):
+def run_batch(mission, full_method, count, est_real_ast_orient=False):
     m = full_method.split('+')
     method=m[0]
     
@@ -141,7 +141,7 @@ def run_batch(mission, full_method, count):
         #kwargs['scale_cam_img'] = True
         #kwargs['rotation_noise'] = False
 
-    tl = TestLoop(sm, far=(kwargs['method'] in ('centroid', 'keypoint+')))
+    tl = TestLoop(sm, far=(kwargs['method'] in ('centroid', 'keypoint+')), est_real_ast_orient=est_real_ast_orient)
 
     if sm.mission_id == 'rose':
         tl.enable_initial_location = False
@@ -161,5 +161,6 @@ if __name__ == '__main__':
     mission = sys.argv[1]
     full_method = sys.argv[2]
     count = sys.argv[3] if len(sys.argv) > 3 else 10
+    est_ast_rot = sys.argv[4] == 'ear' if len(sys.argv) > 4 else False
 
-    run_batch(mission, full_method, count)
+    run_batch(mission, full_method, count, est_real_ast_orient=est_ast_rot)

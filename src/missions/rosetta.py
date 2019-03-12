@@ -39,13 +39,13 @@ class RosettaSystemModel(SystemModel):
 
 
 class ChuryumovGerasimenko(Asteroid):
-    def __init__(self, hi_res_shape_model=False, rosetta_batch='mtp006'):
+    def __init__(self, hi_res_shape_model=False, rosetta_batch='default'):
         super(ChuryumovGerasimenko, self).__init__()
         self.name = '67P/Churyumov-Gerasimenko'
 
         # from http://imagearchives.esac.esa.int/index.php?/category/167/start-224
         # self._image_db_path = os.path.join(SCRIPT_DIR, '../data/rosetta-mtp017')
-        self.rosetta_batch = rosetta_batch
+        self.rosetta_batch = 'mtp006' if rosetta_batch == 'default' else rosetta_batch
         self.image_db_path = os.path.join(BASE_DIR, 'data/rosetta-'+self.rosetta_batch)
         self.target_model_file = os.path.join(BASE_DIR, 'data/67p-17k.obj')
         self.hires_target_model_file = os.path.join(BASE_DIR, 'data/67p-83k-b.obj')
@@ -112,13 +112,14 @@ class ChuryumovGerasimenko(Asteroid):
         else:
             # variable rotation velocity correction in degrees per day
             correction = {
-                'mtp006': -0.4/25,    # 2014-08-01 - 2014-09-02
-                'mtp007': -0.146887,  # 2014-09-02 - 2014-09-23
-                'mtp017': -0.402352,  # 2015-06-03 - 2015-06-30
-                'mtp024': 19.018865,  # 2015-12-16 - 2016-01-12
-                'mtp025': 19.640677,  # 2016-01-13 - 2016-02-09
-                'mtp026': 19.780821,  # 2016-02-10 - 2016-03-08
-            }[self.rosetta_batch]
+                'default': -0.4/25,   # 2014-08-01 - 2014-09-02
+                'mtp006': 0.006088,    # 2014-08-01 - 2014-09-02
+                'mtp007': 0.011987,  # 2014-09-02 - 2014-09-23
+                'mtp017': -0.652648,  # 2015-06-03 - 2015-06-30
+                'mtp024': 19.170419,  # 2015-12-16 - 2016-01-12
+                'mtp025': 19.623067,  # 2016-01-13 - 2016-02-09
+                'mtp026': 19.857628,  # 2016-02-10 - 2016-03-08
+            }[rosetta_batch]
             self.rotation_velocity = 2 * math.pi / 12.4043 / 3600 + math.radians(correction) / 24 / 3600  # 0.3754
 
         # for rotation phase shift, will use as equatorial longitude of
@@ -130,13 +131,14 @@ class ChuryumovGerasimenko(Asteroid):
         else:
             # rotation phase shift in degrees for different batches
             tpm = {
-                'mtp006': -9,       # 2014-08-01 - 2014-09-02
-                'mtp007': -23.69,   # 2014-09-02 - 2014-09-23
-                'mtp017': -122.17,  # 2015-06-03 - 2015-06-30
-                'mtp024': -106.93,  # 2015-12-16 - 2016-01-12
-                'mtp025': -149.66,  # 2016-01-13 - 2016-02-09
-                'mtp026': 106.59,   # 2016-02-10 - 2016-03-08
-            }[self.rosetta_batch]
+                'default': -9,      # 2014-08-01 - 2014-09-02
+                'mtp006': -127.05,       # 2014-08-01 - 2014-09-02
+                'mtp007': -158.68,   # 2014-09-02 - 2014-09-23
+                'mtp017': -150.09,  # 2015-06-03 - 2015-06-30
+                'mtp024': 83.90,  # 2015-12-16 - 2016-01-12
+                'mtp025': -46.27,  # 2016-01-13 - 2016-02-09
+                'mtp026': 13.40,   # 2016-02-10 - 2016-03-08
+            }[rosetta_batch]
             tlat, tlon = 64.11, 69.54
 
         self.rotation_pm = math.radians(tpm)

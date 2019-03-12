@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 
 from algo import tools
 from algo.base import AlgorithmBase
+from algo.image import ImageProc
 from iotools import lblloader
 from missions.rosetta import RosettaSystemModel
 from render.render import RenderEngine
@@ -51,7 +52,7 @@ def est_refl_model(hapke=True, iters=1, init_noise=0.0, verbose=True):
     target_exposure = np.min(list(imgs.values()))
     for img, exposure in imgs.items():
         real = cv2.imread(os.path.join(sm.asteroid.image_db_path, img + '_P.png'), cv2.IMREAD_GRAYSCALE)
-        real = tools.adjust_gamma(real, 1/1.8)
+        real = ImageProc.adjust_gamma(real, 1/1.8)
         #dark_px_lim = np.percentile(real, 0.1)
         #dark_px = np.mean(real[real<=dark_px_lim])
         real = cv2.resize(real, imgsize)
