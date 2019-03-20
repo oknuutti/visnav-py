@@ -470,6 +470,31 @@ class SystemModel(ABC):
         real_d = self.real_spacecraft_pos[2]
         return abs(self.spacecraft_pos[2] - real_d) / abs(real_d)
 
+    def calc_visibility(self, pos=None):
+        if pos is None:
+            pos = self.spacecraft_pos
+
+        if isinstance(pos, np.ndarray):
+            pos = pos.reshape((-1, 3))
+            return_array = True
+        else:
+            pos = np.array([pos], shape=(1, 3))
+            return_array = False
+
+        rad = self.asteroid.mean_radius * 0.001
+        xt = np.abs(pos[:, 2]) * math.tan(math.radians(self.cam.x_fov) / 2)
+        yt = np.abs(pos[:, 2]) * math.tan(math.radians(self.cam.y_fov) / 2)
+
+        # xm = np.clip((xt - (abs(pos[0])-rad))/rad/2, 0, 1)
+        # ym = np.clip((yt - (abs(pos[1])-rad))/rad/2, 0, 1)
+        xm = 1 - np.minimum(1, (np.maximum(0, pos[:, 0] + rad - xt) + np.maximum(0, rad - pos[:, 0] - xt)) / rad / 2)
+        ym = 1 - np.minimum(1, (np.maximum(0, pos[:, 1] + rad - yt) + np.maximum(0, rad - pos[:, 1] - yt)) / rad / 2)
+        visib = xm * ym * 100
+
+        return visib if return_array else visib[0]
+
+
+
     def export_state(self, filename):
         """ saves state in an easy to access format """
 

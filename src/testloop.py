@@ -410,20 +410,10 @@ class TestLoop:
 
         return self._loaded_sm_noise
 
-    def render_navcam_image(self, sm, i):
-        if self._synth_navcam is None:
-            self._synth_navcam = RenderEngine(sm.cam.width, sm.cam.height, antialias_samples=16)
-            self._synth_navcam.set_frustum(sm.cam.x_fov, sm.cam.y_fov, sm.min_altitude, sm.max_distance)
-            self._hires_obj_idx = self._synth_navcam.load_object(sm.asteroid.hires_target_model_file)
-
-        sm.swap_values_with_real_vals()
-        pos = sm.spacecraft_pos
-        q, _ = sm.gl_sc_asteroid_rel_q()
-        light, _ = sm.gl_light_rel_dir()
-        sm.swap_values_with_real_vals()
-
-        img, depth = self._synth_navcam.render(self._hires_obj_idx, pos, q, light,
-                                               get_depth=True, shadows=True, reflection=RenderEngine.REFLMOD_HAPKE)
+    @staticmethod
+    def render_navcam_image_static(sm, renderer, obj_idx, sc_pos, rel_q, light_v):
+        img, depth = renderer.render(obj_idx, sc_pos, rel_q, light_v,
+                                     get_depth=True, shadows=True, reflection=RenderEngine.REFLMOD_HAPKE)
         img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
 
         # do same gamma correction as the available rosetta navcam images have
@@ -443,6 +433,23 @@ class TestLoop:
             cv2.imshow('test', img)
             cv2.waitKey()
             quit()
+
+        return img
+
+    def render_navcam_image(self, sm, i):
+        if self._synth_navcam is None:
+            self._synth_navcam = RenderEngine(sm.cam.width, sm.cam.height, antialias_samples=16)
+            self._synth_navcam.set_frustum(sm.cam.x_fov, sm.cam.y_fov, sm.min_altitude, sm.max_distance)
+            self._hires_obj_idx = self._synth_navcam.load_object(sm.asteroid.hires_target_model_file)
+
+        sm.swap_values_with_real_vals()
+        sc_pos = sm.spacecraft_pos
+        rel_q, _ = sm.gl_sc_asteroid_rel_q()
+        light_v, _ = sm.gl_light_rel_dir()
+        sm.swap_values_with_real_vals()
+
+        img = TestLoop.render_navcam_image_static(sm, self._synth_navcam, self._hires_obj_idx,
+                                                  sc_pos, rel_q, light_v)
 
         cache_file = self._cache_file(i)+'.png'
         cv2.imwrite(cache_file, img, [cv2.IMWRITE_PNG_COMPRESSION, 9])
@@ -628,16 +635,22 @@ class TestLoop:
     def calc_err_summary(runtime, samples, fails, runtimes, laterrs, disterrs, shifterrs, roterrs):
         disterrs = np.abs(disterrs)
         if len(laterrs):
-            prctls = (50, 68, 95) + ((99.7,) if samples >= 2000 else tuple())
-            calc_prctls = lambda errs: \
-                ', '.join('%.2f' % p
-                          for p in np.nanpercentile(errs, prctls))
+            # percentiles matching the 0*sd, 1*sd, 2*sd, 3*sd limits of a normal distribution
+            ignore_worst = 99.87 if samples >= 2000 else 97.72
+            prctls = (50, 84.13, 97.72) + ((99.87,) if samples >= 2000 else tuple())
+            def calc_prctls(errs):
+                errs = errs[np.logical_not(np.isnan(errs))]
+                lim = np.percentile(errs, ignore_worst)
+                errs = errs[errs < lim]
+                m = np.mean(errs)
+                sd = np.std(errs)
+                return ', '.join('%.2f/%.2f' % (m+i*sd, p) for i, p in enumerate(np.percentile(errs, prctls)))
+
             try:
                 laterr_pctls = calc_prctls(laterrs)
                 disterr_pctls = calc_prctls(disterrs)
                 shifterr_pctls = calc_prctls(shifterrs)
-                roterr_pctls = ', '.join(
-                    ['%.2f' % p for p in np.nanpercentile(roterrs, prctls)])
+                roterr_pctls = calc_prctls(roterrs)
             except Exception as e:
                 print('Error calculating quantiles: %s' % e)
                 laterr_pctls = 'error'
@@ -647,13 +660,9 @@ class TestLoop:
 
             # a summary line
             summary_data = (
-                np.nanmean(laterrs),
                 laterr_pctls,
-                np.nanmean(disterrs),
                 disterr_pctls,
-                np.nanmean(shifterrs),
                 shifterr_pctls,
-                np.nanmean(roterrs),
                 roterr_pctls,
             )
         else:
@@ -661,10 +670,10 @@ class TestLoop:
 
         return (
               '%s - t: %.1fmin (%.0fms), '
-              + 'Le: %.3f m/km (%s), '
-              + 'De: %.3f m/km (%s), '
-              + 'Se: %.3f m/km (%s), '
-              + 'Re: %.3f° (%s), '
+              + 'Le m/km: (%s), '
+              + 'De m/km: (%s), '
+              + 'Se m/km: (%s), '
+              + 'Re m/km: (%s), '
               + 'fail: %.2f%% \n'
         ) % (
               dt.now().strftime("%Y-%m-%d %H:%M:%S"),

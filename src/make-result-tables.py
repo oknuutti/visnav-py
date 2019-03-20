@@ -6,6 +6,8 @@ import re
 import settings
 from settings import LOG_DIR
 
+SIMPLE = False
+
 if __name__ == '__main__':
     postfix = None
     try:
@@ -80,16 +82,25 @@ if __name__ == '__main__':
     if nofdb:
         setups = [s for s in setups if 'fdb' not in s]
 
-    table_header = ['method', 'vertices'] + [
+    table_header = ['method', 'vertices'] + ([
         "time ms",
         "fail %",
-        "dist err-p68 m/km",
-        "dist err-p95 m/km",
-        "lat err-p68 m/km",
-        "lat err-p95 m/km",
-        "orient err-p68 deg",
-        "orient err-p95 deg",
-    ]
+        "distance err (m/km) p50",
+        "distance err (m/km) p84.1",
+        "lat err (m/km) p50",
+        "lat err (m/km) p84.1",
+        "orientation err (deg) p50",
+        "orientation err (deg) p84.1",
+    ] if SIMPLE else [
+        "time ms",
+        "fail %",
+        "distance err (m/km) μ/μ+σ",
+        "distance err (m/km) p50/p84.1",
+        "lat err (m/km) μ/μ+σ",
+        "lat err (m/km) p50/p84.1",
+        "orientation err (deg) μ/μ+σ",
+        "orientation err (deg) p50/p84.1",
+    ])
 
     # initialize
     methods = []
@@ -131,22 +142,31 @@ if __name__ == '__main__':
 
         match = re.match(
               r"[^(]+\((\d+)"               # start=>time, m[1]:  time
-            + r"[^(]+\("+r"([\d.]+)[,)\s]+"*3   # =>Le, m[2:5]:  Le p50 p68 p95
-            + r"[^(]+\("+r"([\d.]+)[,)\s]+"*3   # =>De, m[5:8]:  De p50 p68 p95
-            + r"[^(]+\("+r"([\d.]+)[,)\s]+"*3   # =>De, m[8:11]:  Se p50 p68 p95
-            + r"[^(]+\("+r"([\d.]+)[,)\s]+"*3   # =>Re, m[11:14]: Re p50 p68 p95
+            + r"[^(]+\("+r"([\d./]+)[,)\s]+"*3   # =>Le, m[2:5]:  Le p50 p68 p95
+            + r"[^(]+\("+r"([\d./]+)[,)\s]+"*3   # =>De, m[5:8]:  De p50 p68 p95
+            + r"[^(]+\("+r"([\d./]+)[,)\s]+"*3   # =>De, m[8:11]:  Se p50 p68 p95
+            + r"[^(]+\("+r"([\d./]+)[,)\s]+"*3   # =>Re, m[11:14]: Re p50 p68 p95
             + r"[^f]*fail:\s([\d.]+).*"         # =>fail, m[14]:  fail %, => end
             , line)
         if match is not None:
             data[s] = [
                 match[1],
                 match[14],
-                '%.3f' % (float(match[6])),  # dist p68
-                '%.3f' % (float(match[7])),  # dist p95
-                '%.3f' % (float(match[3])),  # lateral p68
-                '%.3f' % (float(match[4])),  # lateral p95
-                '%.3f' % (float(match[12])),  # orient p68
-                '%.3f' % (float(match[13])),  # orient p95
+                match[5].split('/')[1],  # dist p50
+                match[6].split('/')[1],  # dist p84
+                match[2].split('/')[1],  # lateral p50
+                match[3].split('/')[1],  # lateral p84
+                match[11].split('/')[1],  # orient p50
+                match[12].split('/')[1],  # orient p84
+            ] if SIMPLE else [
+                match[1],
+                match[14],
+                match[5].split('/')[0] + ' / ' + match[6].split('/')[0],  # dist mean/sd
+                match[5].split('/')[1] + ' / ' + match[6].split('/')[1],  # dist p50/p84
+                match[2].split('/')[0] + ' / ' + match[3].split('/')[0],  # lateral mean/sd
+                match[2].split('/')[1] + ' / ' + match[3].split('/')[1],  # lateral p50/p84
+                match[11].split('/')[0] + ' / ' + match[12].split('/')[0],  # orient mean/sd
+                match[11].split('/')[1] + ' / ' + match[12].split('/')[1],  # orient p50/p84
             ]
         else:
             data[s] = [""]*n_col
@@ -166,7 +186,7 @@ if __name__ == '__main__':
 
     # write tables to file
     fname = os.path.join(LOG_DIR, "result-tables.csv")
-    with open(fname, 'w') as fh:
+    with open(fname, 'w', encoding='utf8') as fh:
         fh.write("Synthetic\n")
         fh.write("\t".join(table_header) + "\n")
         for n in noise_rows:

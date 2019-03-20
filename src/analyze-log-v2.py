@@ -47,7 +47,6 @@ def read_data(sm, logfile, predictors, targets):
     X, Y, rot_err, labels = [], [], [], []
     
     with open(logfile, newline='') as csvfile:
-        rad = sm.asteroid.mean_radius * 0.001
         data = csv.reader(csvfile, delimiter='\t')
         first = True
         for row in data:
@@ -67,13 +66,7 @@ def read_data(sm, logfile, predictors, targets):
                         print('Can\'t convert cols %s to float on row %s' % (pos_i, row[0]))
                         raise e
                     distance = np.sqrt(np.sum(pos**2))
-                    xt = abs(pos[2])*math.tan(math.radians(sm.cam.x_fov)/2)
-                    yt = abs(pos[2])*math.tan(math.radians(sm.cam.y_fov)/2)
-
-                    #xm = np.clip((xt - (abs(pos[0])-rad))/rad/2, 0, 1)
-                    #ym = np.clip((yt - (abs(pos[1])-rad))/rad/2, 0, 1)
-                    xm = 1 - (max(0, pos[0]+rad - xt) + max(0, rad-pos[0] - xt))/rad/2
-                    ym = 1 - (max(0, pos[1]+rad - yt) + max(0, rad-pos[1] - yt))/rad/2
+                    visib = sm.calc_visibility(pos)
 
                     j = 0
                     x = [None]*len(predictors)
@@ -81,7 +74,7 @@ def read_data(sm, logfile, predictors, targets):
                         if p == 'distance':
                             x[i] = distance
                         elif p == 'visible':
-                            x[i] = xm*ym*100
+                            x[i] = visib
                         elif p == 'total dev angle':
                             x[i] = abs(tools.wrap_degs(row[prd_i[j]].astype(np.float)))
                             j += 1
@@ -268,8 +261,8 @@ if __name__ == '__main__':
     if mode == 'errs':
         predictor_idxs = (0, 1, 2)
         plot_ymax = {
-            'synth' : (0.5, 20, 1.0, 4.0),
-            'real'  : (0.6, 22, 1.0, 6.0),
+            'synth' : (0.4, 10, 0.4, 2.5),
+            'real'  : (0.6, 13, 0.6, 3.5),
         }
         plot_ymax['both'] = plot_ymax['real']
         fig, axs = plt.subplots(len(targets) + 1, len(predictor_idxs), figsize=(20, 19.5))
@@ -322,8 +315,8 @@ if __name__ == '__main__':
                                 p_bins=5, p_lim=95, weight='mavg', wfun_coef=0.1, high_acc_std=0)
                 lbl = ' μ+1σ'
             else:
-                xt, yt = windowed_percentile(X[I, pi], yr, 100, window=0.2, p_lim=68, plot_xlim=xlim)
-                lbl = ' p68'
+                xt, yt = windowed_percentile(X[I, pi], yr, 100, window=0.2, p_lim=50, plot_xlim=xlim)
+                lbl = ' p50'
 
             # reset color cycling
             if old_itype != itype:

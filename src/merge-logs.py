@@ -6,17 +6,25 @@ import re
 import numpy as np
 
 import settings
+from algo import tools
+from batch1 import get_system_model
 from settings import LOG_DIR
 from testloop import TestLoop
 
+# distance, phase angle (180-elong), ini err, visibility
+OPZONE_LIMITS = ((0, 250), (0, 140), (0, 10), (50, 120))
+
 if __name__ == '__main__':
-    if len(sys.argv) < 3:
-        print('USAGE: python %s <mission> <yyyy-mm-dd> <HH:MM:SS> <postfix>\n\tmerges logs dated after given datetime'%(sys.argv[0],))
+    try:
+        mission = sys.argv[1]
+        sm = get_system_model(mission)
+        start_date = datetime.datetime.strptime(sys.argv[2] + ' ' + sys.argv[3], '%Y-%m-%d %H:%M:%S')
+        postfix = sys.argv[4]
+        opzone = sys.argv[5] == 'opzone' if len(sys.argv) > 5 else False
+    except:
+        print('USAGE: python %s <mission> <yyyy-mm-dd> <HH:MM:SS> <postfix> [opzone]\n\tmerges logs dated after given datetime'%(sys.argv[0],))
         quit()
 
-    mission = sys.argv[1]
-    start_date = datetime.datetime.strptime(sys.argv[2] + ' ' + sys.argv[3], '%Y-%m-%d %H:%M:%S')
-    postfix = sys.argv[4]
     nofdb = True
 
     setups = [
@@ -121,6 +129,34 @@ if __name__ == '__main__':
         assert len(data.shape) == 2, '%s: missing values at %s' % (s, np.where(np.array([len(d) for d in data]) == 2),)
 
         if len(data) > 0:
+            if opzone:
+                # distance, phase angle (180-elong), ini err, visibility
+                phase_angle = 180 - data[:, columns.index('sol elong')].astype('float')
+                inierr = np.abs(tools.wrap_degs(data[:, columns.index('total dev angle')].astype('float')))
+                pos_start = columns.index('x sc pos')
+                pos = data[:, pos_start:pos_start+3].astype('float')
+                dist = np.linalg.norm(pos, axis=1)
+                visib = sm.calc_visibility(pos)
+
+                assert np.all(np.logical_and(phase_angle>=0, phase_angle<=180)), 'phase angle out of range'
+                assert np.all(inierr > 0), 'ini err out of range'
+                assert np.all(np.logical_and(visib>=0, visib<=100)), 'visibility out of range'
+
+                I = np.logical_and.reduce((
+                    dist > OPZONE_LIMITS[0][0],
+                    dist < OPZONE_LIMITS[0][1],
+
+                    phase_angle > OPZONE_LIMITS[1][0],
+                    phase_angle < OPZONE_LIMITS[1][1],
+
+                    inierr > OPZONE_LIMITS[2][0],
+                    inierr < OPZONE_LIMITS[2][1],
+
+                    visib > OPZONE_LIMITS[3][0],
+                    visib < OPZONE_LIMITS[3][1],
+                ))
+                data = data[I, :]
+
             runtimes = data[:, columns.index('execution time')].astype('float')
             laterrs = data[:, columns.index('lat error (m/km)')].astype('float')
             disterrs = data[:, columns.index('dist error (m/km)')].astype('float')

@@ -183,8 +183,8 @@ def mx2qmx(mx):
     return quaternion.as_quat_array(qmx)
 
 def normalize_v(v):
-    return v/math.sqrt(sum(map(lambda x: x**2, v)))
-
+    norm = np.linalg.norm(v)
+    return v/norm if norm != 0 else v
 
 def wrap_rads(a):
     return (a+math.pi)%(2*math.pi)-math.pi
