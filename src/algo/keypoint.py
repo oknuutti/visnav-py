@@ -99,6 +99,9 @@ class KeypointAlgo(AlgorithmBase):
         ref_img_sc = min(1, self._render_z / init_z) * (sm.view_width if scale_cam_img else self._cam.width) / sm.view_width
         self.extra_values = None
 
+        if outfile is not None:
+            self.debug_filebase = outfile + (self.DEBUG_IMG_POSTFIX if isinstance(orig_sce_img, str) else '')
+
         if self.est_real_ast_orient:
             # so that can track rotation of 67P
             sm.reset_to_real_vals()
@@ -109,7 +112,6 @@ class KeypointAlgo(AlgorithmBase):
 
         # maybe load scene image
         if isinstance(orig_sce_img, str):
-            self.debug_filebase = outfile+self.DEBUG_IMG_POSTFIX
             orig_sce_img = self.load_target_image(orig_sce_img)
 
         if add_noise:
@@ -292,7 +294,8 @@ class KeypointAlgo(AlgorithmBase):
         sm = self.system_model
         orig_z = sm.z_off.value
         sm.z_off.value = self._render_z
-        ref_img, depth = self.render(center=True, depth=True, shadows=self.RENDER_SHADOWS)
+        ref_img, depth = self.render(center=True, depth=True, shadows=self.RENDER_SHADOWS, reflection=
+                                     RenderEngine.REFLMOD_HAPKE)
         sm.z_off.value = orig_z
 
         # scale to match scene image asteroid extent in pixels
@@ -604,18 +607,18 @@ class KeypointAlgo(AlgorithmBase):
             sm.rotate_spacecraft(sc_delta_q)
         else:
             sc2cv_q = sm.frm_conv_q(sm.SPACECRAFT_FRAME, sm.OPENCV_FRAME)
-            sc_q = sm.spacecraft_q()
+            sc_q = sm.spacecraft_q
 
             frame_q = sc_q * err_q * sc2cv_q
             ast_delta_q = frame_q * cv_cam_delta_q * frame_q.conj()
             
             err_corr_q = sc_q * err_q.conj() * sc_q.conj()
-            ast_q0 = sm.asteroid_q()
+            ast_q0 = sm.asteroid_q
             sm.rotate_asteroid(err_corr_q * ast_delta_q)
 
             if self.est_real_ast_orient:
                 # so that can track rotation of 67P
-                ast_q = sm.asteroid_q()
+                ast_q = sm.asteroid_q
                 err_deg = math.degrees(tools.angle_between_q(ast_q0, ast_q))
                 self.extra_values = list(quaternion.as_float_array(ast_q)) + [sm.time.value, err_deg]
 

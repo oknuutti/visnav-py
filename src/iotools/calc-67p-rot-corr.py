@@ -72,7 +72,7 @@ if __name__ == '__main__':
         errs = []
         for i, y in enumerate(Y):
             sm.time.value = T[i]
-            ast_q = sm.asteroid_q()
+            ast_q = sm.asteroid_q
             errs.append(np.abs(tools.wrap_degs(math.degrees(tools.angle_between_q(ast_q, y)))))
         errs = np.array(errs)
         max_err = np.percentile(np.abs(errs), 99)

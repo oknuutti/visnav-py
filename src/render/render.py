@@ -15,6 +15,8 @@ from missions.rosetta import RosettaSystemModel
 
 
 class RenderEngine:
+    _ctx = None
+
     (
         REFLMOD_LAMBERT,
         REFLMOD_LUNAR_LAMBERT,
@@ -67,7 +69,10 @@ class RenderEngine:
     }
 
     def __init__(self, view_width, view_height, antialias_samples=0):
-        self._ctx = moderngl.create_standalone_context()
+        if RenderEngine._ctx is None:
+            RenderEngine._ctx = moderngl.create_standalone_context()
+
+        self._ctx = RenderEngine._ctx
         self._width = view_width
         self._height = view_height
         self._samples = antialias_samples
@@ -98,6 +103,10 @@ class RenderEngine:
         vertex_shader_source = open(os.path.join(os.path.dirname(__file__), vert)).read()
         fragment_shader_source = open(os.path.join(os.path.dirname(__file__), frag)).read()
         return self._ctx.program(vertex_shader=vertex_shader_source, fragment_shader=fragment_shader_source)
+
+    @property
+    def ctx(self):
+        return self._ctx
 
     @property
     def width(self):
@@ -229,8 +238,8 @@ class RenderEngine:
         m[:3, :3] = quaternion.as_rotation_matrix(rel_rot_q)
 
         v = np.identity(4)
-        angle = math.acos(np.array([0,0,-1]).dot(light_v))
-        axis = np.cross(np.array([0,0,-1]), light_v)
+        angle = math.acos(np.clip(np.array([0, 0, -1]).dot(light_v), -1, 1))
+        axis = np.cross(np.array([0, 0, -1]), light_v)
         q_cam2light = tools.angleaxis_to_q((angle, *axis))
         v[:3, :3] = quaternion.as_rotation_matrix(q_cam2light.conj())
 

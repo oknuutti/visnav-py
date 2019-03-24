@@ -295,52 +295,61 @@ class SystemModel(ABC):
     def real_asteroid_axis(self, rv):
         self.ast_x_rot.real_value, self.ast_y_rot.real_value, self.ast_z_rot.real_value = rv
 
-
-    def rotate_spacecraft(self, q):
-        new_q = self.spacecraft_q() * q
-        self.x_rot.value, self.y_rot.value, self.z_rot.value = \
-            list(map(math.degrees, tools.q_to_ypr(new_q)))
-
-    def rotate_asteroid(self, q):
-        """ rotate asteroid in spacecraft frame """
-        
-        ast = self.asteroid
-        sc2ast_q = SystemModel.frm_conv_q(SystemModel.SPACECRAFT_FRAME, SystemModel.ASTEROID_FRAME)
-
-        # global rotation q on asteroid in sc frame, followed by local rotation to asteroid frame
-        new_q = q * ast.rotation_q(self.time.value) * sc2ast_q
-        ast.axis_latitude, ast.axis_longitude, new_theta = tools.q_to_ypr(new_q)
-        
-        old_theta = ast.rotation_theta(self.time.value)
-        ast.rotation_pm = tools.wrap_rads(ast.rotation_pm + new_theta - old_theta)
-        
-        self.asteroid_rotation_from_model()
-
+    @property
     def spacecraft_q(self):
         return tools.ypr_to_q(*list(map(
                 math.radians,
                 (self.x_rot.value, self.y_rot.value, self.z_rot.value)
         )))
-        
+
+    @spacecraft_q.setter
+    def spacecraft_q(self, new_q):
+        self.x_rot.value, self.y_rot.value, self.z_rot.value = \
+            list(map(math.degrees, tools.q_to_ypr(new_q)))
+
+    @property
     def real_spacecraft_q(self):
         return tools.ypr_to_q(*list(map(
                 math.radians,
                 (self.x_rot.real_value, self.y_rot.real_value, self.z_rot.real_value)
         )))
-        
+
+    @real_spacecraft_q.setter
+    def real_spacecraft_q(self, new_q):
+        self.x_rot.real_value, self.y_rot.real_value, self.z_rot.real_value = \
+            list(map(math.degrees, tools.q_to_ypr(new_q)))
+
+    @property
     def asteroid_q(self):
         return self.asteroid.rotation_q(self.time.value)
-    
+
+    @asteroid_q.setter
+    def asteroid_q(self, new_q):
+        sc2ast_q = SystemModel.frm_conv_q(SystemModel.SPACECRAFT_FRAME, SystemModel.ASTEROID_FRAME)
+        ast = self.asteroid
+
+        ast.axis_latitude, ast.axis_longitude, new_theta = tools.q_to_ypr(new_q * sc2ast_q)
+
+        old_theta = ast.rotation_theta(self.time.value)
+        ast.rotation_pm = tools.wrap_rads(ast.rotation_pm + new_theta - old_theta)
+
+        self.asteroid_rotation_from_model()
+
+    @property
     def real_asteroid_q(self):
         org_ast_axis = self.asteroid_axis
         self.asteroid_axis = self.real_asteroid_axis
-        
         q = self.asteroid.rotation_q(self.time.real_value)
-        
         self.asteroid_axis = org_ast_axis
         return q
-    
-        
+
+    @real_asteroid_q.setter
+    def real_asteroid_q(self, new_q):
+        org_ast_axis = self.asteroid_axis
+        self.asteroid_axis = self.real_asteroid_axis
+        self.asteroid_q = new_q
+        self.asteroid_axis = org_ast_axis
+
     def gl_sc_asteroid_rel_q(self, discretize_tol=False):
         """ rotation of asteroid relative to spacecraft in opengl coords """
         assert not discretize_tol, 'discretize_tol deprecated at gl_sc_asteroid_rel_q function'
@@ -361,7 +370,7 @@ class SystemModel(ABC):
     def sc_asteroid_rel_q(self, time=None):
         """ rotation of asteroid relative to spacecraft in spacecraft coords """
         ast_q = self.asteroid.rotation_q(time or self.time.value)
-        sc_q = self.spacecraft_q()
+        sc_q = self.spacecraft_q
         return sc_q.conj() * ast_q
 
 
@@ -377,6 +386,16 @@ class SystemModel(ABC):
         self.asteroid_axis = org_ast_axis
         return q_tot
 
+    def rotate_spacecraft(self, q):
+        new_q = self.spacecraft_q * q
+        self.x_rot.value, self.y_rot.value, self.z_rot.value = \
+            list(map(math.degrees, tools.q_to_ypr(new_q)))
+
+    def rotate_asteroid(self, q):
+        """ rotate asteroid in spacecraft frame """
+        # global rotation q on asteroid in sc frame, followed by local rotation to asteroid frame
+        new_q = q * self.asteroid.rotation_q(self.time.value)
+        self.asteroid_q = new_q
 
     def reset_to_real_vals(self):
         for n, p in self.get_params(True):
@@ -432,12 +451,12 @@ class SystemModel(ABC):
         assert not discretize_tol, 'discretize_tol deprecated at light_rel_dir function'
 
         light_v = tools.normalize_v(self.asteroid.position(self.time.value))
-        sc_q = self.spacecraft_q()
+        sc_q = self.spacecraft_q
         err_q = (err_q or np.quaternion(1, 0, 0, 0))
 
         # old, better way to discretize light, based on asteroid rotation axis, now not in use
         if discretize_tol:
-            ast_q = self.asteroid_q()
+            ast_q = self.asteroid_q
             light_ast_v = tools.q_times_v(ast_q.conj(), light_v)
             dlv, _ = tools.discretize_v(light_ast_v, discretize_tol)
             err_angle = tools.angle_between_v(light_ast_v, dlv)
@@ -448,7 +467,7 @@ class SystemModel(ABC):
 
     def solar_elongation(self, real=False):
         ast_v = self.asteroid.position(self.time.real_value if real else self.time.value)
-        sc_q = self.real_spacecraft_q() if real else self.spacecraft_q()
+        sc_q = self.real_spacecraft_q if real else self.spacecraft_q
         elong, direc = tools.solar_elongation(ast_v, sc_q)
         if not BATCH_MODE and DEBUG:
             print('elong: %.3f | dir: %.3f' % (
@@ -506,7 +525,7 @@ class SystemModel(ABC):
         for t in ('initial', 'real'):
             # if settings.USE_ICRS, all in solar system barycentric equatorial frame
             ast_q = self.asteroid.rotation_q(self.time.value)
-            sc_q = self.spacecraft_q()
+            sc_q = self.spacecraft_q
             ast_sc_v = tools.q_times_v(sc_q, self.spacecraft_pos)
             sun_ast_v = self.asteroid.position(self.time.value)
 
