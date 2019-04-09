@@ -42,7 +42,7 @@ void main()
             vec3 position = normalize(vertexPosition_viewFrame);
 
             float cos_emission = clamp(dot(-position, normal), 0.0, 1.0);        // mu in hapke
-            float cos_phase_angle = clamp(dot(position, lightDirection_viewFrame), -1.0, 1.0);  //  alpha in hapke
+            float cos_phase_angle = clamp(dot(position, -lightDirection_viewFrame), -1.0, 1.0);  //  alpha in hapke
             float g = acos(cos_phase_angle);  // phase angle in radians, alpha, g in hapke
 
             // from: "refinement of stereo image analysis using photometric shape recovery as an alternative to bundle adjustment"
@@ -95,28 +95,28 @@ void main()
                     float e = acos(cos_emission);
                     float tan_th = tan(th_p);
                     float xi = 1/sqrt(1 + PI*tan_th*tan_th);
-
-                    float y = i < e ? i : e;  // think that y = i && cos(i)= mu0
-                    float z = i < e ? e : i;  // think that z = e && cos(e)= mu
-                    float cos_y = i < e ? cos_incidence : cos_emission; // think that cos(i) = cos_y = mu0
-                    float cos_z = i < e ? cos_emission : cos_incidence; // think that cos(e) = cos_z = mu
-                    float cot_y = 1/tan(y);
-                    float cot_z = 1/tan(z);
-
                     float fg = exp(-2*tan(g/2));
-                    float E1y = exp(-2/tan_th*cot_y/PI);
-                    float E1z = exp(-2/tan_th*cot_z/PI);
-                    float E2y = exp(-cot_y*cot_y/(tan_th*tan_th)/PI);
-                    float E2z = exp(-cot_z*cot_z/(tan_th*tan_th)/PI);
 
-                    // with above substitutions, can now implement formulas as if i < e all the time
-                    mu0_eff = xi*(cos_y + sin(y)*tan_th*(cos_phase_angle*E2z + pow(sin(g/2),2)*E2y)/(2-E1z-(g/PI)*E1y));
-                    mu_eff = xi*(cos_z + sin(z)*tan_th*(E2z - pow(sin(g/2),2)*E2y)/(2-E1z-(g/PI)*E1y));
+                    float cot_th_i = 1/(tan_th * tan(i));
+                    float cot_th_e = 1/(tan_th * tan(e));
 
-                    // calculate S(incidence, emission, phase_angle, th), shadowing function for large-scale roughness
-                    float ny = xi*(cos_y + sin(y)*tan_th*E2y/(2-E1y));
-                    float nz = xi*(cos_z + sin(z)*tan_th*E2z/(2-E1z));
-                    S = mu_eff*cos_incidence*xi/ny/nz/(1-fg+fg*xi*cos_y/nz);
+                    float E1_i = exp(-2/PI * cot_th_i);
+                    float E1_e = exp(-2/PI * cot_th_e);
+                    float E2_i = exp(-1/PI * cot_th_i * cot_th_i);
+                    float E2_e = exp(-1/PI * cot_th_e * cot_th_e);
+                    float eta_i = xi*(cos_incidence + sin(i)*tan_th*E2_i/(2-E1_i));
+                    float eta_e = xi*(cos_emission + sin(e)*tan_th*E2_e/(2-E1_e));
+
+                    if(i < e) {
+                        mu0_eff = xi*(cos_incidence + sin(i)*tan_th*(cos_phase_angle*E2_e + pow(sin(g/2),2)*E2_i)/(2-E1_e-(g/PI)*E1_i));
+                        mu_eff = xi*(cos_emission + sin(e)*tan_th*(E2_e - pow(sin(g/2),2)*E2_i)/(2-E1_e-(g/PI)*E1_i));
+                        S = mu_eff/eta_e * cos_incidence/eta_i * xi/(1-fg+fg*xi*cos_incidence/eta_i);
+                    }
+                    else {
+                        mu0_eff = xi*(cos_incidence + sin(i)*tan_th*(E2_i - pow(sin(g/2),2)*E2_e)/(2-E1_i-(g/PI)*E1_e));
+                        mu_eff = xi*(cos_emission + sin(e)*tan_th*(cos_phase_angle*E2_i + pow(sin(g/2),2)*E2_e)/(2-E1_i-(g/PI)*E1_e));
+                        S = mu_eff/eta_e * cos_incidence/eta_i * xi/(1-fg+fg*xi*cos_emission/eta_e);
+                    }
                 }
                 else {
                     mu0_eff = cos_incidence;
@@ -151,7 +151,7 @@ void main()
 				}
 
 				// CBOE opposition effect, probably not needed for asteroids
-				if(B_SH0 != 0) {
+				if(B_CB0 != 0) {
                     // B_CB = coherent-backscattering opposition effect (CBOE), Hapke 2002
                     // "The Coherent Backscatter Opposition Effect and Anisotropic Scattering"
                     float t0 = 1/hc*tan(g/2);

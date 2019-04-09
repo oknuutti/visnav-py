@@ -164,8 +164,8 @@ if __name__ == '__main__':
 #        if not hapke:
 #            break
     #synth[0] = ImageProc.equalize_brightness(synth[0], real, percentile=99.999, image_gamma=1.8)
-    synth[0] = ImageProc.adjust_gamma(synth[0], 1/4)
-    real = ImageProc.adjust_gamma(real, 1/4)
+    #synth[0] = ImageProc.adjust_gamma(synth[0], 1/4)
+    #real = ImageProc.adjust_gamma(real, 1/4)
 
     real = cv2.resize(real, size)
     cv2.imshow('real vs synthetic', np.concatenate([real, 255*np.ones((real.shape[0], 1), dtype='uint8')] + synth, axis=1))

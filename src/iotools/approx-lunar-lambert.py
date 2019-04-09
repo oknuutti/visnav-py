@@ -223,5 +223,5 @@ if __name__ == '__main__':
         #x = est_refl_model(hapke=False, iters=5, init_noise=0.3, verbose=False)
         #print(', '.join(['%.5e'%f for i, f in enumerate(x)]))
     else:
-        x = est_refl_model(hapke=True)
+        x = est_refl_model(hapke=False)
         print(', '.join(['%.5e'%f for i, f in enumerate(x)]))

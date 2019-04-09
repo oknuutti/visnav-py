@@ -15,21 +15,24 @@ Check the file `src/settings.py` and change e.g. the `logs` and `cache` folder p
 If you run e.g. a simulation of 1000 iterations, 3GB of log data (images mainly) is created. Around 4GB is used to cache
 the generated random situations, including related navcam images and noisy shape models.
 
-To run standalone GUI mode (doesn't work at the moment):<br/>
+To run standalone GUI mode (not maintained, can be buggy):<br/>
 `python src/visnav.py`
 
 To run a Monte Carlo batch, open batch1.py in an editor to see argument options, then run e.g.:<br/>
 `python src/batch1.py didy1w akaze+centroid+smn 10`
 
-Note: There's currently a bug with running the algorithms at the same time while creating the cached data.
-The workaround is to:
- * set `ONLY_POPULATE_CACHE = True` at `settings.py`
- * run `src/batch1.py` with the desired arguments to generate cache contents
- * set `ONLY_POPULATE_CACHE = False` at `settings.py`
- * run `src/batch1.py` with the same arguments to run the simulation and generate the log
+To start a local server usable for integrations to e.g. Simulink:<br/>
+`python src/api-server.py didy1w`
+
+The API can currently be deduced only from the code at `api-server.py`. It listens to a socket at port 50007 and it can currently 1) generate synthetic navcam images and 2) run the keypoint algorithm with a previously generated image.
+
+There's other helper scripts present for various tasks such as fetching Rosetta navcam images from ESA's website,
+estimate Lunar lambert or Hapke reflection model parameters, estimate rotation state params of 67P for different navcam
+batches, generate a feature database, merge log files from multiple Monte Carlo batches, collect a results
+table from different log files and plot results from multiple log files.
 
 ## Documentation
-This work started as a project done at Aalto University, School of Electrical Engineering.
+This work started as a study project done at Aalto University, School of Electrical Engineering.
 The documentation done towards those credits can be found [here](https://docs.google.com/document/d/1lXqXdR02dAcGPsClwZOXj39RbBfrcscxIKrUyMY_WGU/edit#heading=h.dw2dac9r7xzm).
 Sadly, that document might be quite obsolete by now.
 
