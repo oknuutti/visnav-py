@@ -412,8 +412,10 @@ class TestLoop:
 
     @staticmethod
     def render_navcam_image_static(sm, renderer, obj_idx, sc_pos, rel_q, light_v):
+        model = RenderEngine.REFLMOD_HAPKE
+        RenderEngine.REFLMOD_PARAMS[model] = sm.asteroid.reflmod_params[model]
         img, depth = renderer.render(obj_idx, sc_pos, rel_q, light_v,
-                                     get_depth=True, shadows=True, reflection=RenderEngine.REFLMOD_HAPKE)
+                                     get_depth=True, shadows=True, reflection=model)
         img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
 
         # do same gamma correction as the available rosetta navcam images have

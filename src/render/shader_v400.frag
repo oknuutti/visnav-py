@@ -1,5 +1,7 @@
 #version 400 core
 
+// https://www.khronos.org/registry/OpenGL/specs/gl/GLSLangSpec.4.00.pdf
+
 #define PI 3.1415926538
 
 in vec3 vertexPosition_viewFrame;
@@ -15,6 +17,7 @@ uniform int reflection_model;  // 0: lambertian, 1: lunar-lambert, 2: hapke
 uniform float model_coefs[10];
 uniform bool shadows;
 uniform sampler2D shadow_map;
+uniform sampler2D hapke_K;
 
 void main()
 {
@@ -160,9 +163,14 @@ void main()
 					J *= B_CB;
 				}
 
-                // roughness correction factor, works ok for <60deg phase angles, for others use table 12.1 from Hapke 2012
+                // maybe use roughness correction factor
 				if(mod(mode, 2) > 0) {
-					J *= exp(-0.32*th_p*sqrt(tan(th_p)*tan(g/2)) -0.52*th_p*tan(th_p)*tan(g/2));
+                    // works ok only for <50deg phase angles
+                    //J *= exp(-0.32*th_p*sqrt(tan(th_p)*tan(g/2)) -0.52*th_p*tan(th_p)*tan(g/2));
+
+                    // use table 12.1 from Hapke 2012 instead
+                    ivec2 ts = textureSize(hapke_K, 0);  // target texel centres
+                    J *= texture(hapke_K, vec2(th_p/radians(60) + .5/ts.x, g/PI + .5/ts.y)).x;
 				}
 
                 // final value

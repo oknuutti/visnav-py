@@ -74,6 +74,7 @@ class AlgorithmBase:
         assert not discretize_tol, 'discretize_tol deprecated at render function'
 
         rel_pos_v, rel_rot_q, light_v = self._render_params(discretize_tol, center)
+        RenderEngine.REFLMOD_PARAMS[reflection] = self.system_model.asteroid.reflmod_params[reflection]
         res = self.render_engine.render(self.obj_idx, rel_pos_v, rel_rot_q, light_v, get_depth=depth, shadows=shadows,
                                         gamma=gamma, reflection=reflection)
         if depth:

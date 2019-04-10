@@ -39,6 +39,51 @@ class RosettaSystemModel(SystemModel):
 
 
 class ChuryumovGerasimenko(Asteroid):
+
+    # Details for from book by Hapke, 2012, "Theory of Reflectance and Emittance Spectroscopy"
+    # w (SSA), B_SH0 and hs set based on Table 4 (model: Hapke 2012) from Fornasier et al (2015)
+    # the rest are optimized using approx-lunar-lambert.py
+    HAPKE_PARAMS = [
+        # J, brightness scaling
+        553.38,
+
+        # th_p, average surface slope (deg), effective roughness, theta hat sub p
+        27.07,  # vs 15 in Fornasier
+
+        # w, single scattering albedo (w, omega, SSA), range 0-1
+        0.034,
+
+        # b, SPPF asymmetry parameter (sometimes g?),
+        #   if single-term HG, range is [-1, 1], from backscattering to isotropic to forward scattering
+        #   if two-term HG (c>0), range is [0, 1], from isotropic to scattering in a single direction
+        -0.078577,
+
+        # c, second HG term for a more complex SPPF. Range [0, 1], from forward scattering to backward scattering.
+        0,
+
+        # B_SH0, or B0, amplitude of shadow-hiding opposition effect (shoe). If zero, dont use.
+        2.25,
+
+        # hs, or h or k, angular half width of shoe
+        math.radians(0.061),
+
+        # B_CB0, amplitude of coherent backscatter opposition effect (cboe). If zero, dont use.
+        0,
+
+        # hc, angular half width of cboe
+        0.005,
+
+        # extra mode selection, first bit: use K or not
+        1,
+    ]
+
+    # Lunar-Lambert coefficients were fitted using iotools/approx-lunar-lambert.py
+    LUNAR_LAMBERT_PARAMS = [
+        1,
+        -7.4364e-03, 4.0259e-05, -2.2650e-06, 2.1524e-08, -5.7964e-11, 7.8620e-01,
+        0, 0, 0
+    ]
+
     def __init__(self, hi_res_shape_model=False, rosetta_batch='default'):
         super(ChuryumovGerasimenko, self).__init__()
         self.name = '67P/Churyumov-Gerasimenko'
@@ -50,6 +95,11 @@ class ChuryumovGerasimenko(Asteroid):
         self.target_model_file = os.path.join(BASE_DIR, 'data/67p-17k.obj')
         self.hires_target_model_file = os.path.join(BASE_DIR, 'data/67p-83k-b.obj')
         self.render_smooth_faces = False
+
+        self.reflmod_params = {
+            1: ChuryumovGerasimenko.LUNAR_LAMBERT_PARAMS,  # REFLMOD_LUNAR_LAMBERT
+            2: ChuryumovGerasimenko.HAPKE_PARAMS,  # REFLMOD_HAPKE
+        }
 
         # done using `make-const-noise-shapemodel.py data/67p-83k-b.obj data/67p-17k.obj data/67p-17k.nsm`
         self.constant_noise_shape_model = {

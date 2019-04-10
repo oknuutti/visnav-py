@@ -689,6 +689,7 @@ class Asteroid(ABC):
         self.render_smooth_faces = False    # when rendering shape model, smooth faces instead of angular ones
         self.real_shape_model = None        # loaded at overriding class __init__
         self.real_sc_ast_vertices = None
+        self.reflmod_params = None
 
         self.real_position = None       # transient, loaded from image metadata at iotools.lblloader
         

@@ -10,8 +10,8 @@ from moderngl.ext.obj import Obj
 from algo import tools
 from algo.image import ImageProc
 from iotools.objloader import ShapeModel
-from missions.didymos import DidymosSystemModel
-from missions.rosetta import RosettaSystemModel
+from missions.didymos import DidymosSystemModel, DidymosPrimary
+from missions.rosetta import RosettaSystemModel, ChuryumovGerasimenko
 
 
 class RenderEngine:
@@ -20,53 +20,41 @@ class RenderEngine:
     (
         REFLMOD_LAMBERT,
         REFLMOD_LUNAR_LAMBERT,
-        REFLMOD_HAPKE,   ## NOTE : DOES NOT SEEM TO WORK AS IMPOSSIBLE TO GET THE "HIGHLIGHTS"
+        REFLMOD_HAPKE,
     ) = range(3)
 
     REFLMOD_PARAMS = {
         REFLMOD_LAMBERT: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-
-        # Lunar-Lambert coefficients were fitted using iotools/approx-lunar-lambert.py
-        REFLMOD_LUNAR_LAMBERT: [1.00000e+00, -7.4364e-03, 4.0259e-05, -2.2650e-06, 2.1524e-08, -5.7964e-11, 7.8620e-01, 0, 0, 0],
-        # REFLMOD_LUNAR_LAMBERT: [1, -0.019, 2.42e-4, -1.46e-6, 0, 0, 1, 0, 0, 0],  # old values used
-
-        # Details for from book by Hapke, 2012, "Theory of Reflectance and Emittance Spectroscopy"
-        # NOTE : DOES NOT SEEM TO WORK AS IMPOSSIBLE TO GET THE "HIGHLIGHTS"
-
-        REFLMOD_HAPKE: [
-            # J, brightness scaling
-            268.81,
-
-            # th_p, average surface slope (deg), effective roughness, theta hat sub p
-            25.368,
-
-            # w, single scattering albedo (w, omega, SSA), range 0-1
-            0.0520,
-
-            # b, SPPF asymmetry parameter (sometimes g?),
-            #   if single-term HG, range is [-1, 1], from backscattering to isotropic to forward scattering
-            #   if two-term HG (c>0), range is [0, 1], from isotropic to scattering in a single direction
-            0.13925,
-
-            # c, second HG term for a more complex SPPF. Range [0, 1], from forward scattering to backward scattering.
-            0.98003,
-
-            # B_SH0, or B0, amplitude of shadow-hiding opposition effect (shoe). If zero, dont use.
-            0.98,
-
-            # hs, or h or k, angular half width of shoe
-            0.005,
-
-            # B_CB0, amplitude of coherent backscatter opposition effect (cboe). If zero, dont use.
-            0,
-
-            # hc, angular half width of cboe
-            0.005,
-
-            # extra mode selection, first bit: use K or not
-            0,
-        ],
+        REFLMOD_LUNAR_LAMBERT: ChuryumovGerasimenko.LUNAR_LAMBERT_PARAMS,
+        REFLMOD_HAPKE: ChuryumovGerasimenko.HAPKE_PARAMS,
     }
+
+    # phase angle (g) range: np.linspace(0, 180, 19)
+    # roughness angle range (th_p) range: np.linspace(0, 60, 7)
+    HAPKE_K = np.array([
+        [1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00],
+#        [1.00, 0.997, 0.991, 0.984, 0.974, 0.961, 0.943],  # g=2deg
+#        [1.00, 0.994, 0.981, 0.965, 0.944, 0.918, 0.881],  # g=5deg
+        [1.00, 0.991, 0.970, 0.943, 0.909, 0.866, 0.809],
+        [1.00, 0.988, 0.957, 0.914, 0.861, 0.797, 0.715],
+        [1.00, 0.986, 0.947, 0.892, 0.825, 0.744, 0.644],
+        [1.00, 0.984, 0.938, 0.871, 0.789, 0.692, 0.577],
+        [1.00, 0.982, 0.926, 0.846, 0.748, 0.635, 0.509],
+        [1.00, 0.979, 0.911, 0.814, 0.698, 0.570, 0.438],
+        [1.00, 0.974, 0.891, 0.772, 0.637, 0.499, 0.366],
+        [1.00, 0.968, 0.864, 0.719, 0.566, 0.423, 0.296],
+        [1.00, 0.959, 0.827, 0.654, 0.487, 0.346, 0.231],
+        [1.00, 0.946, 0.777, 0.575, 0.403, 0.273, 0.175],
+        [1.00, 0.926, 0.708, 0.484, 0.320, 0.208, 0.130],
+        [1.00, 0.894, 0.617, 0.386, 0.243, 0.153, 0.094],
+        [1.00, 0.840, 0.503, 0.290, 0.175, 0.107, 0.064],
+        [1.00, 0.747, 0.374, 0.201, 0.117, 0.070, 0.041],
+        [1.00, 0.590, 0.244, 0.123, 0.069, 0.040, 0.023],
+        [1.00, 0.366, 0.127, 0.060, 0.032, 0.018, 0.010],
+        [1.00, 0.128, 0.037, 0.016, 0.0085, 0.0047, 0.0026],
+        [1.00, 0, 0, 0, 0, 0, 0],
+    ]).T
+
 
     def __init__(self, view_width, view_height, antialias_samples=0):
         if RenderEngine._ctx is None:
@@ -231,6 +219,12 @@ class RenderEngine:
         self._prog['reflection_model'].value = reflection
         self._prog['model_coefs'].value = RenderEngine.REFLMOD_PARAMS[reflection]
         self._prog['shadows'].value = False
+        if reflection == RenderEngine.REFLMOD_HAPKE and RenderEngine.REFLMOD_PARAMS[reflection][9] % 2 > 0:
+            hapke_K = self._ctx.texture((7, 19), 1, data=RenderEngine.HAPKE_K.T.astype('float32').tobytes(), alignment=1, dtype='f4')
+            hapke_K.build_mipmaps()
+            hapke_K.use(1)
+            self._prog['hapke_K'].value = 1
+
 
     def _render_shadowmap(self, obj_idxs, rel_rot_q, light_v):
         # shadows following http://www.opengl-tutorial.org/intermediate-tutorials/tutorial-16-shadow-mapping/
@@ -333,7 +327,7 @@ if __name__ == '__main__':
     import cv2
 #    sm = DidymosSystemModel(use_narrow_cam=False)
     sm = RosettaSystemModel()
-    re = RenderEngine(sm.cam.width, sm.cam.height)
+    re = RenderEngine(sm.cam.width//2, sm.cam.height//2)
 
     if False:
         #obj_idx = re.load_object(sm.asteroid.hires_target_model_file)
@@ -356,17 +350,22 @@ if __name__ == '__main__':
             cv2.waitKey()
 
     elif True:
+        RenderEngine.REFLMOD_PARAMS[RenderEngine.REFLMOD_HAPKE] = DidymosPrimary.HAPKE_PARAMS
+        RenderEngine.REFLMOD_PARAMS[RenderEngine.REFLMOD_LUNAR_LAMBERT] = DidymosPrimary.LUNAR_LAMBERT_PARAMS
         imgs = ()
-        for i, hapke in enumerate((True, True, False)):
-            model = RenderEngine.REFLMOD_HAPKE if hapke else RenderEngine.REFLMOD_LUNAR_LAMBERT
-            if hapke and i == 0:
-                RenderEngine.REFLMOD_PARAMS[model][5:7] = [.98, 0.005]
-            if hapke and i == 1:
-                RenderEngine.REFLMOD_PARAMS[model][5] = 0
-            pos = [0, 0, -sm.min_med_distance*0.8*2]
-            light = np.array([0, 0, -1])
-            image = re.render(obj_idx, pos, q ** 5, tools.normalize_v(light), get_depth=False, reflection=model)
-            imgs += (image,)
+        for th in np.linspace(math.radians(120), 0, 6):
+            imgs_j = ()
+            for j, hapke in enumerate((True, True, False)):
+                model = RenderEngine.REFLMOD_HAPKE if hapke else RenderEngine.REFLMOD_LUNAR_LAMBERT
+                if hapke and j == 0:
+                    RenderEngine.REFLMOD_PARAMS[model][9] = 0
+                if hapke and j == 1:
+                    RenderEngine.REFLMOD_PARAMS[model][9] = 1
+                pos = [0, 0, -sm.min_med_distance*1.6]
+                light = tools.q_times_v(tools.ypr_to_q(th, 0, 0), np.array([0, 0, -1]))
+                image = re.render(obj_idx, pos, q ** 5, tools.normalize_v(light), get_depth=False, reflection=model)
+                imgs_j += (image,)
+            imgs += (np.vstack(imgs_j),)
 
         #cv2.imshow('depth', np.clip((sm.min_med_distance+sm.asteroid.mean_radius - depth)/5, 0, 1))
         cv2.imshow('images', np.hstack(imgs))

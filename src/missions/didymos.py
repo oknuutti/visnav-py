@@ -86,6 +86,49 @@ class DidymosSystemModel(SystemModel):
 
 
 class DidymosPrimary(Asteroid):
+    # based on itokawa, Tatsumi et al 2018
+    # "Regolith Properties on the S-Type Asteroid Itokawa Estimated from Photometrical Measurements"
+    HAPKE_PARAMS = [
+        # J, brightness scaling
+        15,
+
+        # th_p, average surface slope (deg), effective roughness, theta hat sub p
+        40,
+
+        # w, single scattering albedo (w, omega, SSA), range 0-1
+        0.57,
+
+        # b, SPPF asymmetry parameter (sometimes g?),
+        #   if single-term HG, range is [-1, 1], from backscattering to isotropic to forward scattering
+        #   if two-term HG (c>0), range is [0, 1], from isotropic to scattering in a single direction
+        0.35,
+
+        # c, second HG term for a more complex SPPF. Range [0, 1], from forward scattering to backward scattering.
+        0.56,
+
+        # B_SH0, or B0, amplitude of shadow-hiding opposition effect (shoe). If zero, dont use.
+        0.98,
+
+        # hs, or h or k, angular half width of shoe (rad)
+        math.radians(0.05),
+
+        # B_CB0, amplitude of coherent backscatter opposition effect (cboe). If zero, dont use.
+        0,
+
+        # hc, angular half width of cboe
+        0.005,
+
+        # extra mode selection, first bit: use K or not
+        0,
+    ]
+
+    # fitted to above hapke params using approx-lunar-lambert.py: match_ll_with_hapke
+    LUNAR_LAMBERT_PARAMS = [
+        1.0,
+        -3.2261e-02, 8.4991e-05, 1.4809e-06, -7.7885e-09, 8.7950e-12, 7.7132e-01,
+        0, 0, 0
+    ]
+
     def __init__(self, hi_res_shape_model=False):
         super(DidymosPrimary, self).__init__()
         self.name = 'Didymos Primary'
@@ -108,6 +151,11 @@ class DidymosPrimary(Asteroid):
         self.real_shape_model = objloader.ShapeModel(
             fname=self.hires_target_model_file if hi_res_shape_model else self.target_model_file)
         self.render_smooth_faces = False if hi_res_shape_model else True
+
+        self.reflmod_params = {
+            1: DidymosPrimary.LUNAR_LAMBERT_PARAMS, # REFLMOD_LUNAR_LAMBERT
+            2: DidymosPrimary.HAPKE_PARAMS, # REFLMOD_HAPKE
+        }
 
         # for cross section, assume spherical object
         self.max_radius = 420      # in meters, maximum extent of object from asteroid frame coordinate origin
@@ -168,6 +216,11 @@ class DidymosSecondary(Asteroid):
         self.real_shape_model = objloader.ShapeModel(
             fname=self.hires_target_model_file if hi_res_shape_model else self.target_model_file)
         self.render_smooth_faces = False if hi_res_shape_model else True
+
+        self.reflmod_params = {
+            1: DidymosPrimary.LUNAR_LAMBERT_PARAMS, # REFLMOD_LUNAR_LAMBERT
+            2: DidymosPrimary.HAPKE_PARAMS, # REFLMOD_HAPKE
+        }
 
         # for cross section, assume spherical object
         self.max_radius = 85      # in meters, maximum extent of object from asteroid frame coordinate origin
