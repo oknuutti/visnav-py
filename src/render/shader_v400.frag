@@ -6,7 +6,7 @@
 
 in vec3 vertexPosition_viewFrame;
 in vec3 vertexNormal_viewFrame;
-//in vec2 texCoords; // aka albedo?
+in vec2 texCoords;
 in vec3 vertexPosition_shadowFrame;
 
 out vec4 fragColor;
@@ -15,7 +15,9 @@ uniform vec3 lightDirection_viewFrame; // assume is normalized to length 1
 uniform float brightness_coef; // 0.4 seemed good
 uniform int reflection_model;  // 0: lambertian, 1: lunar-lambert, 2: hapke
 uniform float model_coefs[10];
-uniform bool shadows;
+uniform bool use_texture;
+uniform bool use_shadows;
+uniform sampler2D texture_map;
 uniform sampler2D shadow_map;
 uniform sampler2D hapke_K;
 
@@ -23,10 +25,15 @@ void main()
 {
     vec3 normal = normalize(vertexNormal_viewFrame);
     float cos_incidence = clamp(dot(normal, lightDirection_viewFrame), 0.0, 1.0);  // mu0 in hapke
+    //float debug = 1;
     float radiance = 1;
-    // * texture(texture_diffuse1, texCoords).rgb;
 
-    if(shadows) {
+    if (use_texture) {
+        // monochromatic textures for now only
+        radiance *= texture(texture_map, texCoords).r;
+    }
+
+    if(use_shadows) {
         float bias = clamp(0.02*tan(acos(cos_incidence)), 0, 0.01);
 //        radiance = texture(shadow_map,
 //                vec3(vertexPosition_shadowFrame.xy,
@@ -76,8 +83,6 @@ void main()
                 // Details for mu0_eff, mu_eff, K and S from book by Hapke, 2012,
                 //      "Theory of Reflectance and Emittance Spectroscopy", chapter 12
 
-                // ## NOTE : DOES NOT SEEM TO WORK AS IMPOSSIBLE TO GET THE "HIGHLIGHTS"
-                // ######################################################################
                 float J = model_coefs[0]; 		// 600, brightness scaling
                 float th_p = radians(model_coefs[1]); 	// 19, average surface slope, effective roughness, theta hat sub p
                 float w  = model_coefs[2];   	// 0.052, single scattering albedo (w, omega, SSA)
@@ -180,4 +185,5 @@ void main()
     }
 
     fragColor = vec4(radiance * vec3(1, 1, 1), 1);
+    //fragColor = vec4(debug * vec3(1, 1, 1), 1);
 }

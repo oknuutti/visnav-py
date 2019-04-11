@@ -18,6 +18,12 @@ class RenderEngine:
     _ctx = None
 
     (
+        _LOC_TEXTURE,
+        _LOC_SHADOW_MAP,
+        _LOC_HAPKE_K,
+    ) = range(3)
+
+    (
         REFLMOD_LAMBERT,
         REFLMOD_LUNAR_LAMBERT,
         REFLMOD_HAPKE,
@@ -81,6 +87,7 @@ class RenderEngine:
         self._objs = []
         self._s_objs = []
         self._raw_objs = []
+        self._textures = []
         self._persp_mx = None
         self._view_mx = np.identity(4)
         self._model_mx = None
@@ -131,20 +138,22 @@ class RenderEngine:
 
         if isinstance(object, ShapeModel):
             if smooth:
-                verts, norms, faces = object.export_smooth_faces()
+                verts, tex, norms, faces = object.export_smooth_faces()
             else:
-                verts, norms, faces = object.export_angular_faces()
+                verts, tex, norms, faces = object.export_angular_faces()
 
-            vertex_data = Obj(verts, tuple(), norms, faces)
+            vertex_data = Obj(verts, tex, norms, faces)
+            texture_data = object.load_texture()
 
         assert vertex_data is not None, 'wrong object type'
 
-        # texture_image = Image.open('data/wood.jpg')
-        # texture = ctx.texture(texture_image.size, 3, texture_image.tobytes())
-        # texture.build_mipmaps()
+        texture = None
+        if texture_data is not None:
+            texture = self._ctx.texture(texture_data.T.shape, 1, np.flipud(texture_data).tobytes())
+            texture.build_mipmaps()
 
-        vbo = self._ctx.buffer(vertex_data.pack('vx vy vz nx ny nz'))
-        obj = self._ctx.simple_vertex_array(self._prog, vbo, 'vertexPosition_modelFrame', 'vertexNormal_modelFrame')
+        vbo = self._ctx.buffer(vertex_data.pack('vx vy vz nx ny nz tx ty'))
+        obj = self._ctx.simple_vertex_array(self._prog, vbo, 'vertexPosition_modelFrame', 'vertexNormal_modelFrame', 'aTexCoords')
 
         s_vbo = self._ctx.buffer(vertex_data.pack('vx vy vz'))
         s_obj = self._ctx.simple_vertex_array(self._shadow_prog, s_vbo, 'vertexPosition_modelFrame')
@@ -152,10 +161,12 @@ class RenderEngine:
             self._objs.append(obj)
             self._s_objs.append(s_obj)
             self._raw_objs.append(vertex_data)
+            self._textures.append(texture)
         else:
             self._objs[obj_idx] = obj
             self._s_objs[obj_idx] = s_obj
             self._raw_objs[obj_idx] = vertex_data
+            self._textures[obj_idx] = texture
 
         return len(self._objs)-1
 
@@ -174,12 +185,15 @@ class RenderEngine:
         self._ctx.front_face = 'ccw'  # cull back faces
         self._ctx.clear(0, 0, 0, float('inf'))
         if shadows:
-            self._shadow_map.build_mipmaps()
-            self._shadow_map.use(0)
-            self._prog['shadow_map'].value = 0
+            self._shadow_map.use(RenderEngine._LOC_SHADOW_MAP)
+            self._prog['shadow_map'].value = RenderEngine._LOC_SHADOW_MAP
 
         for i in obj_idxs:
-            # self.textures[i].use()
+            use_texture = self._textures[i] is not None
+            self._prog['use_texture'].value = use_texture
+            if use_texture:
+                self._textures[i].use(RenderEngine._LOC_TEXTURE)
+                self._prog['texture_map'].value = RenderEngine._LOC_TEXTURE
             self._objs[i].render()
 
         if self._samples > 0:
@@ -218,12 +232,11 @@ class RenderEngine:
         self._prog['lightDirection_viewFrame'].value = tuple(-light_v)  # already in view frame
         self._prog['reflection_model'].value = reflection
         self._prog['model_coefs'].value = RenderEngine.REFLMOD_PARAMS[reflection]
-        self._prog['shadows'].value = False
+        self._prog['use_shadows'].value = False
         if reflection == RenderEngine.REFLMOD_HAPKE and RenderEngine.REFLMOD_PARAMS[reflection][9] % 2 > 0:
             hapke_K = self._ctx.texture((7, 19), 1, data=RenderEngine.HAPKE_K.T.astype('float32').tobytes(), alignment=1, dtype='f4')
-            hapke_K.build_mipmaps()
-            hapke_K.use(1)
-            self._prog['hapke_K'].value = 1
+            hapke_K.use(RenderEngine._LOC_HAPKE_K)
+            self._prog['hapke_K'].value = RenderEngine._LOC_HAPKE_K
 
 
     def _render_shadowmap(self, obj_idxs, rel_rot_q, light_v):
@@ -263,7 +276,7 @@ class RenderEngine:
         b = self._bias_mx()
         shadow_mvp = b.dot(mvp)
         self._prog['shadow_mvp'].write(shadow_mvp.T.astype('float32').tobytes())
-        self._prog['shadows'].value = True
+        self._prog['use_shadows'].value = True
 
         if False:
             import cv2
@@ -325,24 +338,20 @@ class RenderEngine:
 if __name__ == '__main__':
     from settings import *
     import cv2
-#    sm = DidymosSystemModel(use_narrow_cam=False)
-    sm = RosettaSystemModel()
+    sm = DidymosSystemModel(use_narrow_cam=False)
+#    sm = RosettaSystemModel()
     re = RenderEngine(sm.cam.width//2, sm.cam.height//2)
-
-    if False:
-        #obj_idx = re.load_object(sm.asteroid.hires_target_model_file)
-        #obj_idx = re.load_object('../data/67p-17k.obj')
-        obj_idx = re.load_object('../data/67p-4k.obj')
-        #obj_idx = re.load_object('../data/67p-1k.obj')
-    else:
-        obj = ShapeModel(fname=os.path.join(BASE_DIR, 'data/test-ball.obj'))
-#        obj, _, _ = tools.apply_noise(obj, len_sc=SHAPE_MODEL_NOISE_LEN_SC,
-#                                         noise_lv=SHAPE_MODEL_NOISE_LV['hi'])
-        obj_idx = re.load_object(obj)
-
     re.set_frustum(sm.cam.x_fov, sm.cam.y_fov, sm.min_altitude*0.5, sm.max_distance)
 
-    q = tools.angleaxis_to_q((math.radians(10), 0, 0.5, 0.5))
+    #obj_idx = re.load_object('../data/67p-17k.obj')
+    #obj_idx = re.load_object('../data/67p-4k.obj')
+    obj_idx = re.load_object(sm.asteroid.hires_target_model_file)
+    #obj_idx = re.load_object(sm.asteroid.target_model_file)
+    #obj_idx = re.load_object(os.path.join(BASE_DIR, 'data/test-ball.obj'))
+
+    pos = [0, 0, -sm.min_med_distance * 1]
+    q = tools.angleaxis_to_q((math.radians(36), 0, 1, 0))
+
     if False:
         for i in range(36):
             image = re.render(obj_idx, [0, 0, -sm.min_med_distance*3], q**i, np.array([1, 0, 0])/math.sqrt(1), get_depth=False)
@@ -353,17 +362,20 @@ if __name__ == '__main__':
         RenderEngine.REFLMOD_PARAMS[RenderEngine.REFLMOD_HAPKE] = DidymosPrimary.HAPKE_PARAMS
         RenderEngine.REFLMOD_PARAMS[RenderEngine.REFLMOD_LUNAR_LAMBERT] = DidymosPrimary.LUNAR_LAMBERT_PARAMS
         imgs = ()
-        for th in np.linspace(math.radians(120), 0, 6):
+        i = 1
+        th = math.radians(40)
+        for i in range(4, 7):
+        #for th in np.linspace(math.radians(90), 0, 4):
             imgs_j = ()
-            for j, hapke in enumerate((True, True, False)):
+            for j, hapke in enumerate((True, False)):
                 model = RenderEngine.REFLMOD_HAPKE if hapke else RenderEngine.REFLMOD_LUNAR_LAMBERT
                 if hapke and j == 0:
-                    RenderEngine.REFLMOD_PARAMS[model][9] = 0
-                if hapke and j == 1:
                     RenderEngine.REFLMOD_PARAMS[model][9] = 1
-                pos = [0, 0, -sm.min_med_distance*1.6]
+                if hapke and j == 1:
+                    RenderEngine.REFLMOD_PARAMS[model][9] = 0
                 light = tools.q_times_v(tools.ypr_to_q(th, 0, 0), np.array([0, 0, -1]))
-                image = re.render(obj_idx, pos, q ** 5, tools.normalize_v(light), get_depth=False, reflection=model)
+                image = re.render(obj_idx, pos, q**i, tools.normalize_v(light), get_depth=False, reflection=model)
+                image = ImageProc.adjust_gamma(image, 1.8)
                 imgs_j += (image,)
             imgs += (np.vstack(imgs_j),)
 

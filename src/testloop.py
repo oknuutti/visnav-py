@@ -641,7 +641,7 @@ class TestLoop:
             ignore_worst = 99.87 if samples >= 2000 else 97.72
             prctls = (50, 84.13, 97.72) + ((99.87,) if samples >= 2000 else tuple())
             def calc_prctls(errs):
-                errs = errs[np.logical_not(np.isnan(errs))]
+                errs = np.array(errs)[np.logical_not(np.isnan(errs))]
                 lim = np.percentile(errs, ignore_worst)
                 errs = errs[errs < lim]
                 m = np.mean(errs)

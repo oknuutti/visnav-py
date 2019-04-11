@@ -136,8 +136,8 @@ class DidymosPrimary(Asteroid):
         self.image_db_path = None
 
         # use ryugu model for this, ryugu ~162m diameter, ryugu-big ~772m diameter (Didy2 & Didy1)
-        self.target_model_file = os.path.join(BASE_DIR, 'data/ryugu-big-lo-res.obj')
-        self.hires_target_model_file = os.path.join(BASE_DIR, 'data/ryugu-big-hi-res.obj')
+        self.target_model_file = os.path.join(BASE_DIR, 'data/ryugu+tex-d1-16k.obj')
+        self.hires_target_model_file = os.path.join(BASE_DIR, 'data/ryugu+tex-d1-98k.obj')
 
         self.constant_noise_shape_model = {
             '' : os.path.join(BASE_DIR, 'data/ryugu_baseline.nsm'),   # same as target_model_file but includes error estimate
@@ -207,8 +207,8 @@ class DidymosSecondary(Asteroid):
         self.image_db_path = None
 
         # use ryugu model for this, ryugu ~162m diameter, ryugu-big ~772m diameter (Didy2 & Didy1)
-        self.target_model_file = os.path.join(BASE_DIR, 'data/ryugu-lo-res.obj')
-        self.hires_target_model_file = os.path.join(BASE_DIR, 'data/ryugu-hi-res.obj')
+        self.target_model_file = os.path.join(BASE_DIR, 'data/ryugu+tex-d2-16k.obj')
+        self.hires_target_model_file = os.path.join(BASE_DIR, 'data/ryugu+tex-d2-98k.obj')
 
         self.sample_image_file = None
         self.sample_image_meta_file = None

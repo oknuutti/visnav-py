@@ -26,6 +26,8 @@ if __name__ == '__main__':
         quit()
 
     nofdb = True
+    only_synth = False
+    only_real = False
 
     setups = [
         "orb",
@@ -83,6 +85,10 @@ if __name__ == '__main__':
 
     if nofdb:
         setups = [s for s in setups if 'fdb' not in s]
+    if only_synth:
+        setups = [s for s in setups if 'real' not in s]
+    if only_real:
+        setups = [s for s in setups if 'real' in s]
     setups = {s: ([], []) for s in setups}
 
     # find most recent log files
@@ -126,6 +132,7 @@ if __name__ == '__main__':
     for s, (files, rdata) in setups.items():
         fname = mission+"-"+s+"-"+postfix+".log"
         data = np.array([r.split('\t') for r in rdata])
+        assert len(rdata)>0, 'No data for %s'%s
         assert len(data.shape) == 2, '%s: missing values at %s' % (s, np.where(np.array([len(d) for d in data]) == 2),)
 
         if len(data) > 0:
