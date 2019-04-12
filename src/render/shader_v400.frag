@@ -11,9 +11,9 @@ in vec3 vertexPosition_shadowFrame;
 
 out vec4 fragColor;
 
-uniform vec3 lightDirection_viewFrame; // assume is normalized to length 1
-uniform float brightness_coef; // 0.4 seemed good
-uniform int reflection_model;  // 0: lambertian, 1: lunar-lambert, 2: hapke
+uniform vec3 lightDirection_viewFrame;  // assume is normalized to length 1
+uniform float brightness_coef;          // 0.4 seemed good
+uniform int reflection_model;           // 0: lambertian, 1: lunar-lambert, 2: hapke
 uniform float model_coefs[10];
 uniform bool use_texture;
 uniform bool use_shadows;

@@ -2,6 +2,8 @@ import os
 import math
 import warnings
 
+import numpy as np
+
 from astropy.time import Time
 from astropy import constants as const
 from astropy import units
@@ -86,6 +88,9 @@ class DidymosSystemModel(SystemModel):
 
 
 class DidymosPrimary(Asteroid):
+    # from ast frame (axis: +y, up: +z) to spacecraft coords (axis: +x, up: +z)
+    ast2sc_q = np.quaternion(1, 1, 0, 0).normalized()
+
     # based on itokawa, Tatsumi et al 2018
     # "Regolith Properties on the S-Type Asteroid Itokawa Estimated from Photometrical Measurements"
     HAPKE_PARAMS = [
@@ -119,6 +124,8 @@ class DidymosPrimary(Asteroid):
         0.005,
 
         # extra mode selection, first bit: use K or not
+        # NOTE: K generally not in use as phase angle changes so little inside one image and exposure is adjusted to
+        #       increase overall brightness
         0,
     ]
 
@@ -140,9 +147,9 @@ class DidymosPrimary(Asteroid):
         self.hires_target_model_file = os.path.join(BASE_DIR, 'data/ryugu+tex-d1-98k.obj')
 
         self.constant_noise_shape_model = {
-            '' : os.path.join(BASE_DIR, 'data/ryugu_baseline.nsm'),   # same as target_model_file but includes error estimate
-            'lo': os.path.join(BASE_DIR, 'data/ryugu_lo_noise.nsm'),  # 1/3 the vertices
-            'hi': os.path.join(BASE_DIR, 'data/ryugu_hi_noise.nsm'),  # 1/10 the vertices
+            '' : os.path.join(BASE_DIR, 'data/ryugu+tex-d1-16k.nsm'),   # same as target_model_file but includes error estimate
+            'lo': os.path.join(BASE_DIR, 'data/ryugu+tex-d1-4k.nsm'),  # 1/3 the vertices
+            'hi': '', #os.path.join(BASE_DIR, 'data/ryugu+tex-d1-4k.nsm'),  # 1/10 the vertices
         }
 
         self.sample_image_file = None
@@ -200,6 +207,8 @@ class DidymosPrimary(Asteroid):
 
 
 class DidymosSecondary(Asteroid):
+    ast2sc_q = DidymosPrimary.ast2sc_q
+
     def __init__(self, hi_res_shape_model=False):
         super(DidymosSecondary, self).__init__()
         self.name = 'Didymos Secondary'
@@ -209,6 +218,12 @@ class DidymosSecondary(Asteroid):
         # use ryugu model for this, ryugu ~162m diameter, ryugu-big ~772m diameter (Didy2 & Didy1)
         self.target_model_file = os.path.join(BASE_DIR, 'data/ryugu+tex-d2-16k.obj')
         self.hires_target_model_file = os.path.join(BASE_DIR, 'data/ryugu+tex-d2-98k.obj')
+
+        self.constant_noise_shape_model = {
+            '' : os.path.join(BASE_DIR, 'data/ryugu+tex-d2-16k.nsm'),   # same as target_model_file but includes error estimate
+            'lo': os.path.join(BASE_DIR, 'data/ryugu+tex-d2-4k.nsm'),  # 1/3 the vertices
+            'hi': '', #os.path.join(BASE_DIR, 'data/ryugu+tex-d2-4k.nsm'),  # 1/10 the vertices
+        }
 
         self.sample_image_file = None
         self.sample_image_meta_file = None

@@ -69,13 +69,14 @@ class AlgorithmBase:
     def load_obj(self, obj_file, obj_idx=None):
         self.obj_idx = self.render_engine.load_object(obj_file, obj_idx)
 
-    def render(self, center=False, depth=False, discretize_tol=False, shadows=False, gamma=1.8,
-               reflection=RenderEngine.REFLMOD_LUNAR_LAMBERT):
+    def render(self, center=False, depth=False, discretize_tol=False, shadows=True, textures=True,
+               gamma=1.8, reflection=RenderEngine.REFLMOD_LUNAR_LAMBERT):
         assert not discretize_tol, 'discretize_tol deprecated at render function'
 
         rel_pos_v, rel_rot_q, light_v = self._render_params(discretize_tol, center)
         RenderEngine.REFLMOD_PARAMS[reflection] = self.system_model.asteroid.reflmod_params[reflection]
-        res = self.render_engine.render(self.obj_idx, rel_pos_v, rel_rot_q, light_v, get_depth=depth, shadows=shadows,
+        res = self.render_engine.render(self.obj_idx, rel_pos_v, rel_rot_q, light_v, get_depth=depth,
+                                        shadows=shadows, textures=textures,
                                         gamma=gamma, reflection=reflection)
         if depth:
             img, dth = res

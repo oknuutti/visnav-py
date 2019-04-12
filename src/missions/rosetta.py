@@ -1,6 +1,8 @@
 import math
 import warnings
 
+import numpy as np
+
 from astropy.time import Time
 from astropy import constants as const
 from astropy import units
@@ -39,6 +41,8 @@ class RosettaSystemModel(SystemModel):
 
 
 class ChuryumovGerasimenko(Asteroid):
+    # from ast frame (axis: +z, up: -x) to opengl (axis -z, up: +y)
+    ast2sc_q = np.quaternion(1, 0, 1, 0).normalized()
 
     # Details for from book by Hapke, 2012, "Theory of Reflectance and Emittance Spectroscopy"
     # w (SSA), B_SH0 and hs set based on Table 4 (model: Hapke 2012) from Fornasier et al (2015)
@@ -74,7 +78,9 @@ class ChuryumovGerasimenko(Asteroid):
         0.005,
 
         # extra mode selection, first bit: use K or not
-        1,
+        # NOTE: K generally not in use as phase angle changes so little inside one image and exposure is adjusted to
+        #       increase overall brightness
+        0,
     ]
 
     # Lunar-Lambert coefficients were fitted using iotools/approx-lunar-lambert.py

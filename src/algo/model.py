@@ -122,9 +122,6 @@ class SystemModel(ABC):
     # from sc cam frame (axis: +x, up: +z) to opengl (axis -z, up: +y)
     sc2gl_q = np.quaternion(0.5, 0.5, -0.5, -0.5)
 
-    # from ast frame (axis: +z, up: -x) to opengl (axis -z, up: +y)
-    ast2gl_q = np.quaternion(1, 0, 0, -1).normalized()
-    
     # from opencv cam frame (axis: +z, up: -y) to opengl (axis -z, up: +y)
     cv2gl_q = np.quaternion(0, 1, 0, 0)
     
@@ -325,8 +322,8 @@ class SystemModel(ABC):
 
     @asteroid_q.setter
     def asteroid_q(self, new_q):
-        sc2ast_q = SystemModel.frm_conv_q(SystemModel.SPACECRAFT_FRAME, SystemModel.ASTEROID_FRAME)
         ast = self.asteroid
+        sc2ast_q = SystemModel.frm_conv_q(SystemModel.SPACECRAFT_FRAME, SystemModel.ASTEROID_FRAME, ast=ast)
 
         ast.axis_latitude, ast.axis_longitude, new_theta = tools.q_to_ypr(new_q * sc2ast_q)
 
@@ -593,12 +590,12 @@ class SystemModel(ABC):
             self.asteroid.real_sc_ast_vertices = self.sc_asteroid_vertices(real=True)
     
     @staticmethod
-    def frm_conv_q(fsrc, fdst):
+    def frm_conv_q(fsrc, fdst, ast=None):
         fqm = {
             SystemModel.OPENGL_FRAME:np.quaternion(1,0,0,0),
             SystemModel.OPENCV_FRAME:SystemModel.cv2gl_q,
             SystemModel.SPACECRAFT_FRAME:SystemModel.sc2gl_q,
-            SystemModel.ASTEROID_FRAME:SystemModel.ast2gl_q,
+            SystemModel.ASTEROID_FRAME: None if ast is None else ast.ast2sc_q*SystemModel.sc2gl_q,
         }
         return fqm[fsrc]*fqm[fdst].conj()
 
@@ -676,6 +673,8 @@ class Camera:
 
 
 class Asteroid(ABC):
+    ast2sc_q = None  # depends on the shape model coordinate frame
+
     def __init__(self, *args, shape_model=None, **kwargs):
         super(Asteroid, self).__init__()
 
@@ -760,9 +759,8 @@ class Asteroid(ABC):
         # TODO: use precession info
 
         # orient z axis correctly, rotate around it
-        ast2sc_q = SystemModel.frm_conv_q(SystemModel.ASTEROID_FRAME, SystemModel.SPACECRAFT_FRAME)
         return tools.ypr_to_q(self.axis_latitude, self.axis_longitude, theta) \
-               * ast2sc_q
+               * self.ast2sc_q
 
     def position(self, timestamp):
         if self.real_position is not None:

@@ -85,6 +85,7 @@ class KeypointAlgo(AlgorithmBase):
         self.MAX_SCENE_SCALE_STEPS = 5  # from mid range 64km to near range 16km (64/sqrt(2)**(5-1) => 16)
 
         self.RENDER_SHADOWS = True
+        self.RENDER_TEXTURES = True
 
 
     def solve_pnp(self, orig_sce_img, outfile, feat=ORB, use_feature_db=False, adjust_sc_rot = False,
@@ -294,8 +295,8 @@ class KeypointAlgo(AlgorithmBase):
         sm = self.system_model
         orig_z = sm.z_off.value
         sm.z_off.value = self._render_z
-        ref_img, depth = self.render(center=True, depth=True, shadows=self.RENDER_SHADOWS, reflection=
-                                     RenderEngine.REFLMOD_HAPKE)
+        ref_img, depth = self.render(center=True, depth=True, shadows=self.RENDER_SHADOWS, textures=self.RENDER_TEXTURES,
+                                     reflection=RenderEngine.REFLMOD_LUNAR_LAMBERT)
         sm.z_off.value = orig_z
 
         # scale to match scene image asteroid extent in pixels
