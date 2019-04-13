@@ -86,7 +86,7 @@ class ApiServer:
 
         date = datetime.fromtimestamp(time, pytz.utc)  # datetime.now()
         fname = os.path.join(self._logpath, date.isoformat()[:-6].replace(':', '')) + '.png'
-        cv2.imwrite(fname, img, [cv2.IMWRITE_PNG_COMPRESSION, 7])
+        cv2.imwrite(fname, img, [cv2.IMWRITE_PNG_COMPRESSION, 0])
 
         return fname
 
@@ -180,7 +180,7 @@ class ApiServer:
         result = (overlay * alpha + img * (1 - alpha)).astype('uint8')
 
         fout = fname[:-4] + '-res.png'
-        cv2.imwrite(fout, result, [cv2.IMWRITE_PNG_COMPRESSION, 7])
+        cv2.imwrite(fout, result, [cv2.IMWRITE_PNG_COMPRESSION, 0])
 
         return fout
 

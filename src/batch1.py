@@ -141,7 +141,8 @@ def run_batch(mission, full_method, count, est_real_ast_orient=False):
         #kwargs['scale_cam_img'] = True
         #kwargs['rotation_noise'] = False
 
-    tl = TestLoop(sm, far=(kwargs['method'] in ('centroid', 'keypoint+')), est_real_ast_orient=est_real_ast_orient)
+    tl = TestLoop(sm, far=(kwargs['method'] in ('centroid', 'keypoint+')),
+                  est_real_ast_orient=est_real_ast_orient, operation_zone_only=('didy' in mission))
 
     if sm.mission_id == 'rose':
         tl.enable_initial_location = False

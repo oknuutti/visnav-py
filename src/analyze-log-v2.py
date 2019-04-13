@@ -20,17 +20,17 @@ from settings import *
 
 # distance, phase angle (180-elong), ini err, visibility
 EASY_LIMITS = {
-    'synth': ((50, 250), (20, 100), (0, 10), (80, 100)),
-    'real': ((50, 250), (20, 100), (0, 10), (80, 100)),
+    'synth': [(50, 250), (20, 100), (0, 10), (80, 100)],
+    'real': [(50, 250), (20, 100), (0, 10), (80, 100)],
 }
 PLOT_LIMITS = {
     'errs' : {
-        'synth': ((35, 400), (0, 140), (0, 15), (20, 120)),
-        'real':  ((35, 300), (20, 140), (0, 15), (20, 120)),
+        'synth': [(35, 400), (0, 140), (0, 15), (20, 120)],
+        'real':  [(35, 300), (20, 140), (0, 15), (20, 120)],
     },
     'fails': {
-        'synth': ((0, 400), (0, 180), (0, 15), (0, 120)),
-        'real': ((0, 300), (0, 180), (0, 15), (0, 120)),
+        'synth': [(0, 400), (0, 180), (0, 15), (0, 120)],
+        'real': [(0, 300), (0, 180), (0, 15), (0, 120)],
     },
 }
 MAX_ROTATION_ERR = 7
@@ -204,12 +204,12 @@ if __name__ == '__main__':
         postfix = re.match(r'^\w+$', sys.argv[2])[0]
         mode = re.match(r'^fails|errs$', sys.argv[3])[0]
         image_type = re.match(r'^synth|real|both$', sys.argv[4])[0]
-        sm_quality = re.match(r'^1k|4k|17k$', sys.argv[5])[0]
+        sm_quality = re.match(r'^1k|4k|16k|17k$', sys.argv[5])[0]
         single_algo = False if len(sys.argv) < 7 else re.match('^'+'|'.join(algos)+'$', sys.argv[6])[0]
         assert not (mode == 'fails' and image_type == 'both'), 'Can only show both real and synth results when ' \
                                                              + 'plotting error curves, not for the failure scatter plot'
     except:
-        print(('USAGE: python %s <mission> <logfile-postfix> <fails|errs> <synth|real|both> <1k|4k|17k> ['+'|'.join(algos)+']') % (sys.argv[0],))
+        print(('USAGE: python %s <mission> <logfile-postfix> <fails|errs> <synth|real|both> <1k|4k|16k|17k> ['+'|'.join(algos)+']') % (sys.argv[0],))
         quit()
 
     predictors = (
@@ -233,6 +233,11 @@ if __name__ == '__main__':
     algos = (single_algo,) if single_algo else algos
 
     sm = get_system_model(mission)
+    if isinstance(sm, DidymosSystemModel):
+        EASY_LIMITS['synth'][0] = (sm.min_med_distance, sm.max_med_distance)
+        PLOT_LIMITS['errs']['synth'][0] = (sm.min_distance, sm.max_distance)
+        PLOT_LIMITS['fails']['synth'][0] = (0, sm.max_distance)
+
     data = {'real': {a: None for a in algos}, 'synth': {a: None for a in algos}}
     for fname in os.listdir(LOG_DIR):
         m = re.match(mission + r"-([^-]+)-" + postfix + r"\.log", fname)
@@ -245,7 +250,7 @@ if __name__ == '__main__':
             ok = algo and (
                 sm_quality == '1k' and 'smn_' in specs
                 or sm_quality == '4k' and 'smn' in specs
-                or sm_quality == '17k' and ('smn' not in specs and 'smn_' not in specs)
+                or sm_quality in ('17k','16k') and ('smn' not in specs and 'smn_' not in specs)
             ) and (
                 image_type == 'both'
                 or image_type == 'real' and 'real' in specs
@@ -319,11 +324,17 @@ if __name__ == '__main__':
                 lbl = ' p50'
 
             # reset color cycling
-            if old_itype != itype:
+            if old_itype is not None and old_itype != itype:
                 ax.set_prop_cycle(None)
             old_itype = itype
 
-            ax.plot(xt, yt, '--' if image_type == 'both' and itype == 'real' else '-', label=', '.join((itype, algo))+lbl)
+            if single_algo:
+                ax.plot(xt, yt, '-', label=', '.join((itype, algo)) + lbl)
+                if ti != -1:
+                    xt2, yt2 = windowed_percentile(X[I, pi], yr, 100, window=0.2, p_lim=95, plot_xlim=xlim)
+                    ax.plot(xt2, yt2, '--', color='C1', label=', '.join((itype, algo)) + ' p95')
+            else:
+                ax.plot(xt, yt, '--' if image_type == 'both' and itype == 'real' else '-', label=', '.join((itype, algo))+lbl)
 
             ax.set_xlim(*PLOT_LIMITS[mode][itype][pi])
             if not single_algo:
@@ -346,16 +357,18 @@ if __name__ == '__main__':
 
             # operation zones for didymos mission
             if mission[:4] == 'didy' and pi == 0:
-                ax.set_xticks(np.arange(0.1, 10.5, 0.2))
-                if i==0:
-                    ax.axvspan(1.1, 1.3, facecolor='cyan', alpha=0.3)
+                min_dist, max_dist = np.min(X[I, pi]), np.max(X[I, pi])
+                interval = 0.2
+                ax.set_xticks(np.arange(min_dist//interval*interval, (max_dist//interval + 1)*interval, 0.2))
+                if mission[:5] == 'didy1' and min_dist <= 3.8 and max_dist >= 4.2:
                     ax.axvspan(3.8, 4.2, facecolor='orange', alpha=0.3)
-                elif i==1:
-                    ax.axvspan(0.15, 0.3, facecolor='pink', alpha=0.5)
-                    ax.axvspan(1.1, 1.3, facecolor='cyan', alpha=0.3)
-                elif i==3:
-                    ax.axvspan(1.1, 1.3, facecolor='cyan', alpha=0.3)
+                if mission[:5] == 'didy2' and min_dist <= 2.8 and max_dist >= 5.2:
                     ax.axvspan(2.8, 5.2, facecolor='orange', alpha=0.3)
+                if min_dist <= 1.1 and max_dist >= 1.3:
+                    ax.axvspan(1.1, 1.3, facecolor='cyan', alpha=0.3)
+                if min_dist <= 0.15 and max_dist >= 0.3:
+                    ax.axvspan(0.15, 0.3, facecolor='pink', alpha=0.5)
+
 
             # zones where there's samples missing for real rosetta images
             if mission[:4] == 'rose' and image_type == 'real' and pi == 0:
@@ -382,9 +395,11 @@ if __name__ == '__main__':
 
         titles = ['ORB', 'AKAZE', 'SURF', 'SIFT']
         fig, axs = plt.subplots(len(pairs), len(algos), figsize=(30, 19.5))
+        axs = np.atleast_2d(axs).T
         for r, axr in enumerate(axs):
-            axr[0].get_shared_y_axes().join(*axs[r])
-        axs.flatten()[0].get_shared_x_axes().join(*axs.flatten()[1:])
+            if len(axr) > 1:
+                axr[0].get_shared_y_axes().join(*axs[r])
+        axs.flatten()[0].get_shared_x_axes().join(*axs.flatten())
 
         count = len(algos) * len(pairs)
         j = 0
@@ -394,7 +409,7 @@ if __name__ == '__main__':
             j += 1
             try:
                 X, Y, yc, labels = data[image_type][algo]
-            except TypeError:
+            except TypeError as e:
                 assert False, 'No log file found for: %s %s %s %s %s' % (mission, postfix, itype, algo, sm_quality)
 
             ax = axs[ip][ia]
@@ -417,12 +432,25 @@ if __name__ == '__main__':
             tools.hover_annotate(fig, ax, line, np.array(labels)[I])
 #            ax.set_xlim(*PLOT_LIMITS[mode][image_type][i0])
 #            ax.set_ylim(*PLOT_LIMITS[mode][image_type][i1])
-
             # ax.set_xbound(xmin, xmax)
             # ax.set_ybound(ymin, ymax)
 
+            # operation zones for didymos mission
+            if mission[:4] == 'didy' and i0 == 0:
+                min_dist, max_dist = np.min(X[I, i0]), np.max(X[I, i0])
+                interval = 0.2
+                ax.set_xticks(np.arange(min_dist//interval*interval, (max_dist//interval + 1)*interval, 0.2))
+                if mission[:5] == 'didy1' and min_dist <= 3.8 and max_dist >= 4.2:
+                    ax.axvspan(3.8, 4.2, facecolor='orange', alpha=0.3)
+                if mission[:5] == 'didy2' and min_dist <= 2.8 and max_dist >= 5.2:
+                    ax.axvspan(2.8, 5.2, facecolor='orange', alpha=0.3)
+                if min_dist <= 1.1 and max_dist >= 1.3:
+                    ax.axvspan(1.1, 1.3, facecolor='cyan', alpha=0.3)
+                if min_dist <= 0.15 and max_dist >= 0.3:
+                    ax.axvspan(0.15, 0.3, facecolor='pink', alpha=0.5)
+
             if ip == 0:
-                ax.set_title(titles[ia], fontsize=30)
+                ax.set_title(algo.upper() if single_algo else titles[ia], fontsize=30)
                 # col, row = j%c, j//c
                 # fig.text(0.26+col*0.5, 0.96-row*0.5, titles[j], fontsize=30, horizontalalignment='center')
 

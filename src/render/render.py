@@ -410,8 +410,9 @@ if __name__ == '__main__':
     if True:
         obj_idx = re.load_object(os.path.join(BASE_DIR, 'data/ryugu+tex-d1-100.obj'), wireframe=True)
         q = tools.angleaxis_to_q((math.radians(3), 0, 1, 0))
+        pos = [0, 0, -4]
         for i in range(60):
-            image = re.render_wireframe(obj_idx, pos, q ** i, (0,1,0))
+            image = re.render_wireframe(obj_idx, pos, q ** i, (0, 1, 0))
             cv2.imshow('fs', image)
             cv2.waitKey()
         quit()

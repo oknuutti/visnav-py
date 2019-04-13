@@ -3,6 +3,7 @@ import sys
 
 import cv2
 
+from algo import tools
 from settings import *
 
 if __name__ == '__main__':
@@ -30,7 +31,8 @@ if __name__ == '__main__':
     h, w, c = img0.shape
     writer = cv2.VideoWriter(target_file, cv2.VideoWriter_fourcc(*'DIVX'), framerate, (w, h))
     try:
-        for f in img_files:
+        for i, f in enumerate(img_files):
+            tools.show_progress(len(img_files), i)
             img = cv2.imread(os.path.join(folder, f), cv2.IMREAD_COLOR)
             writer.write(img)
     finally:

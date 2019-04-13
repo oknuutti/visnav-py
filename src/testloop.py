@@ -37,13 +37,14 @@ from settings import *
 class TestLoop:
     UNIFORM_DISTANCE_GENERATION = True
 
-    def __init__(self, system_model, far=False, est_real_ast_orient=False):
+    def __init__(self, system_model, far=False, est_real_ast_orient=False, operation_zone_only=False):
         self.system_model = system_model
         self.est_real_ast_orient = est_real_ast_orient
 
         self.exit = False
         self._algorithm_finished = None
         self._smooth_faces = self.system_model.asteroid.render_smooth_faces
+        self._opzone_only = operation_zone_only
 
         file_prefix_mod = ''
         if far and self.system_model.max_distance > self.system_model.max_med_distance:
@@ -87,7 +88,17 @@ class TestLoop:
         self._unknown_sc_pos = (0, 0, -self.system_model.min_med_distance)
         self._noise_lateral = 0.3     # sd in deg, 0.298 calculated using centroid algo AND 5 deg fov
         self._noise_altitude = 0.10   # 0.131 when calculated using centroid algo AND 5 deg fov
-        
+
+        if self._opzone_only:
+            # uniform, max dev in deg
+            self._noise_ast_rot_axis = 5         # 0 - 5 deg uniform
+            self._noise_ast_phase_shift = 5 / 2  # 95% within 5 deg
+
+            # s/c orientation noise, gaussian sd in deg
+            self._noise_sco_lat = 1 / 2  # 95% within 1 deg
+            self._noise_sco_lon = 1 / 2  # 95% within 1 deg
+            self._noise_sco_rot = 1 / 2  # 95% within 1 deg
+
         # transients
         self._smn_cache_id = ''
         self._iter_dir = None
@@ -244,9 +255,10 @@ class TestLoop:
             sc_ast_v = -np.array([sc_ex, sc_ey, sc_ez])
 
             # sc orientation: uniform, center of asteroid at edge of screen
-            if False:
-                # always get at least 50% of astroid in view
-                da = np.random.uniform(0, rad(min(sm.cam.x_fov, sm.cam.y_fov)/2))
+            if self._opzone_only:
+                # always get at least 50% of astroid in view, 5% of the time maximum offset angle
+                max_angle = rad(min(sm.cam.x_fov, sm.cam.y_fov)/2)
+                da = min(max_angle, np.abs(np.random.normal(0, max_angle/2)))
                 dd = np.random.uniform(0, 2*math.pi)
                 sco_lat = wrap_rads(-sc_lat + da*math.sin(dd))
                 sco_lon = wrap_rads(math.pi + sc_lon + da*math.cos(dd))

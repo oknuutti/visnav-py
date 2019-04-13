@@ -39,7 +39,7 @@ class DidymosSystemModel(SystemModel):
             if use_narrow_cam:
                 mission_id = 'didy1n'
                 limits = (
-                    6.0,    # min_distance in km
+                    3.8,    # min_distance in km
                     7.0,    # min_med_distance in km
                     10.5,   # max_med_distance in km
                     10.5,   # max_distance in km
@@ -51,8 +51,8 @@ class DidymosSystemModel(SystemModel):
                 limits = (
                     1.1,  # min_distance in km
                     1.1,  # min_med_distance in km
-                    10.5,  # max_med_distance in km
-                    10.5,  # max_distance in km
+                    6.0,  # max_med_distance in km
+                    6.0,  # max_distance in km
                     45,  # min_elong in deg
                     min_time,  # min time instant
                 )
