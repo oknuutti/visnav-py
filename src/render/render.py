@@ -407,7 +407,7 @@ if __name__ == '__main__':
     #obj_idx = re.load_object('../data/67p-17k.obj')
     #obj_idx = re.load_object('../data/67p-4k.obj')
     #obj_idx = re.load_object('../data/ryugu+tex-d1-4k.obj')
-    if True:
+    if False:
         obj_idx = re.load_object(os.path.join(BASE_DIR, 'data/ryugu+tex-d1-100.obj'), wireframe=True)
         q = tools.angleaxis_to_q((math.radians(3), 0, 1, 0))
         pos = [0, 0, -4]
@@ -417,7 +417,8 @@ if __name__ == '__main__':
             cv2.waitKey()
         quit()
     else:
-        obj_idx = re.load_object(sm.asteroid.target_model_file)
+        #obj_idx = re.load_object(sm.asteroid.target_model_file)
+        obj_idx = re.load_object(sm.asteroid.hires_target_model_file)
     #obj_idx = re.load_object(sm.asteroid.target_model_file)
     #obj_idx = re.load_object(os.path.join(BASE_DIR, 'data/test-ball.obj'))
 
@@ -434,15 +435,15 @@ if __name__ == '__main__':
         imgs = ()
         i = 1
         th = math.radians(100)
-        for i in range(4, 7):
-        #for th in np.linspace(math.radians(90), 0, 4):
+        #for i in range(4, 7):
+        for th in np.linspace(math.radians(90), 0, 4):
             imgs_j = ()
-            for j, hapke in enumerate((True, True)):
+            for j, hapke in enumerate((True, False)):
                 model = RenderEngine.REFLMOD_HAPKE if hapke else RenderEngine.REFLMOD_LUNAR_LAMBERT
                 if hapke and j == 0:
-                    RenderEngine.REFLMOD_PARAMS[model][9] = 1
-                if hapke and j == 1:
                     RenderEngine.REFLMOD_PARAMS[model][9] = 0
+                if hapke and j == 1:
+                    RenderEngine.REFLMOD_PARAMS[model][9] = 1
                 light = tools.q_times_v(tools.ypr_to_q(th, 0, 0), np.array([0, 0, -1]))
                 image = re.render(obj_idx, pos, q**i, tools.normalize_v(light), get_depth=False, reflection=model)
                 image = ImageProc.adjust_gamma(image, 1.8)

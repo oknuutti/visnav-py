@@ -89,7 +89,7 @@ def read_data(sm, logfile, predictors, target):
 
     # for regression
     yr = np.array(y)
-    yr[np.isnan(yr)] = FAIL_ERRS[target]   # np.nanmax(yr)
+    #yr[np.isnan(yr)] = FAIL_ERRS[target]   # np.nanmax(yr)
 
     if target == 'rot error':
         yr = np.abs(tools.wrap_degs(yr))
@@ -147,7 +147,8 @@ if __name__ == '__main__':
     if mode in ('1d', 'easy'):
         n_groups = 6
         #yr = yr/1000
-        idxs = (0, 1, 2, 3)
+        #idxs = (0, 1, 2, 3)
+        idxs = (2,)
         for idx in idxs:
             fig, axs = plt.subplots(len(data), 1, figsize=(20, 18), sharex=True)
             for i, (logfile, X, yc, yr, labels) in enumerate(data):
@@ -241,6 +242,8 @@ if __name__ == '__main__':
                     elif i==1:
                         ax.axvspan(0.15, 0.3, facecolor='pink', alpha=0.5)
                         ax.axvspan(1.1, 1.3, facecolor='cyan', alpha=0.3)
+                    elif i == 2:
+                        ax.axvspan(3.8, 4.2, facecolor='orange', alpha=0.3)
                     elif i==3:
                         ax.axvspan(1.1, 1.3, facecolor='cyan', alpha=0.3)
                         ax.axvspan(2.8, 5.2, facecolor='orange', alpha=0.3)

@@ -40,7 +40,7 @@ class DidymosSystemModel(SystemModel):
                 mission_id = 'didy1n'
                 limits = (
                     3.8,    # min_distance in km
-                    7.0,    # min_med_distance in km
+                    7.5,    # min_med_distance in km
                     10.5,   # max_med_distance in km
                     10.5,   # max_distance in km
                     45,     # min_elong in deg
@@ -61,7 +61,7 @@ class DidymosSystemModel(SystemModel):
                 mission_id = 'didy2n'
                 limits = (
                     1.1,    # min_distance in km
-                    1.4,    # min_med_distance in km
+                    1.5,    # min_med_distance in km
                     5.3,   # max_med_distance in km
                     5.3,   # max_distance in km
                     45,     # min_elong in deg

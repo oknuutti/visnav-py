@@ -28,6 +28,8 @@ if __name__ == '__main__':
     nofdb = True
     only_synth = False
     only_real = False
+    only_akaze = False
+    only_least_noise = False
 
     setups = [
         "orb",
@@ -89,6 +91,11 @@ if __name__ == '__main__':
         setups = [s for s in setups if 'real' not in s]
     if only_real:
         setups = [s for s in setups if 'real' in s]
+    if only_akaze:
+        setups = [s for s in setups if 'akaze' in s]
+    if only_least_noise:
+        setups = [s for s in setups if 'smn' not in s]
+
     setups = {s: ([], []) for s in setups}
 
     # find most recent log files

@@ -37,6 +37,7 @@ class ApiServer:
 
         self._mission = mission
         self._sm = sm = get_system_model(mission, hires)
+        self._target_d2 = '2' in mission
         self._renderer = RenderEngine(sm.cam.width, sm.cam.height, antialias_samples=16 if hires else 0)
         self._renderer.set_frustum(sm.cam.x_fov, sm.cam.y_fov, sm.min_altitude*.1, sm.max_distance)
         if isinstance(sm, DidymosSystemModel):
@@ -99,10 +100,9 @@ class ApiServer:
         self._sm.asteroid.real_position = np.array(params[1][:3])
 
         # set asteroid orientation
-        TargetD2 = False
         d1, d2 = self.asteroids
-        ast = d2 if TargetD2 else d1
-        init_ast_q = np.quaternion(*(params[3 if TargetD2 else 2][3:7])).normalized()
+        ast = d2 if self._target_d2 else d1
+        init_ast_q = np.quaternion(*(params[3 if self._target_d2 else 2][3:7])).normalized()
         self._sm.asteroid_q = init_ast_q * ast.ast2sc_q.conj()
 
         # set spacecraft orientation
@@ -110,7 +110,7 @@ class ApiServer:
         self._sm.spacecraft_q = init_sc_q
 
         # sc-asteroid relative location
-        ast_v = np.array(params[3 if TargetD2 else 2][:3])*0.001   # relative to barycenter
+        ast_v = np.array(params[3 if self._target_d2 else 2][:3])*0.001   # relative to barycenter
         sc_v = np.array(params[4][:3])*0.001  # relative to barycenter
         init_sc_pos = tools.q_times_v(SystemModel.sc2gl_q.conj() * init_sc_q.conj(), ast_v - sc_v)
         self._sm.spacecraft_pos = init_sc_pos
@@ -125,18 +125,18 @@ class ApiServer:
         if err is None:
             # resulting sc-ast relative orientation
             sc_q = self._sm.spacecraft_q
-            rel_q = sc_q.conj() * self._sm.asteroid_q
+            rel_q = sc_q.conj() * self._sm.asteroid_q * ast.ast2sc_q
 
             # sc-ast vector in meters
-            rel_v = tools.q_times_v(sc_q, np.array(self._sm.spacecraft_pos)*1000)
+            rel_v = tools.q_times_v(sc_q * SystemModel.sc2gl_q, np.array(self._sm.spacecraft_pos)*1000)
 
             # collect to one result list
-            result = [list(rel_v), list(quaternion.as_float_array(rel_q*ast.ast2sc_q))]
+            result = [list(rel_v), list(quaternion.as_float_array(rel_q))]
 
         # render a result image
         self._render_result([fname]
             + [list(np.array(self._sm.spacecraft_pos)*1000) + (result[1] if err is None else [float('nan')]*4)]
-            + [list(np.array(init_sc_pos)*1000) + list(quaternion.as_float_array(init_sc_q.conj() * init_ast_q))], TargetD2)
+            + [list(np.array(init_sc_pos)*1000) + list(quaternion.as_float_array(init_sc_q.conj() * init_ast_q))])
 
         if err is not None:
             raise err
@@ -144,7 +144,7 @@ class ApiServer:
         # send back in json format
         return json.dumps(result)
 
-    def _render_result(self, params, TargetD2):
+    def _render_result(self, params):
         fname = params[0]
         img = cv2.imread(fname, cv2.IMREAD_COLOR)
 
@@ -162,7 +162,7 @@ class ApiServer:
         # sc_v = np.array(params[2][:3])
         # sc_q = np.quaternion(*(params[2][3:7]))
         #
-        ast_idx = 1 if TargetD2 else 0
+        ast_idx = 1 if self._target_d2 else 0
         ast = self.asteroids[ast_idx]
         # q = SystemModel.sc2gl_q.conj() * sc_q.conj()
         # rel_rot_q = q * ast_q * ast.ast2sc_q.conj()
