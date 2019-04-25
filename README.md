@@ -5,7 +5,7 @@ Visual Navigation Algorithms and Test Framework
 Clone the repository to a desired place, cd to it.
 
 Dependencies are listed at `visnav.env`, which is a conda env file. At least on Windows, to get the necessary Python environment ready, it's easiest to use [Anaconda](https://www.continuum.io/downloads). After possibly installing Anaconda, run from command prompt:
-* `conda env create -f=visnav.env`
+* `conda env create -f=environment.yaml`
 * `activate visnav`
 
 Download data files from my [Google Drive folder](https://drive.google.com/drive/folders/0ByfhOdRO_959X05jTWczWGxLUkk?usp=sharing)
