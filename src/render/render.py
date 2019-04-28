@@ -221,7 +221,7 @@ class RenderEngine:
 
         obj_idxs = [obj_idxs] if isinstance(obj_idxs, int) else obj_idxs
         rel_pos_v = np.array(rel_pos_v).reshape((-1, 3))
-        rel_rot_q = np.array(rel_rot_q).reshape((-1, 1))
+        rel_rot_q = np.array(rel_rot_q).reshape((-1,))
         light_v = np.array(light_v)
         assert len(obj_idxs) == rel_pos_v.shape[0] == rel_rot_q.shape[0], 'obj_idxs, rel_pos_v and rel_rot_q dimensions dont match'
 
@@ -238,7 +238,7 @@ class RenderEngine:
             self._prog['shadow_map'].value = RenderEngine._LOC_SHADOW_MAP
 
         for i, obj_idx in enumerate(obj_idxs):
-            self._set_params(obj_idx, rel_pos_v[i], rel_rot_q[i], light_v, textures, reflection)
+            self._set_params(obj_idx, rel_pos_v[i], rel_rot_q[i], light_v, shadows, textures, reflection)
             self._objs[obj_idx].render()
 
         if self._samples > 0:
@@ -264,7 +264,7 @@ class RenderEngine:
 
         return (data, depth) if get_depth else data
 
-    def _set_params(self, obj_idx, rel_pos_v, rel_rot_q, light_v=None, use_textures=True,
+    def _set_params(self, obj_idx, rel_pos_v, rel_rot_q, light_v=None, use_shadows=True, use_textures=True,
                     reflection=REFLMOD_LUNAR_LAMBERT, for_wireframe=False):
 
         self._model_mx = np.identity(4)
@@ -287,7 +287,7 @@ class RenderEngine:
             prog['lightDirection_viewFrame'].value = tuple(-light_v)  # already in view frame
             prog['reflection_model'].value = reflection
             prog['model_coefs'].value = RenderEngine.REFLMOD_PARAMS[reflection]
-            prog['use_shadows'].value = False
+            prog['use_shadows'].value = use_shadows
             if reflection == RenderEngine.REFLMOD_HAPKE and RenderEngine.REFLMOD_PARAMS[reflection][9] % 2 > 0:
                 hapke_K = self._ctx.texture((7, 19), 1, data=RenderEngine.HAPKE_K.T.astype('float32').tobytes(), alignment=1, dtype='f4')
                 hapke_K.use(RenderEngine._LOC_HAPKE_K)

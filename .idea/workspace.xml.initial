@@ -2,7 +2,9 @@
 <project version="4">
   <component name="ChangeListManager">
     <list default="true" id="cd5702a0-1deb-4437-8f30-8ee08a2f50d6" name="Default" comment="">
+      <change beforePath="$PROJECT_DIR$/.hgignore" beforeDir="false" afterPath="$PROJECT_DIR$/.hgignore" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/algo/base.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/algo/base.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/render/render.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/render/render.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/visnav.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/visnav.py" afterDir="false" />
     </list>
     <option name="EXCLUDED_CONVERTED_TO_IGNORED" value="true" />
@@ -45,8 +47,8 @@
       <file pinned="false" current-in-tab="true">
         <entry file="file://$PROJECT_DIR$/src/render/render.py">
           <provider selected="true" editor-type-id="text-editor">
-            <state relative-caret-position="123">
-              <caret line="295" lean-forward="true" selection-start-line="295" selection-end-line="295" />
+            <state relative-caret-position="451">
+              <caret line="268" lean-forward="true" selection-start-line="268" selection-end-line="268" />
               <folding>
                 <element signature="e#0#11#0" expanded="true" />
               </folding>
@@ -55,51 +57,15 @@
         </entry>
       </file>
       <file pinned="false" current-in-tab="false">
-        <entry file="file://$PROJECT_DIR$/src/render/shader_v400.vert">
-          <provider selected="true" editor-type-id="text-editor">
-            <state relative-caret-position="34">
-              <caret line="2" selection-start-line="2" selection-end-line="2" selection-end-column="20" />
-            </state>
-          </provider>
-        </entry>
-      </file>
-      <file pinned="false" current-in-tab="false">
-        <entry file="file://$PROJECT_DIR$/src/render/shader_v400.frag">
-          <provider selected="true" editor-type-id="text-editor">
-            <state relative-caret-position="136">
-              <caret line="20" column="25" lean-forward="true" selection-start-line="20" selection-start-column="25" selection-end-line="20" selection-end-column="25" />
-            </state>
-          </provider>
-        </entry>
-      </file>
-      <file pinned="false" current-in-tab="false">
-        <entry file="file://$PROJECT_DIR$/src/render/shadow.frag">
-          <provider selected="true" editor-type-id="text-editor">
-            <state relative-caret-position="170">
-              <caret line="10" column="1" selection-start-line="10" selection-start-column="1" selection-end-line="10" selection-end-column="1" />
-            </state>
-          </provider>
-        </entry>
-      </file>
-      <file pinned="false" current-in-tab="false">
-        <entry file="file://$PROJECT_DIR$/src/render/shadow.vert">
-          <provider selected="true" editor-type-id="text-editor">
-            <state relative-caret-position="119">
-              <caret line="7" column="1" lean-forward="true" selection-start-line="7" selection-start-column="1" selection-end-line="7" selection-end-column="1" />
-            </state>
-          </provider>
-        </entry>
-      </file>
-      <file pinned="false" current-in-tab="false">
         <entry file="file://$PROJECT_DIR$/src/algo/base.py">
           <provider selected="true" editor-type-id="text-editor">
-            <state relative-caret-position="-1109">
-              <caret line="77" column="37" selection-start-line="77" selection-start-column="37" selection-end-line="77" selection-end-column="37" />
+            <state relative-caret-position="1508">
+              <caret line="163" lean-forward="true" selection-start-line="163" selection-end-line="163" />
               <folding>
                 <element signature="e#0#11#0" expanded="true" />
-                <marker date="1556314818775" expanded="true" signature="298:302" ph="..." />
-                <marker date="1556314818775" expanded="true" signature="2385:2479" ph="..." />
-                <marker date="1556314818775" expanded="true" signature="2522:2601" ph="..." />
+                <marker date="1556435979626" expanded="true" signature="298:302" ph="..." />
+                <marker date="1556435979626" expanded="true" signature="2385:2479" ph="..." />
+                <marker date="1556435979626" expanded="true" signature="2522:2601" ph="..." />
               </folding>
             </state>
           </provider>
@@ -141,7 +107,6 @@
   </component>
   <component name="FindInProjectRecents">
     <findStrings>
-      <find>gamma</find>
       <find>render</find>
       <find>sc_pos</find>
       <find>RENDER</find>
@@ -171,6 +136,7 @@
       <find>real</find>
       <find>norm</find>
       <find>_LOC_SHADOW_MAP</find>
+      <find>_set_params</find>
     </findStrings>
     <replaceStrings>
       <replace>&quot;&gt;</replace>
@@ -236,20 +202,20 @@
         <option value="$PROJECT_DIR$/src/merge-logs.py" />
         <option value="$PROJECT_DIR$/src/analyze-log.py" />
         <option value="$PROJECT_DIR$/src/api-server.py" />
-        <option value="$PROJECT_DIR$/src/render/render.py" />
         <option value="$PROJECT_DIR$/src/__init__.py" />
         <option value="$PROJECT_DIR$/src/missions/didymos.py" />
         <option value="$PROJECT_DIR$/src/visnav.py" />
-        <option value="$PROJECT_DIR$/src/algo/base.py" />
         <option value="$PROJECT_DIR$/src/render/shadow.vert" />
+        <option value="$PROJECT_DIR$/src/algo/base.py" />
+        <option value="$PROJECT_DIR$/src/render/render.py" />
       </list>
     </option>
   </component>
-  <component name="ProjectFrameBounds">
-    <option name="x" value="335" />
+  <component name="ProjectFrameBounds" extendedState="6">
+    <option name="x" value="155" />
     <option name="y" value="25" />
-    <option name="width" value="3515" />
-    <option name="height" value="2040" />
+    <option name="width" value="3460" />
+    <option name="height" value="2075" />
   </component>
   <component name="ProjectView">
     <navigator proportions="" version="1">
@@ -259,6 +225,21 @@
       <pane id="ProjectPane">
         <subPane>
           <expand>
+            <path>
+              <item name="visnav" type="b2602c69:ProjectViewProjectNode" />
+              <item name="visnav" type="462c0819:PsiDirectoryNode" />
+            </path>
+            <path>
+              <item name="visnav" type="b2602c69:ProjectViewProjectNode" />
+              <item name="visnav" type="462c0819:PsiDirectoryNode" />
+              <item name="src" type="462c0819:PsiDirectoryNode" />
+            </path>
+            <path>
+              <item name="visnav" type="b2602c69:ProjectViewProjectNode" />
+              <item name="visnav" type="462c0819:PsiDirectoryNode" />
+              <item name="src" type="462c0819:PsiDirectoryNode" />
+              <item name="render" type="462c0819:PsiDirectoryNode" />
+            </path>
             <path>
               <item name="visnav" type="b2602c69:ProjectViewProjectNode" />
               <item name="External Libraries" type="cb654da1:ExternalLibrariesNode" />
@@ -955,18 +936,19 @@
     </todo-panel>
   </component>
   <component name="ToolWindowManager">
-    <frame x="134" y="10" width="1406" height="816" extended-state="0" />
+    <frame x="-6" y="-6" width="1549" height="846" extended-state="6" />
+    <editor active="true" />
     <layout>
-      <window_info active="true" content_ui="combo" id="Project" order="0" sideWeight="0.5862832" visible="true" weight="0.22813411" />
+      <window_info active="true" content_ui="combo" id="Project" order="0" sideWeight="0.5862832" visible="true" weight="0.22772278" />
       <window_info id="Structure" order="1" sideWeight="0.41371682" side_tool="true" weight="0.21645021" />
       <window_info id="Favorites" order="2" sideWeight="0.2877292" side_tool="true" weight="0.22335026" />
       <window_info anchor="bottom" id="SVN Repositories" order="0" weight="0.32952926" />
       <window_info anchor="bottom" id="Message" order="1" />
       <window_info anchor="bottom" id="Find" order="2" weight="0.328125" />
-      <window_info anchor="bottom" id="Run" order="3" visible="true" weight="0.19941776" />
+      <window_info anchor="bottom" id="Run" order="3" weight="0.19665273" />
       <window_info anchor="bottom" id="Cvs" order="4" weight="0.25" />
       <window_info anchor="bottom" id="Inspection" order="5" weight="0.4" />
-      <window_info anchor="bottom" id="Debug" order="6" sideWeight="0.49867898" weight="0.56623" />
+      <window_info anchor="bottom" id="Debug" order="6" sideWeight="0.49867898" weight="0.35633802" />
       <window_info anchor="bottom" id="TODO" order="7" weight="0.32738096" />
       <window_info anchor="bottom" id="Terminal" order="8" weight="0.32440478" />
       <window_info anchor="bottom" id="Event Log" order="9" sideWeight="0.501321" side_tool="true" weight="0.24022347" />
@@ -977,6 +959,27 @@
       <window_info anchor="right" content_ui="combo" id="Hierarchy" order="2" weight="0.24728261" />
       <window_info anchor="right" x="0" y="0" width="250" height="640" id="Documentation" order="3" side_tool="true" weight="0.13492064" />
     </layout>
+    <layout-to-restore>
+      <window_info content_ui="combo" id="Project" order="0" sideWeight="0.5862832" weight="0.22813411" />
+      <window_info id="Structure" order="1" sideWeight="0.41371682" side_tool="true" weight="0.21645021" />
+      <window_info id="Favorites" order="2" sideWeight="0.2877292" side_tool="true" weight="0.22335026" />
+      <window_info anchor="bottom" id="SVN Repositories" order="0" weight="0.32952926" />
+      <window_info anchor="bottom" id="Message" order="1" />
+      <window_info anchor="bottom" id="Find" order="2" weight="0.328125" />
+      <window_info anchor="bottom" id="Run" order="3" visible="true" weight="0.19665273" />
+      <window_info anchor="bottom" id="Cvs" order="4" weight="0.25" />
+      <window_info anchor="bottom" id="Inspection" order="5" weight="0.4" />
+      <window_info anchor="bottom" id="Debug" order="6" sideWeight="0.49867898" weight="0.35633802" />
+      <window_info anchor="bottom" id="TODO" order="7" weight="0.32738096" />
+      <window_info anchor="bottom" id="Terminal" order="8" weight="0.32440478" />
+      <window_info anchor="bottom" id="Event Log" order="9" sideWeight="0.501321" side_tool="true" weight="0.24022347" />
+      <window_info anchor="bottom" id="Version Control" order="10" sideWeight="0.49880287" weight="0.10953058" />
+      <window_info anchor="bottom" id="Python Console" order="11" weight="0.24363233" />
+      <window_info anchor="right" id="Commander" order="0" weight="0.4" />
+      <window_info anchor="right" id="Ant Build" order="1" weight="0.25" />
+      <window_info anchor="right" content_ui="combo" id="Hierarchy" order="2" weight="0.24728261" />
+      <window_info anchor="right" x="0" y="0" width="250" height="640" id="Documentation" order="3" side_tool="true" weight="0.13492064" />
+    </layout-to-restore>
   </component>
   <component name="XDebuggerManager">
     <breakpoint-manager>
@@ -1015,11 +1018,6 @@
           <url>file://$PROJECT_DIR$/src/testloop.py</url>
           <line>260</line>
           <option name="timeStamp" value="218" />
-        </line-breakpoint>
-        <line-breakpoint enabled="true" suspend="THREAD" type="python-line">
-          <url>file://$PROJECT_DIR$/src/render/render.py</url>
-          <line>236</line>
-          <option name="timeStamp" value="220" />
         </line-breakpoint>
       </breakpoints>
     </breakpoint-manager>
@@ -1427,19 +1425,6 @@
         </state>
       </provider>
     </entry>
-    <entry file="file://$PROJECT_DIR$/src/algo/base.py">
-      <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="-1109">
-          <caret line="77" column="37" selection-start-line="77" selection-start-column="37" selection-end-line="77" selection-end-column="37" />
-          <folding>
-            <element signature="e#0#11#0" expanded="true" />
-            <marker date="1556314818775" expanded="true" signature="298:302" ph="..." />
-            <marker date="1556314818775" expanded="true" signature="2385:2479" ph="..." />
-            <marker date="1556314818775" expanded="true" signature="2522:2601" ph="..." />
-          </folding>
-        </state>
-      </provider>
-    </entry>
     <entry file="file://$PROJECT_DIR$/src/render/shadow.frag">
       <provider selected="true" editor-type-id="text-editor">
         <state relative-caret-position="170">
@@ -1468,10 +1453,23 @@
         </state>
       </provider>
     </entry>
+    <entry file="file://$PROJECT_DIR$/src/algo/base.py">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="1508">
+          <caret line="163" lean-forward="true" selection-start-line="163" selection-end-line="163" />
+          <folding>
+            <element signature="e#0#11#0" expanded="true" />
+            <marker date="1556435979626" expanded="true" signature="298:302" ph="..." />
+            <marker date="1556435979626" expanded="true" signature="2385:2479" ph="..." />
+            <marker date="1556435979626" expanded="true" signature="2522:2601" ph="..." />
+          </folding>
+        </state>
+      </provider>
+    </entry>
     <entry file="file://$PROJECT_DIR$/src/render/render.py">
       <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="123">
-          <caret line="295" lean-forward="true" selection-start-line="295" selection-end-line="295" />
+        <state relative-caret-position="451">
+          <caret line="268" lean-forward="true" selection-start-line="268" selection-end-line="268" />
           <folding>
             <element signature="e#0#11#0" expanded="true" />
           </folding>

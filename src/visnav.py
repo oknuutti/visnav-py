@@ -61,8 +61,8 @@ class Window(QWidget):
     
     def __init__(self):
         super(Window, self).__init__()
-        sm = RosettaSystemModel(rosetta_batch='mtp024')
-        sample_img = 'ROS_CAM1_20151220T004012'
+        sm = RosettaSystemModel(rosetta_batch='mtp006')
+        sample_img = 'ROS_CAM1_20140822T020718'
         sm.asteroid.sample_image_file = os.path.join(sm.asteroid.image_db_path, sample_img + '_P.png')
         sm.asteroid.sample_image_meta_file = os.path.join(sm.asteroid.image_db_path, sample_img + '.LBL')
 
@@ -663,7 +663,7 @@ class GLWidget(QOpenGLWidget):
         else:
             sm = rsm
         
-        for triangle, norm in sm.faces:
+        for triangle, norm, tx in sm.faces:
             self.triangle(sm.vertices[triangle[0]],
                           sm.vertices[triangle[1]],
                           sm.vertices[triangle[2]],

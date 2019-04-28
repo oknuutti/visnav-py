@@ -140,11 +140,16 @@ if __name__ == '__main__':
     #img = 'ROS_CAM1_20150606T213002'  # 017
 
     lblloader.load_image_meta(os.path.join(sm.asteroid.image_db_path, img + '.LBL'), sm)
-    sm.swap_values_with_real_vals()
+    sm.swap_values_with_real_vals(),
 
+    textures = True
     if False:
         re = RenderEngine(sm.cam.width, sm.cam.height, antialias_samples=16)
-        obj_idx = re.load_object(sm.asteroid.hires_target_model_file, smooth=False)
+        #obj_idx = re.load_object(sm.asteroid.hires_target_model_file, smooth=False)
+        #obj_idx = re.load_object(os.path.join(BASE_DIR, 'data/original-shapemodels/CSHP_DV_130_01_HIRES_00200.obj'), smooth=False)
+        #obj_idx = re.load_object(os.path.join(BASE_DIR, 'data/original-shapemodels/dissolved_5deg_1.obj'), smooth=False)
+        obj_idx = re.load_object(os.path.join(BASE_DIR, 'data/original-shapemodels/67P_C-G_shape_model_MALMER_2015_11_20-in-km.obj'), smooth=False)
+        textures = False
     else:
         re = RenderEngine(sm.cam.width, sm.cam.height, antialias_samples=0)
         obj_idx = re.load_object(sm.asteroid.target_model_file, smooth=False)
@@ -157,18 +162,32 @@ if __name__ == '__main__':
 
     real = cv2.imread(os.path.join(sm.asteroid.image_db_path, img + '_P.png'), cv2.IMREAD_GRAYSCALE)
 
-    synth = []
-#    for i, p in enumerate(np.linspace(0, 30, 11)):
-#        if hapke:
-            # L, th, w, b (scattering anisotropy), c (scattering direction from forward to back)
-#            RenderEngine.REFLMOD_PARAMS[model][0:5] = [600, p, 0.052, -0.42, 0]
-    synth.append(cv2.resize(ab.render(shadows=True, reflection=model), size))
-#        if not hapke:
-#            break
-    #synth[0] = ImageProc.equalize_brightness(synth[0], real, percentile=99.999, image_gamma=1.8)
-    #synth[0] = ImageProc.adjust_gamma(synth[0], 1/4)
-    #real = ImageProc.adjust_gamma(real, 1/4)
+    if True:
+        synth = []
+    #    for i, p in enumerate(np.linspace(0, 30, 11)):
+    #        if hapke:
+                # L, th, w, b (scattering anisotropy), c (scattering direction from forward to back)
+    #            RenderEngine.REFLMOD_PARAMS[model][0:5] = [600, p, 0.052, -0.42, 0]
+        synth.append(cv2.resize(ab.render(shadows=True, textures=textures, reflection=model), size))
+    #        if not hapke:
+    #            break
+        #synth[0] = ImageProc.equalize_brightness(synth[0], real, percentile=99.999, image_gamma=1.8)
+        #synth[0] = ImageProc.adjust_gamma(synth[0], 1/4)
+        #real = ImageProc.adjust_gamma(real, 1/4)
 
-    real = cv2.resize(real, size)
-    cv2.imshow('real vs synthetic', np.concatenate([real, 255*np.ones((real.shape[0], 1), dtype='uint8')] + synth, axis=1))
-    cv2.waitKey()
+        real = cv2.resize(real, size)
+        cv2.imshow('real vs synthetic', np.concatenate([real, 255*np.ones((real.shape[0], 1), dtype='uint8')] + synth, axis=1))
+        cv2.waitKey()
+    else:
+        # try different light directions a fixed angle (d) away from default
+        d = 10
+        for a in np.linspace(0, 360 * 2, 36 * 2, endpoint=False):
+            lat, lon, r = tools.cartesian2spherical(*sm.asteroid.real_position)
+            qa = tools.ypr_to_q(lat, lon, 0)
+            qd = tools.ypr_to_q(0, 0, np.radians(a)) * tools.ypr_to_q(np.radians(d), 0, 0)
+            q = qa * qd * qa.conj()
+            sm.asteroid.real_position = tools.q_times_v(q, sm.asteroid.real_position)
+            img = cv2.resize(ab.render(shadows=True, reflection=RenderEngine.REFLMOD_HAPKE), (1024, 1024))
+            cv2.imshow('s', img)
+            cv2.waitKey()
+        quit()
