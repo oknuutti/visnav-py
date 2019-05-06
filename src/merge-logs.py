@@ -123,7 +123,7 @@ if __name__ == '__main__':
                 if mission == 'rose':
                     m = re.match(r'^rose(\d{3})?-.*?$', fname)
                     batch = m[1] if m[1] else '006'
-                    offsets = np.cumsum([0, 718, 517, 393, 407, 487])
+                    offsets = np.cumsum([0, 718, 517, 391, 407, 487])
                     offset = offsets[['006', '007', '017', '024', '025', '026'].index(batch)]
                     prefix = batch + '-'
                 for line in fh.readlines():

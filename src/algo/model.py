@@ -683,6 +683,7 @@ class Asteroid(ABC):
         self.image_db_path = None
         self.target_model_file = None
         self.hires_target_model_file = None
+        self.hires_target_model_file_textures = False
 
         # shape model related
         self.render_smooth_faces = False    # when rendering shape model, smooth faces instead of angular ones

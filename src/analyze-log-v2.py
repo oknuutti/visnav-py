@@ -395,7 +395,7 @@ if __name__ == '__main__':
 
         titles = ['ORB', 'AKAZE', 'SURF', 'SIFT']
         fig, axs = plt.subplots(len(pairs), len(algos), figsize=(30, 19.5))
-        axs = np.atleast_2d(axs).T
+        axs = np.atleast_2d(axs)   # need .T if only one algo?
         for r, axr in enumerate(axs):
             if len(axr) > 1:
                 axr[0].get_shared_y_axes().join(*axs[r])

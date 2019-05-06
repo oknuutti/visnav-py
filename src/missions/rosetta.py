@@ -99,7 +99,17 @@ class ChuryumovGerasimenko(Asteroid):
         self.rosetta_batch = 'mtp006' if rosetta_batch == 'default' else rosetta_batch
         self.image_db_path = os.path.join(BASE_DIR, 'data/rosetta-'+self.rosetta_batch)
         self.target_model_file = os.path.join(BASE_DIR, 'data/67p-17k.obj')
-        self.hires_target_model_file = os.path.join(BASE_DIR, 'data/67p-83k-b.obj')
+
+        xtra_hires = os.path.join(BASE_DIR, 'data/original-shapemodels/67P_C-G_shape_model_MALMER_2015_11_20-in-km.obj')
+        if os.path.exists(xtra_hires):
+            self.hires_target_model_file = xtra_hires
+        else:
+            self.hires_target_model_file = os.path.join(BASE_DIR, 'data/67p-83k-b.obj')
+            print(('Using lower quality shape model for synthetic navcam '
+                + 'images as highest quality shape model not found: %s') % xtra_hires)
+
+        self.hires_target_model_file_textures = False
+
         self.render_smooth_faces = False
 
         self.reflmod_params = {

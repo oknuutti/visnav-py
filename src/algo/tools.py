@@ -743,14 +743,40 @@ def plot_quats(quats, conseq=True, wait=True):
         ax.set_prop_cycle('color', map(lambda c: '%f' % c, np.linspace(1, 0, len(quats))))
     for i, q in enumerate(quats):
         if q is not None:
-            w, *v1 = q_to_angleaxis(q)
-            v1 = normalize_v(np.array(v1))
+            lat, lon, _ = q_to_ypr(q)
+            v1 = spherical2cartesian(lat, lon, 1)
             v2 = (v1 + normalize_v(np.cross(np.cross(v1, np.array([0, 0, 1])), v1))*0.1)*0.85
             v2 = q_times_v(q, v2)
             ax.plot((0, v1[0], v2[0]), (0, v1[1], v2[1]), (0, v1[2], v2[2]))
 
     while(wait and not plt.waitforbuttonpress()):
         pass
+
+
+def plot_poses(poses, conseq=True, wait=True, arrow_len=1):
+    import matplotlib.pyplot as plt
+    from mpl_toolkits.mplot3d import Axes3D
+
+    fig = plt.figure()
+    ax = Axes3D(fig)
+    ax.set_xlabel('x')
+    ax.set_ylabel('y')
+    ax.set_zlabel('z')
+    if conseq:
+        plt.hsv()
+        #ax.set_prop_cycle('color', map(lambda c: '%f' % c, np.linspace(.7, 0, len(poses))))
+    for i, pose in enumerate(poses):
+        if pose is not None:
+            q = np.quaternion(*pose[3:])
+            lat, lon, _ = q_to_ypr(q)
+            v1 = spherical2cartesian(lat, lon, 1)*arrow_len
+            v2 = (v1 + normalize_v(np.cross(np.cross(v1, np.array([0, 0, 1])), v1))*0.1*arrow_len)*0.85
+            v2 = q_times_v(q, v2)
+            ax.plot((pose[0], v1[0], v2[0]), (pose[1], v1[1], v2[1]), (pose[2], v1[2], v2[2]))
+
+    while(wait and not plt.waitforbuttonpress()):
+        pass
+
 
 #
 # Not sure if unitbase_to_q works, haven't deleted just in case still need:

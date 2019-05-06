@@ -145,6 +145,7 @@ class DidymosPrimary(Asteroid):
         # use ryugu model for this, ryugu ~162m diameter, ryugu-big ~772m diameter (Didy2 & Didy1)
         self.target_model_file = os.path.join(BASE_DIR, 'data/ryugu+tex-d1-16k.obj')
         self.hires_target_model_file = os.path.join(BASE_DIR, 'data/ryugu+tex-d1-98k.obj')
+        self.hires_target_model_file_textures = True
 
         self.constant_noise_shape_model = {
             '' : os.path.join(BASE_DIR, 'data/ryugu+tex-d1-16k.nsm'),   # same as target_model_file but includes error estimate
