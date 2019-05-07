@@ -266,8 +266,8 @@ if __name__ == '__main__':
     if mode == 'errs':
         predictor_idxs = (0, 1, 2)
         plot_ymax = {
-            'synth' : (0.4, 10, 0.4, 2.5),
-            'real'  : (0.6, 13, 0.6, 3.5),
+            'synth' : (0.6, 15, 1.5, 3.5),
+            'real'  : (0.6, 15, 1.5, 3.5),
         }
         plot_ymax['both'] = plot_ymax['real']
         fig, axs = plt.subplots(len(targets) + 1, len(predictor_idxs), figsize=(20, 19.5))
