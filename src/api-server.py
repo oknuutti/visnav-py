@@ -82,8 +82,8 @@ class ApiServer:
         rel_pos_v = np.array([tools.q_times_v(q, d1_v - sc_v), tools.q_times_v(q, d2_v - sc_v)]) * 0.001
         light_v = tools.q_times_v(q, sun_ast_v)
 
-        img = TestLoop.render_navcam_image_static(self._sm, self._renderer, self._obj_idxs,
-                                                  rel_pos_v, rel_rot_q, light_v)
+        img = TestLoop.render_navcam_image_static(self._sm, self._renderer, self._obj_idxs, rel_pos_v, rel_rot_q, light_v,
+                                                  use_shadows=False, use_textures=True)
 
         date = datetime.fromtimestamp(time, pytz.utc)  # datetime.now()
         fname = os.path.join(self._logpath, date.isoformat()[:-6].replace(':', '')) + '.png'
