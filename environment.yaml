@@ -9,8 +9,8 @@ dependencies:
   - attrs=18.2.0
   - beautifulsoup4=4.7.1
   - blas=1.0
-  - ca-certificates=2018.11.29
-  - certifi=2018.11.29
+  - ca-certificates=2019.3.9
+  - certifi=2019.3.9
   - cffi=1.11.5
   - chardet=3.0.4
   - colorama=0.4.1
@@ -42,7 +42,7 @@ dependencies:
   - openblas=0.3.5
   - opencv=3.4.1
   - openmp=7.0.0
-  - openssl=1.0.2p
+  - openssl=1.0.2r
   - pip=18.1
   - pluggy=0.8.1
   - psutil=5.4.8
@@ -65,6 +65,7 @@ dependencies:
   - python-dateutil=2.7.5
   - pytz=2018.9
   - qt=5.6.2
+  - quaternion=2019.3.18.14.33.20
   - requests=2.21.0
   - scikit-learn=0.20.0
   - scipy=1.1.0
@@ -81,7 +82,6 @@ dependencies:
   - zlib=1.2.11
   - pip:
     - moderngl==5.5.0
-    - moderngl-ext-obj==1.0.0
+    - moderngl.ext.obj==1.0.0
     - multipledispatch==0.6.0
-    - numpy-quaternion==2019.1.18.17.1.7
 prefix: C:\ProgramData\Anaconda3\envs\visnav
