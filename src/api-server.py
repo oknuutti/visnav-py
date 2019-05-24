@@ -73,7 +73,7 @@ class ApiServer:
 
         # laser algo params
         self._laser_adj_loc_weight = 1
-        self._laser_meas_err_weight = 2
+        self._laser_meas_err_weight = 3
 
     @staticmethod
     def _parse_poses(params, offset):
@@ -127,11 +127,11 @@ class ApiServer:
 
         rel_rot_q = q * ast_q * ast.ast2sc_q.conj()
         rel_pos_v = tools.q_times_v(q, ast_v - sc_v)
-        r = ast.max_radius
+        max_r = ast.max_radius
+        max_diam = 2*max_r/1000
 
         # set orthographic projection
-        # TODO: fix orthographic projection
-        #self._onboard_renderer.set_orth_frustum(2*r, 2*r, self._sm.min_altitude*.1, self._sm.max_distance)
+        self._onboard_renderer.set_orth_frustum(max_diam, max_diam, 0, self._sm.max_distance)
 
         # render orthographic depth image
         _, zz = self._onboard_renderer.render(self._target_obj_idx, rel_pos_v, rel_rot_q, [1, 0, 0],
@@ -142,7 +142,8 @@ class ApiServer:
                                            self._sm.min_altitude*.1, self._sm.max_distance)
 
         zz = zz * 1000
-        xx, yy = np.meshgrid(np.linspace(-r, r, self._sm.view_width), np.linspace(-r, r, self._sm.view_height))
+        xx, yy = np.meshgrid(np.linspace(-max_r, max_r, self._sm.view_width),
+                             np.linspace(-max_r, max_r, self._sm.view_height))
         dist_expected = zz[zz.shape[0]//2, zz.shape[1]//2]
 
         # probably a much smaller max cost value would be better
@@ -175,7 +176,7 @@ class ApiServer:
         light_v = tools.q_times_v(q, sun_ast_v)
 
         img = TestLoop.render_navcam_image_static(self._sm, self._renderer, self._obj_idxs, rel_pos_v, rel_rot_q, light_v,
-                                                  use_shadows=False, use_textures=True)
+                                                  use_shadows=True, use_textures=True)
 
         date = datetime.fromtimestamp(time, pytz.utc)  # datetime.now()
         fname = os.path.join(self._logpath, date.isoformat()[:-6].replace(':', '')) + '.png'

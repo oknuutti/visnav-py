@@ -90,11 +90,12 @@ class RenderEngine:
         self._w_objs = []
         self._raw_objs = []
         self._textures = []
-        self._persp_mx = None
+        self._proj_mx = None
         self._view_mx = np.identity(4)
         self._model_mx = None
         self._frustum_near = None
         self._frustum_far = None
+        self._persp_proj = False
 
     def _load_prog(self, vert, frag, geom=None):
         vertex_shader_source = open(os.path.join(os.path.dirname(__file__), vert)).read()
@@ -119,6 +120,7 @@ class RenderEngine:
     def set_frustum(self, x_fov, y_fov, frustum_near, frustum_far):
         self._frustum_near = frustum_near
         self._frustum_far = frustum_far
+        self._persp_proj = True
 
         # calculate projection matrix based on frustum
         n = frustum_near
@@ -126,21 +128,23 @@ class RenderEngine:
         r = n * math.tan(math.radians(x_fov/2))
         t = n * math.tan(math.radians(y_fov/2))
 
-        self._persp_mx = np.zeros((4, 4))
-        self._persp_mx[0, 0] = n/r
-        self._persp_mx[1, 1] = n/t
-        self._persp_mx[2, 2] = -(f+n)/(f-n)
-        self._persp_mx[3, 2] = -1
-        self._persp_mx[2, 3] = -2*f*n/(f-n)
+        self._proj_mx = np.zeros((4, 4))
+        self._proj_mx[0, 0] = n/r
+        self._proj_mx[1, 1] = n/t
+        self._proj_mx[2, 2] = -(f+n)/(f-n)
+        self._proj_mx[3, 2] = -1
+        self._proj_mx[2, 3] = -2*f*n/(f-n)
 
     def set_orth_frustum(self, width, height, frustum_near, frustum_far):
         self._frustum_near = n = frustum_near
         self._frustum_far = f = frustum_far
+        self._persp_proj = False
+
         l = -width/2
         r = width/2
         b = -height/2
         t = height/2
-        self._persp_mx = self._ortho_mx_size(l, r, b, t, n, f)
+        self._proj_mx = self._ortho_mx_size(l, r, b, t, n, f)
 
     def load_object(self, object, obj_idx=None, smooth=False, wireframe=False):
         vertex_data = None
@@ -258,8 +262,9 @@ class RenderEngine:
         light_v = np.array(light_v)
         assert len(obj_idxs) == rel_pos_v.shape[0] == rel_rot_q.shape[0], 'obj_idxs, rel_pos_v and rel_rot_q dimensions dont match'
 
+        shadow_mvps = None
         if shadows:
-            self._render_shadowmap(obj_idxs, rel_rot_q, light_v)
+            shadow_mvps = self._render_shadowmap(obj_idxs, rel_pos_v, rel_rot_q, light_v)
 
         self._fbo.use()
         self._ctx.enable(moderngl.DEPTH_TEST)
@@ -271,7 +276,7 @@ class RenderEngine:
             self._prog['shadow_map'].value = RenderEngine._LOC_SHADOW_MAP
 
         for i, obj_idx in enumerate(obj_idxs):
-            self._set_params(obj_idx, rel_pos_v[i], rel_rot_q[i], light_v, shadows, textures, reflection)
+            self._set_params(obj_idx, rel_pos_v[i], rel_rot_q[i], light_v, shadow_mvps, textures, reflection)
             self._objs[obj_idx].render()
 
         if self._samples > 0:
@@ -286,18 +291,25 @@ class RenderEngine:
         data = np.flipud(data)
 
         if get_depth:
-            a = -(self._frustum_far - self._frustum_near) / (2.0 * self._frustum_far * self._frustum_near)
-            b = (self._frustum_far + self._frustum_near) / (2.0 * self._frustum_far * self._frustum_near)
             depth = np.frombuffer(dbo.read(alignment=1), dtype='f4').reshape((self._height, self._width))
-            depth = np.divide(1.0, (2.0 * a) * depth - (a - b))  # 1/((2*X-1)*a+b)
             depth = np.flipud(depth)
+
+            # normalize depth
+            if self._persp_proj:
+                # for perspective projection
+                a = -(self._frustum_far - self._frustum_near) / (2.0 * self._frustum_far * self._frustum_near)
+                b = (self._frustum_far + self._frustum_near) / (2.0 * self._frustum_far * self._frustum_near)
+                depth = np.divide(1.0, (2.0 * a) * depth - (a - b))  # 1/((2*X-1)*a+b)
+            else:
+                # for orthographic projection
+                depth = depth * (self._frustum_far - self._frustum_near) + self._frustum_near
 
         if gamma != 1.0:
             data = ImageProc.adjust_gamma(data, gamma)
 
         return (data, depth) if get_depth else data
 
-    def _set_params(self, obj_idx, rel_pos_v, rel_rot_q, light_v=None, use_shadows=True, use_textures=True,
+    def _set_params(self, obj_idx, rel_pos_v, rel_rot_q, light_v=None, shadow_mvps=None, use_textures=True,
                     reflection=REFLMOD_LUNAR_LAMBERT, for_wireframe=False):
 
         self._model_mx = np.identity(4)
@@ -306,7 +318,7 @@ class RenderEngine:
 
         prog = self._wireframe_prog if for_wireframe else self._prog
         mv = self._view_mx.dot(self._model_mx)
-        mvp = self._persp_mx.dot(mv)
+        mvp = self._proj_mx.dot(mv)
         prog['mvp'].write((mvp.T).astype('float32').tobytes())
 
         if not for_wireframe:
@@ -320,14 +332,19 @@ class RenderEngine:
             prog['lightDirection_viewFrame'].value = tuple(-light_v)  # already in view frame
             prog['reflection_model'].value = reflection
             prog['model_coefs'].value = RenderEngine.REFLMOD_PARAMS[reflection]
+
+            use_shadows = shadow_mvps is not None
             prog['use_shadows'].value = use_shadows
+            if use_shadows:
+                self._prog['shadow_mvp'].write(shadow_mvps[obj_idx].T.astype('float32').tobytes())
+
             if reflection == RenderEngine.REFLMOD_HAPKE and RenderEngine.REFLMOD_PARAMS[reflection][9] % 2 > 0:
                 hapke_K = self._ctx.texture((7, 19), 1, data=RenderEngine.HAPKE_K.T.astype('float32').tobytes(), alignment=1, dtype='f4')
                 hapke_K.use(RenderEngine._LOC_HAPKE_K)
                 prog['hapke_K'].value = RenderEngine._LOC_HAPKE_K
 
 
-    def _render_shadowmap(self, obj_idxs, rel_rot_q, light_v):
+    def _render_shadowmap(self, obj_idxs, rel_pos_v, rel_rot_q, light_v):
         # shadows following http://www.opengl-tutorial.org/intermediate-tutorials/tutorial-16-shadow-mapping/
 
         v = np.identity(4)
@@ -337,13 +354,15 @@ class RenderEngine:
         v[:3, :3] = quaternion.as_rotation_matrix(q_cam2light.conj())
 
         mvs = {}
-        for i in obj_idxs:
+        for i, obj_idx in enumerate(obj_idxs):
             m = np.identity(4)
-            m[:3, :3] = quaternion.as_rotation_matrix(rel_rot_q[i])
+            m[:3, :3] = quaternion.as_rotation_matrix(rel_rot_q[obj_idx])
+            m[:3, 3] = rel_pos_v[i]
             mv = v.dot(m)
-            mvs[i] = mv
+            mvs[obj_idx] = mv
 
         proj = self._ortho_mx(obj_idxs, mvs)
+        bias = self._bias_mx()  # map from [-1,1] x [-1,1] to [0,1]x[0,1] so that can use with "texture" command
 
         self._fbo.use()
         self._ctx.enable(moderngl.DEPTH_TEST)
@@ -351,8 +370,10 @@ class RenderEngine:
         self._ctx.front_face = 'ccw'  # cull back faces (front faces suggested but that had glitches)
 
         self._ctx.clear(depth=float('inf'))
+        shadow_mvps = {}
         for i in obj_idxs:
             mvp = proj.dot(mvs[i])
+            shadow_mvps[i] = bias.dot(mvp)  # used later to project model vertices to same 2d shadow frame
             self._shadow_prog['mvp'].write(mvp.T.astype('float32').tobytes())
             self._s_objs[i].render()
 
@@ -365,11 +386,6 @@ class RenderEngine:
         data = dbo.read(alignment=1)
         self._shadow_map = self._ctx.texture((self._width, self._height), 1, data=data, alignment=1, dtype='f4')
 
-        b = self._bias_mx()
-        shadow_mvp = b.dot(mvp)
-        self._prog['shadow_mvp'].write(shadow_mvp.T.astype('float32').tobytes())
-        self._prog['use_shadows'].value = True
-
         if False:
             import cv2
             d = np.frombuffer(data, dtype='f4').reshape((self._width, self._height))
@@ -380,6 +396,8 @@ class RenderEngine:
             #cv2.waitKey()
             #quit()
 
+        return shadow_mvps
+
     def _ortho_mx_size(self, l, r, b, t, n, f):
         P = np.identity(4)
         P[0, 0] = 2 / (r - l)
@@ -387,7 +405,7 @@ class RenderEngine:
         P[2, 2] = -2 / (f - n)
         P[0, 3] = -(r + l) / (r - l)
         P[1, 3] = -(t + b) / (t - b)
-        P[2, 3] = (f + n) / (f - n)
+        P[2, 3] = -(f + n) / (f - n)
 
         if False:
             # transform should result that all are in range [-1,1]
@@ -406,18 +424,18 @@ class RenderEngine:
         t = -float('inf') # max y
         n = float('inf') # min z
         f = -float('inf') # max z
-        for i in obj_idxs:
-            v3d = np.array(self._raw_objs[i].vert)
-            vert = mvs[i].dot(np.concatenate((v3d, np.ones((len(v3d),1))), axis=1).T).T
-            vert = vert[:,:3] / vert[:,3:]
+        for i, obj_idx in enumerate(obj_idxs):
+            v3d = np.array(self._raw_objs[obj_idx].vert)
+            vert = mvs[obj_idx].dot(np.concatenate((v3d, np.ones((len(v3d),1))), axis=1).T).T
+            vert = vert[:, :3] / vert[:, 3:]
             x0, y0, z0 = np.min(vert, axis=0)
             x1, y1, z1 = np.max(vert, axis=0)
             l = min(l, x0)
             r = max(r, x1)
             b = min(b, y0)
             t = max(t, y1)
-            n = min(n, z0)
-            f = max(f, z1)
+            n = min(n, -z1)  # negative z-axis in front of camera, however, near and far values typically positive
+            f = max(f, -z0)
 
         P = self._ortho_mx_size(l, r, b, t, n, f)
 
@@ -435,12 +453,12 @@ class RenderEngine:
 if __name__ == '__main__':
     from settings import *
     import cv2
-    sm = DidymosSystemModel(use_narrow_cam=False)
+    sm = DidymosSystemModel(use_narrow_cam=False, target_primary=False)
 #    sm = RosettaSystemModel()
     re = RenderEngine(sm.cam.width//2, sm.cam.height//2)
     re.set_frustum(sm.cam.x_fov, sm.cam.y_fov, sm.min_altitude*0.5, sm.max_distance)
     pos = [0, 0, -sm.min_med_distance * 1]
-    q = tools.angleaxis_to_q((math.radians(36), 0, 1, 0))
+    q = tools.angleaxis_to_q((math.radians(20), 0, 1, 0))
 
     #obj_idx = re.load_object('../data/67p-17k.obj')
     #obj_idx = re.load_object('../data/67p-4k.obj')
@@ -460,9 +478,28 @@ if __name__ == '__main__':
     #obj_idx = re.load_object(sm.asteroid.target_model_file)
     #obj_idx = re.load_object(os.path.join(BASE_DIR, 'data/test-ball.obj'))
 
-    _, depth = re.render(obj_idx, pos, q, [0,0,1], get_depth=True)
-    dist = re.ray_intersect_dist([obj_idx], [pos], [q])
-    print('%s vs %s' % (depth[depth.shape[0]//2, depth.shape[1]//2], dist))
+    if True:
+        # test depth rendering for laser algo
+        re.set_orth_frustum(sm.asteroid.max_radius * 0.002, sm.asteroid.max_radius * 0.002, 0, sm.max_distance)
+        img, depth = re.render(obj_idx, [0, 0, -0.22], q, [1, 0, 0], get_depth=True, shadows=False, textures=False)
+        print('center depth: %s' % (depth[depth.shape[0]//2, depth.shape[1]//2]))
+        a, b = np.min(depth), np.max(depth)
+        dd = (((depth-a)/(b-a))**(1/8.0) * 255).astype('uint8')
+        cv2.imshow('depth', dd)
+        cv2.imshow('img', img)
+        cv2.waitKey()
+        quit()
+
+    if False:
+        # test multi-object shadow rendering
+        RenderEngine.REFLMOD_PARAMS[RenderEngine.REFLMOD_LUNAR_LAMBERT][6] = 2
+        obj_idx1 = re.load_object(DidymosPrimary(hi_res_shape_model=False).target_model_file)
+        p = [obj_idx1, obj_idx], [[0, 0, 1.0], [0, 0, -0.22]], [q, q]
+        # p = obj_idx, [0, 0, -0.22], q
+        img, depth = re.render(*p, [1, 0, 0], get_depth=True, shadows=True, textures=True)
+        cv2.imshow('img', img)
+        cv2.waitKey()
+        quit()
 
     if False:
         for i in range(36):

@@ -166,7 +166,7 @@ class DidymosPrimary(Asteroid):
         }
 
         # for cross section, assume spherical object
-        self.max_radius = 420      # in meters, maximum extent of object from asteroid frame coordinate origin
+        self.max_radius = 470      # in meters, maximum extent of object from asteroid frame coordinate origin
         self.mean_radius = 775/2   # in meters
         self.mean_cross_section = math.pi * self.mean_radius ** 2
 
@@ -239,7 +239,7 @@ class DidymosSecondary(Asteroid):
         }
 
         # for cross section, assume spherical object
-        self.max_radius = 85      # in meters, maximum extent of object from asteroid frame coordinate origin
+        self.max_radius = 100     # in meters, maximum extent of object from asteroid frame coordinate origin
         self.mean_radius = 163/2  # in meters
         self.mean_cross_section = math.pi * self.mean_radius ** 2
 
