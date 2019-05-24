@@ -16,6 +16,7 @@ from algo.image import ImageProc
 from algo.keypoint import KeypointAlgo
 from algo.mixed import MixedAlgo
 from algo.phasecorr import PhaseCorrelationAlgo
+from missions.rosetta import RosettaSystemModel
 from render.render import RenderEngine
 from iotools import objloader, lblloader
 import algo.tools as tools
@@ -423,8 +424,16 @@ class TestLoop:
         return self._loaded_sm_noise
 
     @staticmethod
-    def render_navcam_image_static(sm, renderer, obj_idxs, rel_pos_v, rel_rot_q, light_v,
+    def render_navcam_image_static(sm, renderer, obj_idxs, rel_pos_v=None, rel_rot_q=None, light_v=None,
                                    use_shadows=True, use_textures=False):
+
+        if rel_pos_v is None:
+            rel_pos_v = sm.spacecraft_pos
+        if rel_rot_q is None:
+            rel_rot_q, _ = sm.gl_sc_asteroid_rel_q()
+        if light_v is None:
+            light_v, _ = sm.gl_light_rel_dir()
+
         model = RenderEngine.REFLMOD_HAPKE
         RenderEngine.REFLMOD_PARAMS[model] = sm.asteroid.reflmod_params[model]
         img, depth = renderer.render(obj_idxs, rel_pos_v, rel_rot_q, light_v, get_depth=True,
@@ -457,15 +466,10 @@ class TestLoop:
             self._synth_navcam.set_frustum(sm.cam.x_fov, sm.cam.y_fov, sm.min_altitude, sm.max_distance)
             self._hires_obj_idx = self._synth_navcam.load_object(sm.asteroid.hires_target_model_file)
 
-        sm.swap_values_with_real_vals()
-        sc_pos = sm.spacecraft_pos
-        rel_q, _ = sm.gl_sc_asteroid_rel_q()
-        light_v, _ = sm.gl_light_rel_dir()
-        sm.swap_values_with_real_vals()
-
         use_textures = sm.asteroid.hires_target_model_file_textures
-        img = TestLoop.render_navcam_image_static(sm, self._synth_navcam, self._hires_obj_idx,
-                                                  sc_pos, rel_q, light_v, use_textures=use_textures)
+        sm.swap_values_with_real_vals()
+        img = TestLoop.render_navcam_image_static(sm, self._synth_navcam, self._hires_obj_idx, use_textures=use_textures)
+        sm.swap_values_with_real_vals()
 
         cache_file = self._cache_file(i)+'.png'
         cv2.imwrite(cache_file, img, [cv2.IMWRITE_PNG_COMPRESSION, 9])
@@ -764,3 +768,19 @@ class TestLoop:
             print('Exiting...')
             quit()
 
+
+if __name__ == '__main__':
+    sm = RosettaSystemModel(rosetta_batch='mtp006')
+    img = 'ROS_CAM1_20140822T020718'
+
+    lblloader.load_image_meta(os.path.join(sm.asteroid.image_db_path, img + '.LBL'), sm)
+    sm.swap_values_with_real_vals()
+
+    renderer = RenderEngine(sm.cam.width, sm.cam.height, antialias_samples=16)
+    renderer.set_frustum(sm.cam.x_fov, sm.cam.y_fov, sm.min_altitude * .1, sm.max_distance)
+    obj_idx = renderer.load_object(sm.asteroid.hires_target_model_file, smooth=sm.asteroid.render_smooth_faces)
+    use_textures = sm.asteroid.hires_target_model_file_textures
+
+    img = TestLoop.render_navcam_image_static(sm, renderer, obj_idx, use_textures=use_textures)
+    cv2.imshow('synthetic navcam image', img)
+    cv2.waitKey()

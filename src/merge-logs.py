@@ -170,6 +170,7 @@ if __name__ == '__main__':
                     visib < OPZONE_LIMITS[3][1],
                 ))
                 data = data[I, :]
+                rdata = np.array(rdata)[I]
 
             runtimes = data[:, columns.index('execution time')].astype('float')
             laterrs = data[:, columns.index('lat error (m/km)')].astype('float')

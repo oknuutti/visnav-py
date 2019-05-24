@@ -1,3 +1,5 @@
+import pickle
+
 import math
 
 import numpy as np
@@ -5,7 +7,7 @@ import cv2
 
 from algo.image import ImageProc
 from algo.model import SystemModel
-from iotools import lblloader
+from iotools import lblloader, objloader
 from missions.rosetta import RosettaSystemModel
 from settings import *
 from render.render import RenderEngine
@@ -142,6 +144,7 @@ if __name__ == '__main__':
     lblloader.load_image_meta(os.path.join(sm.asteroid.image_db_path, img + '.LBL'), sm)
     sm.swap_values_with_real_vals(),
 
+    compare = False
     textures = True
     if False:
         re = RenderEngine(sm.cam.width, sm.cam.height, antialias_samples=16)
@@ -152,7 +155,12 @@ if __name__ == '__main__':
         textures = False
     else:
         re = RenderEngine(sm.cam.width, sm.cam.height, antialias_samples=0)
-        obj_idx = re.load_object(sm.asteroid.target_model_file, smooth=False)
+        fname = sm.asteroid.constant_noise_shape_model['hi']   # ''=>17k, 'lo'=>4k, 'hi'=>1k
+        with open(fname, 'rb') as fh:
+            noisy_model, sm_noise = pickle.load(fh)
+        obj_idx = re.load_object(objloader.ShapeModel(data=noisy_model), smooth=sm.asteroid.render_smooth_faces)
+        #obj_idx = re.load_object(sm.asteroid.target_model_file, smooth=False)
+        textures = False
 
     ab = AlgorithmBase(sm, re, obj_idx)
 
@@ -176,7 +184,10 @@ if __name__ == '__main__':
         #real = ImageProc.adjust_gamma(real, 1/4)
 
         real = cv2.resize(real, size)
-        cv2.imshow('real vs synthetic', np.concatenate([real, 255*np.ones((real.shape[0], 1), dtype='uint8')] + synth, axis=1))
+        if compare:
+            cv2.imshow('real vs synthetic', np.concatenate([real, 255*np.ones((real.shape[0], 1), dtype='uint8')] + synth, axis=1))
+        else:
+            cv2.imshow('synthetic', synth[0])
         cv2.waitKey()
     else:
         # try different light directions a fixed angle (d) away from default

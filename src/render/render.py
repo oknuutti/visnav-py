@@ -133,6 +133,15 @@ class RenderEngine:
         self._persp_mx[3, 2] = -1
         self._persp_mx[2, 3] = -2*f*n/(f-n)
 
+    def set_orth_frustum(self, width, height, frustum_near, frustum_far):
+        self._frustum_near = n = frustum_near
+        self._frustum_far = f = frustum_far
+        l = -width/2
+        r = width/2
+        b = -height/2
+        t = height/2
+        self._persp_mx = self._ortho_mx_size(l, r, b, t, n, f)
+
     def load_object(self, object, obj_idx=None, smooth=False, wireframe=False):
         vertex_data = None
         if isinstance(object, str):
@@ -185,6 +194,30 @@ class RenderEngine:
                 self._textures[obj_idx] = texture
 
         return len(self._w_objs if wireframe else self._objs)-1
+
+    def ray_intersect_dist(self, obj_idxs, rel_pos_v, rel_rot_q):
+        # return distance to objects along -z-axis, supports laser algorithm, put here because efficient
+
+        if False:
+            # Should find the nearest intersection with object faces on the camera axis.
+            # However, tools.intersections return some error code, seems difficult to debug..
+
+            candidates = []
+            ray = np.array([0, 0, -1.0]).reshape((3, 1))
+            for i, obj_idx in enumerate(obj_idxs):
+                verts = tools.q_times_mx(rel_rot_q[i], np.array(self._raw_objs[obj_idx].vert)) + rel_pos_v[i]
+                x = tools.intersections(np.array(self._raw_objs[obj_idx].face, dtype='u4'), verts, ray)
+                candidates.extend(np.abs(x))
+            dist = np.min(candidates) if len(candidates)>0 else None
+        else:
+            # alternative method: just render and pick center pixel
+            _, depth = self.render(obj_idxs, rel_pos_v, rel_rot_q, [1, 0, 0],
+                                   get_depth=True, shadows=False, textures=False)
+            dist = depth[depth.shape[0]//2, depth.shape[1]//2]
+            if dist >= self._frustum_far * 0.99:
+                dist = None
+
+        return dist
 
     def render_wireframe(self, obj_idxs, rel_pos_v, rel_rot_q, color):
         obj_idxs = [obj_idxs] if isinstance(obj_idxs, int) else obj_idxs
@@ -347,6 +380,25 @@ class RenderEngine:
             #cv2.waitKey()
             #quit()
 
+    def _ortho_mx_size(self, l, r, b, t, n, f):
+        P = np.identity(4)
+        P[0, 0] = 2 / (r - l)
+        P[1, 1] = 2 / (t - b)
+        P[2, 2] = -2 / (f - n)
+        P[0, 3] = -(r + l) / (r - l)
+        P[1, 3] = -(t + b) / (t - b)
+        P[2, 3] = (f + n) / (f - n)
+
+        if False:
+            # transform should result that all are in range [-1,1]
+            tr = P.dot(np.array([
+                [l, b, n, 1],
+                [r, t, f, 1],
+            ]).T)
+            print('%s'%tr)
+
+        return P
+
     def _ortho_mx(self, obj_idxs, mvs):
         l = float('inf') # min x
         r = -float('inf') # max x
@@ -367,21 +419,7 @@ class RenderEngine:
             n = min(n, z0)
             f = max(f, z1)
 
-        P = np.identity(4)
-        P[0, 0] = 2 / (r - l)
-        P[1, 1] = 2 / (t - b)
-        P[2, 2] = -2 / (f - n)
-        P[0, 3] = -(r + l) / (r - l)
-        P[1, 3] = -(t + b) / (t - b)
-        P[2, 3] = (f + n) / (f - n)
-
-        if False:
-            # transform should result that all are in range [-1,1]
-            tr = P.dot(np.array([
-                [l, b, n, 1],
-                [r, t, f, 1],
-            ]).T)
-            print('%s'%tr)
+        P = self._ortho_mx_size(l, r, b, t, n, f)
 
         return P
 
@@ -417,11 +455,14 @@ if __name__ == '__main__':
             cv2.waitKey()
         quit()
     else:
-        #obj_idx = re.load_object(sm.asteroid.target_model_file)
-        obj_idx = re.load_object(sm.asteroid.hires_target_model_file)
+        obj_idx = re.load_object(sm.asteroid.target_model_file)
+        #obj_idx = re.load_object(sm.asteroid.hires_target_model_file)
     #obj_idx = re.load_object(sm.asteroid.target_model_file)
     #obj_idx = re.load_object(os.path.join(BASE_DIR, 'data/test-ball.obj'))
 
+    _, depth = re.render(obj_idx, pos, q, [0,0,1], get_depth=True)
+    dist = re.ray_intersect_dist([obj_idx], [pos], [q])
+    print('%s vs %s' % (depth[depth.shape[0]//2, depth.shape[1]//2], dist))
 
     if False:
         for i in range(36):

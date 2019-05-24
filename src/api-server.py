@@ -61,25 +61,117 @@ class ApiServer:
         self._logpath = os.path.join(LOG_DIR, 'api-server', self._mission)
         os.makedirs(self._logpath, exist_ok=True)
 
-        re = RenderEngine(sm.view_width, sm.view_height, antialias_samples=0)
-        oi = re.load_object(sm.asteroid.target_model_file, smooth=sm.asteroid.render_smooth_faces)
-        self._keypoint = KeypointAlgo(sm, re, oi)
+        self._onboard_renderer = RenderEngine(sm.view_width, sm.view_height, antialias_samples=0)
+        self._target_obj_idx = self._onboard_renderer.load_object(sm.asteroid.target_model_file, smooth=sm.asteroid.render_smooth_faces)
+        self._keypoint = KeypointAlgo(sm, self._onboard_renderer, self._target_obj_idx)
 
+        # laser measurement range given in dlem-20 datasheet
+        self._laser_min_range, self._laser_max_range, self._laser_nominal_max_range = 10, 1200, 5000
+        self._laser_fail_prob = 0.05   # probability of measurement fail because e.g. asteroid low albedo
+        self._laser_false_prob = 0.01  # probability for random measurement even if no target
+        self._laser_err_sigma = 0.5    # 0.5m sigma1 accuracy given in dlem-20 datasheet
 
-    def _render(self, params):
+        # laser algo params
+        self._laser_adj_loc_weight = 1
+        self._laser_meas_err_weight = 2
+
+    @staticmethod
+    def _parse_poses(params, offset):
+        d1_v = np.array(params[offset][:3])*0.001
+        d1_q = np.quaternion(*(params[offset][3:7])).normalized()
+        d2_v = np.array(params[offset+1][:3])*0.001
+        d2_q = np.quaternion(*(params[offset+1][3:7])).normalized()
+        sc_v = np.array(params[offset+2][:3])*0.001
+        sc_q = np.quaternion(*(params[offset+2][3:7])).normalized()
+        return d1_v, d1_q, d2_v, d2_q, sc_v, sc_q
+
+    def _laser_meas(self, params):
         time = params[0]
-        sun_ast_v = tools.normalize_v(np.array(params[1][:3]))
-        d1_v = np.array(params[2][:3])
-        d1_q = np.quaternion(*(params[2][3:7]))
-        d2_v = np.array(params[3][:3])
-        d2_q = np.quaternion(*(params[3][3:7]))
-        sc_v = np.array(params[4][:3])
-        sc_q = np.quaternion(*(params[4][3:7]))
+        d1_v, d1_q, d2_v, d2_q, sc_v, sc_q = self._parse_poses(params, offset=1)
 
         d1, d2 = self.asteroids
         q = SystemModel.sc2gl_q.conj() * sc_q.conj()
         rel_rot_q = np.array([q * d1_q * d1.ast2sc_q.conj(), q * d2_q * d2.ast2sc_q.conj()])
-        rel_pos_v = np.array([tools.q_times_v(q, d1_v - sc_v), tools.q_times_v(q, d2_v - sc_v)]) * 0.001
+        rel_pos_v = np.array([tools.q_times_v(q, d1_v - sc_v), tools.q_times_v(q, d2_v - sc_v)])
+
+        dist = self._renderer.ray_intersect_dist(self._obj_idxs, rel_pos_v, rel_rot_q)
+
+        if dist is None:
+            if np.random.uniform(0, 1) < self._laser_false_prob:
+                noisy_dist = np.random.uniform(self._laser_min_range, self._laser_nominal_max_range)
+            else:
+                noisy_dist = None
+        else:
+            if np.random.uniform(0, 1) < self._laser_fail_prob:
+                noisy_dist = None
+            else:
+                noisy_dist = dist * 1000 + np.random.normal(0, self._laser_err_sigma)
+                if noisy_dist < self._laser_min_range or noisy_dist > self._laser_max_range:
+                    noisy_dist = None
+
+        return json.dumps(noisy_dist)
+
+    def _laser_algo(self, params):
+        time = params[0]
+        dist_meas = params[1]
+        if not dist_meas or dist_meas < self._laser_min_range or dist_meas > self._laser_max_range:
+            raise PositioningException('invalid laser distance measurement: %s' % dist_meas)
+
+        d1_v, d1_q, d2_v, d2_q, sc_v, sc_q = self._parse_poses(params, offset=2)
+
+        q = SystemModel.sc2gl_q.conj() * sc_q.conj()
+        d1, d2 = self.asteroids
+        ast = d2 if self._target_d2 else d1
+        ast_v = d2_v if self._target_d2 else d1_v
+        ast_q = d2_q if self._target_d2 else d1_q
+
+        rel_rot_q = q * ast_q * ast.ast2sc_q.conj()
+        rel_pos_v = tools.q_times_v(q, ast_v - sc_v)
+        r = ast.max_radius
+
+        # set orthographic projection
+        # TODO: fix orthographic projection
+        #self._onboard_renderer.set_orth_frustum(2*r, 2*r, self._sm.min_altitude*.1, self._sm.max_distance)
+
+        # render orthographic depth image
+        _, zz = self._onboard_renderer.render(self._target_obj_idx, rel_pos_v, rel_rot_q, [1, 0, 0],
+                                              get_depth=True, shadows=False, textures=False)
+
+        # restore regular perspective projection
+        self._onboard_renderer.set_frustum(self._sm.cam.x_fov, self._sm.cam.y_fov,
+                                           self._sm.min_altitude*.1, self._sm.max_distance)
+
+        zz = zz * 1000
+        xx, yy = np.meshgrid(np.linspace(-r, r, self._sm.view_width), np.linspace(-r, r, self._sm.view_height))
+        dist_expected = zz[zz.shape[0]//2, zz.shape[1]//2]
+
+        # probably a much smaller max cost value would be better
+        max_cost = 3 * ast.max_radius**2
+
+        # mse cost function balances between adjusted location and measurement error
+        cost = self._laser_adj_loc_weight * ((zz - dist_expected)**2 + xx**2 + yy**2) \
+             + self._laser_meas_err_weight * (zz - dist_meas)**2
+
+        j, i = np.unravel_index(np.argmin(cost), cost.shape)
+        if zz[j, i] >= self._sm.max_distance*.99*1000:
+            raise PositioningException('laser algo results in off asteroid pointing')
+        if zz[j, i] >= max_cost:
+            raise PositioningException('laser algo solution cost too high (%.2e), spurious measurement assumed')
+
+        dx, dy, dz = xx[0, i], yy[j, 0], zz[j, i] - dist_expected
+        est_sc_v = ast_v*1000 - tools.q_times_v(q.conj(), rel_pos_v*1000 + np.array([dx, dy, dz]))
+        dist_expected = float(dist_expected) if dist_expected < self._sm.max_distance*.99*1000 else -1.0
+        return json.dumps([list(est_sc_v), dist_expected])
+
+    def _render(self, params):
+        time = params[0]
+        sun_ast_v = tools.normalize_v(np.array(params[1][:3]))
+        d1_v, d1_q, d2_v, d2_q, sc_v, sc_q = self._parse_poses(params, offset=2)
+
+        d1, d2 = self.asteroids
+        q = SystemModel.sc2gl_q.conj() * sc_q.conj()
+        rel_rot_q = np.array([q * d1_q * d1.ast2sc_q.conj(), q * d2_q * d2.ast2sc_q.conj()])
+        rel_pos_v = np.array([tools.q_times_v(q, d1_v - sc_v), tools.q_times_v(q, d2_v - sc_v)])
         light_v = tools.q_times_v(q, sun_ast_v)
 
         img = TestLoop.render_navcam_image_static(self._sm, self._renderer, self._obj_idxs, rel_pos_v, rel_rot_q, light_v,
@@ -99,19 +191,19 @@ class ApiServer:
         # asteroid position relative to the sun
         self._sm.asteroid.real_position = np.array(params[1][:3])
 
+        d1_v, d1_q, d2_v, d2_q, sc_v, init_sc_q = self._parse_poses(params, offset=2)
+
         # set asteroid orientation
         d1, d2 = self.asteroids
         ast = d2 if self._target_d2 else d1
-        init_ast_q = np.quaternion(*(params[3 if self._target_d2 else 2][3:7])).normalized()
+        init_ast_q = d2_q if self._target_d2 else d1_q
         self._sm.asteroid_q = init_ast_q * ast.ast2sc_q.conj()
 
         # set spacecraft orientation
-        init_sc_q = np.quaternion(*(params[4][3:7])).normalized()
         self._sm.spacecraft_q = init_sc_q
 
         # sc-asteroid relative location
-        ast_v = np.array(params[3 if self._target_d2 else 2][:3])*0.001   # relative to barycenter
-        sc_v = np.array(params[4][:3])*0.001  # relative to barycenter
+        ast_v = d2_v if self._target_d2 else d1_v   # relative to barycenter
         init_sc_pos = tools.q_times_v(SystemModel.sc2gl_q.conj() * init_sc_q.conj(), ast_v - sc_v)
         self._sm.spacecraft_pos = init_sc_pos
 
@@ -217,6 +309,18 @@ class ApiServer:
                             ok = True
                         except PositioningException as e:
                             error = 'algo failed: ' + str(e)
+                    elif command == 'laser_meas':
+                        # return a laser measurement
+                        rval = self._laser_meas(params)
+                        ok = True
+                    elif command == 'laser_algo':
+                        # return new sc-target vector based on laser measurement
+                        try:
+                            rval = self._laser_algo(params)
+                            ok = True
+                        except PositioningException as e:
+                            error = 'algo failed: ' + str(e)
+                        pass
                     else:
                         error = 'invalid command: ' + command
                         break
