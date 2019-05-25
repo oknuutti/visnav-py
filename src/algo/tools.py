@@ -579,7 +579,7 @@ def interp2(array, x, y, max_val=None, max_dist=30, idxs=None, discard_bg=False)
     
     # ignore background depths
     if max_val is not None:
-        idx = v.reshape(1,-1)<max_val
+        idx = v.reshape(1,-1) < max_val*0.999
     else:
         idx = ~np.isnan(v.reshape(1,-1))
     

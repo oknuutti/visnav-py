@@ -73,7 +73,8 @@ class ApiServer:
 
         # laser algo params
         self._laser_adj_loc_weight = 1
-        self._laser_meas_err_weight = 3
+        self._laser_meas_err_weight = 0.3
+        self._laser_max_adj_dist = 100  # in meters
 
     @staticmethod
     def _parse_poses(params, offset):
@@ -126,42 +127,48 @@ class ApiServer:
         ast_q = d2_q if self._target_d2 else d1_q
 
         rel_rot_q = q * ast_q * ast.ast2sc_q.conj()
-        rel_pos_v = tools.q_times_v(q, ast_v - sc_v)
+        rel_pos_v = tools.q_times_v(q, ast_v - sc_v) * 1000
         max_r = ast.max_radius
         max_diam = 2*max_r/1000
 
         # set orthographic projection
-        self._onboard_renderer.set_orth_frustum(max_diam, max_diam, 0, self._sm.max_distance)
+        self._onboard_renderer.set_orth_frustum(max_diam, max_diam, -max_diam/2, max_diam/2)
 
         # render orthographic depth image
-        _, zz = self._onboard_renderer.render(self._target_obj_idx, rel_pos_v, rel_rot_q, [1, 0, 0],
+        _, zz = self._onboard_renderer.render(self._target_obj_idx, [0, 0, 0], rel_rot_q, [1, 0, 0],
                                               get_depth=True, shadows=False, textures=False)
 
         # restore regular perspective projection
         self._onboard_renderer.set_frustum(self._sm.cam.x_fov, self._sm.cam.y_fov,
                                            self._sm.min_altitude*.1, self._sm.max_distance)
 
-        zz = zz * 1000
-        xx, yy = np.meshgrid(np.linspace(-max_r, max_r, self._sm.view_width),
-                             np.linspace(-max_r, max_r, self._sm.view_height))
-        dist_expected = zz[zz.shape[0]//2, zz.shape[1]//2]
+        zz[zz > max_diam/2*0.999] = float('nan')
+        zz = zz*1000 - rel_pos_v[2]
+        xx, yy = np.meshgrid(np.linspace(-max_r, max_r, self._sm.view_width) - rel_pos_v[0],
+                             np.linspace(-max_r, max_r, self._sm.view_height) - rel_pos_v[1])
 
-        # probably a much smaller max cost value would be better
-        max_cost = 3 * ast.max_radius**2
+        x_expected = np.clip((rel_pos_v[0]+max_r)/max_r/2*self._sm.view_width + 0.5, 0, self._sm.view_width - 1.001)
+        y_expected = np.clip((rel_pos_v[1]+max_r)/max_r/2*self._sm.view_height + 0.5, 0, self._sm.view_height - 1.001)
+        dist_expected = tools.interp2(zz, x_expected, y_expected, discard_bg=True)
+
+        # TODO: check nav filter init state
 
         # mse cost function balances between adjusted location and measurement error
-        cost = self._laser_adj_loc_weight * ((zz - dist_expected)**2 + xx**2 + yy**2) \
-             + self._laser_meas_err_weight * (zz - dist_meas)**2
+        adj_dist_sqr = (zz - dist_meas)**2 + xx**2 + yy**2
+        cost = self._laser_adj_loc_weight * adj_dist_sqr \
+             + (self._laser_meas_err_weight - self._laser_adj_loc_weight) * (zz - dist_meas)**2
 
-        j, i = np.unravel_index(np.argmin(cost), cost.shape)
-        if zz[j, i] >= self._sm.max_distance*.99*1000:
+        j, i = np.unravel_index(np.nanargmin(cost), cost.shape)
+        if np.isnan(zz[j, i]):
             raise PositioningException('laser algo results in off asteroid pointing')
-        if zz[j, i] >= max_cost:
-            raise PositioningException('laser algo solution cost too high (%.2e), spurious measurement assumed')
+        if math.sqrt(adj_dist_sqr[j, i]) >= self._laser_max_adj_dist:
+            # TODO: check that can handle spurious measurements
+            raise PositioningException('laser algo solution too far (%.0fm, limit=%.0fm), spurious measurement assumed'
+                                       % (math.sqrt(adj_dist_sqr[j, i]), self._laser_max_adj_dist))
 
-        dx, dy, dz = xx[0, i], yy[j, 0], zz[j, i] - dist_expected
-        est_sc_v = ast_v*1000 - tools.q_times_v(q.conj(), rel_pos_v*1000 + np.array([dx, dy, dz]))
-        dist_expected = float(dist_expected) if dist_expected < self._sm.max_distance*.99*1000 else -1.0
+        dx, dy, dz = xx[0, i], yy[j, 0], zz[j, i] - dist_meas
+        est_sc_v = ast_v*1000 - tools.q_times_v(q.conj(), rel_pos_v + np.array([dx, dy, dz]))
+        dist_expected = float(dist_expected) if not np.isnan(dist_expected) else -1.0
         return json.dumps([list(est_sc_v), dist_expected])
 
     def _render(self, params):
@@ -400,7 +407,7 @@ class ApiServer:
 
 
 if __name__ == '__main__':
-    server = ApiServer(sys.argv[1], hires=False)
+    server = ApiServer(sys.argv[1], hires=True)
     try:
         server.listen()
     finally:

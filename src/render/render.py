@@ -302,6 +302,7 @@ class RenderEngine:
                 depth = np.divide(1.0, (2.0 * a) * depth - (a - b))  # 1/((2*X-1)*a+b)
             else:
                 # for orthographic projection
+                #  - depth is between 0 and 1
                 depth = depth * (self._frustum_far - self._frustum_near) + self._frustum_near
 
         if gamma != 1.0:
