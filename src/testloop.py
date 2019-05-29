@@ -425,7 +425,7 @@ class TestLoop:
 
     @staticmethod
     def render_navcam_image_static(sm, renderer, obj_idxs, rel_pos_v=None, rel_rot_q=None, light_v=None,
-                                   use_shadows=True, use_textures=False):
+                                   use_shadows=True, use_textures=False, cache_noise=False):
 
         if rel_pos_v is None:
             rel_pos_v = sm.spacecraft_pos
@@ -444,13 +444,13 @@ class TestLoop:
         img = ImageProc.adjust_gamma(img, 1.8)
 
         # coef=2 gives reasonably many stars, star brightness was tuned without gamma correction
-        img = ImageProc.add_stars(img.astype('float'), mask=depth>=sm.max_distance-0.1, coef=2.5)
+        img = ImageProc.add_stars(img.astype('float'), mask=depth>=sm.max_distance-0.1, coef=2.5, cache=cache_noise)
 
         # ratio seems too low but blurring in images match actual Rosetta navcam images
         img = ImageProc.apply_point_spread_fn(img, ratio=0.2)
 
         # add background noise
-        img = ImageProc.add_ccd_noise(img, mean=7, sd=2)
+        img = ImageProc.add_ccd_noise(img, mean=7, sd=2, cache=cache_noise)
         img = np.clip(img, 0, 255).astype('uint8')
 
         if False:

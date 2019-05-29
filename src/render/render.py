@@ -344,7 +344,6 @@ class RenderEngine:
                 hapke_K.use(RenderEngine._LOC_HAPKE_K)
                 prog['hapke_K'].value = RenderEngine._LOC_HAPKE_K
 
-
     def _render_shadowmap(self, obj_idxs, rel_pos_v, rel_rot_q, light_v):
         # shadows following http://www.opengl-tutorial.org/intermediate-tutorials/tutorial-16-shadow-mapping/
 

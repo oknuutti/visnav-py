@@ -1,6 +1,7 @@
+from functools import lru_cache
+
 import math
 
-from scipy import signal
 from scipy import optimize, stats
 import numpy as np
 import cv2
@@ -53,23 +54,15 @@ class ImageProc():
         return adj_img
 
     @staticmethod
-    def add_stars(img, mask, coef=2):
-        # add power law distributed stars to image
-        assert img.shape == img.shape[:2], 'works only with grayscale images'
-        stars = np.random.pareto(coef, img.shape)
-        # can be over 255, will clip later
-        img[mask] = np.clip(stars[mask], 0, 600)
-        return img
-
-    @staticmethod
     def apply_point_spread_fn(img, ratio):
         # ratio is how many % of power on central pixel
         sd = 1/math.sqrt(2*math.pi*ratio)
         kernel = ImageProc.gkern2d(5, sd)
-        img = signal.convolve2d(img, kernel, mode='same')
+        cv2.filter2D(img, -1, kernel, img)
         return img
 
     @staticmethod
+    @lru_cache(maxsize=10)
     def gkern2d(l=5, sig=1.):
         """
         creates gaussian kernel with side length l and a sigma of sig
@@ -80,9 +73,32 @@ class ImageProc():
         return kernel / np.sum(kernel)
 
     @staticmethod
-    def add_ccd_noise(img, mean=7, sd=2):
-        img += np.random.normal(mean, sd, img.shape)
+    def add_stars(img, mask, coef=2, cache=False):
+        # add power law distributed stars to image
+        assert img.shape == img.shape[:2], 'works only with grayscale images'
+        if not cache:
+            ImageProc._cached_random_stars.clear_cache()
+        stars = ImageProc._cached_random_stars(coef, img.shape)
+        # can be over 255, will clip later
+        img[mask] = np.clip(stars[mask], 0, 600)
         return img
+
+    @staticmethod
+    @lru_cache(maxsize=10)
+    def _cached_random_stars(coef, shape):
+        return np.random.pareto(coef, shape)
+
+    @staticmethod
+    def add_ccd_noise(img, mean=7, sd=2, cache=False):
+        if not cache:
+            ImageProc._cached_ccd_noise.clear_cache()
+        img += ImageProc._cached_ccd_noise(mean, sd, img.shape)
+        return img
+
+    @staticmethod
+    @lru_cache(maxsize=10)
+    def _cached_ccd_noise(mean, sd, shape):
+        return np.random.normal(mean, sd, shape)
 
     @staticmethod
     def process_target_image(image_src):

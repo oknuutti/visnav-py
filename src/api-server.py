@@ -1,3 +1,7 @@
+import subprocess
+import time
+from subprocess import TimeoutExpired
+
 import math
 import socket
 import json
@@ -23,17 +27,42 @@ from settings import *
 from testloop import TestLoop
 
 
-class ApiServer:
-    class QuitException(Exception):
-        pass
+def main():
+    port = int(sys.argv[1])
 
-    def __init__(self, mission, hires=True, addr='127.0.0.1', port=50007):
+    if len(sys.argv) > 2:
+        server = ApiServer(sys.argv[2], port=port, hires=True, cache_noise=True, result_rendering=False)
+    else:
+        server = SpawnMaster(port=port, max_count=5000)
+
+    try:
+        server.listen()
+    except QuitException:
+        server.print('quit received, exiting')
+    finally:
+        server.close()
+    quit()
+
+
+class QuitException(Exception):
+    pass
+
+
+class ApiServer:
+    SERVER_READY_NOTICE = 'server started, waiting for connections'
+
+    def __init__(self, mission, hires=True, addr='127.0.0.1', port=50007, cache_noise=False, result_rendering=True):
+        self._pid = os.getpid()
+
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._addr = addr
         self._port = port
         self._sock.bind(('', port))
         self._sock.listen(1)
         self._sock.settimeout(5)
+
+        self._cache_noise = cache_noise
+        self._result_rendering = result_rendering
 
         self._mission = mission
         self._sm = sm = get_system_model(mission, hires)
@@ -56,7 +85,7 @@ class ApiServer:
 
         self._wireframe_obj_idxs = [
             self._renderer.load_object(os.path.join(BASE_DIR, 'data/ryugu+tex-%s-100.obj'%ast), wireframe=True)
-            for ast in ('d1', 'd2')]
+            for ast in ('d1', 'd2')] if result_rendering else []
 
         self._logpath = os.path.join(LOG_DIR, 'api-server', self._mission)
         os.makedirs(self._logpath, exist_ok=True)
@@ -151,8 +180,6 @@ class ApiServer:
         y_expected = np.clip((rel_pos_v[1]+max_r)/max_r/2*self._sm.view_height + 0.5, 0, self._sm.view_height - 1.001)
         dist_expected = tools.interp2(zz, x_expected, y_expected, discard_bg=True)
 
-        # TODO: check nav filter init state
-
         # mse cost function balances between adjusted location and measurement error
         adj_dist_sqr = (zz - dist_meas)**2 + xx**2 + yy**2
         cost = self._laser_adj_loc_weight * adj_dist_sqr \
@@ -162,7 +189,6 @@ class ApiServer:
         if np.isnan(zz[j, i]):
             raise PositioningException('laser algo results in off asteroid pointing')
         if math.sqrt(adj_dist_sqr[j, i]) >= self._laser_max_adj_dist:
-            # TODO: check that can handle spurious measurements
             raise PositioningException('laser algo solution too far (%.0fm, limit=%.0fm), spurious measurement assumed'
                                        % (math.sqrt(adj_dist_sqr[j, i]), self._laser_max_adj_dist))
 
@@ -183,7 +209,7 @@ class ApiServer:
         light_v = tools.q_times_v(q, sun_ast_v)
 
         img = TestLoop.render_navcam_image_static(self._sm, self._renderer, self._obj_idxs, rel_pos_v, rel_rot_q, light_v,
-                                                  use_shadows=True, use_textures=True)
+                                                  use_shadows=True, use_textures=True, cache_noise=self._cache_noise)
 
         date = datetime.fromtimestamp(time, pytz.utc)  # datetime.now()
         fname = os.path.join(self._logpath, date.isoformat()[:-6].replace(':', '')) + '.png'
@@ -218,7 +244,7 @@ class ApiServer:
         # run keypoint algo
         err = None
         try:
-            self._keypoint.solve_pnp(img, fname[:-4], KeypointAlgo.AKAZE)
+            self._keypoint.solve_pnp(img, fname[:-4], KeypointAlgo.AKAZE, verbose=1 if self._result_rendering else 0)
         except PositioningException as e:
             err = e
 
@@ -234,9 +260,10 @@ class ApiServer:
             result = [list(rel_v), list(quaternion.as_float_array(rel_q))]
 
         # render a result image
-        self._render_result([fname]
-            + [list(np.array(self._sm.spacecraft_pos)*1000) + (result[1] if err is None else [float('nan')]*4)]
-            + [list(np.array(init_sc_pos)*1000) + list(quaternion.as_float_array(init_sc_q.conj() * init_ast_q))])
+        if self._result_rendering:
+            self._render_result([fname]
+                + [list(np.array(self._sm.spacecraft_pos)*1000) + (result[1] if err is None else [float('nan')]*4)]
+                + [list(np.array(init_sc_pos)*1000) + list(quaternion.as_float_array(init_sc_q.conj() * init_ast_q))])
 
         if err is not None:
             raise err
@@ -287,12 +314,17 @@ class ApiServer:
     def _handle(self, call):
         if len(call) == 0:
             return None
+        if call == 'quit':
+            raise QuitException()
 
         error = False
         rval = False
 
         idx = call.find(' ')
-        command = call[:idx] if idx >= 0 else call
+        mission, command = (call[:idx] if idx >= 0 else call).split('|')
+        if mission != self._mission:
+            assert False, 'wrong mission for this server instance, expected %s but got %s'%(self._mission, mission)
+
         params = []
         try:
             params = json.loads(call[idx + 1:]) if idx >= 0 else []
@@ -300,7 +332,7 @@ class ApiServer:
             error = 'Invalid parameters: ' + str(e) + ' "' + call[idx + 1:] + '"'
 
         if command == 'quit':
-            raise self.QuitException()
+            raise QuitException()
 
         ok = False
         last_exception = None
@@ -336,9 +368,8 @@ class ApiServer:
                     error = 'invalid args: ' + str(e)
                     break
                 except Exception as e:
-                    print('Trying to open compute engine again because of: %s' % e)
+                    self.print('Trying to open compute engine again because of: %s' % e)
                     last_exception = e
-                    self._reset()
                 if ok:
                     break
 
@@ -350,8 +381,7 @@ class ApiServer:
 
     def listen(self):
         # main loop here
-        print('server started, waiting for connections')
-        since_reset = 0
+        self.print('%s on port %d' % (self.SERVER_READY_NOTICE, self._port))
         while True:
             # outer loop accepting connections (max 1)
             try:
@@ -367,15 +397,18 @@ class ApiServer:
                                 if out is not None:
                                     out = out.strip(' \n\r\t') + '\n'
                                     conn.sendall(out.encode('utf-8'))
-                                    since_reset += 1
-                                    if since_reset >= 1000:
-                                        self._reset()
-                                        since_reset = 0
                 except ConnectionAbortedError:
-                    print('client closed the connection')
+                    self.print('client closed the connection')
             except socket.timeout:
                 pass
 
+    def print(self, msg, start=False, finish=False):
+        if start:
+            print('[%d] %s' % (self._pid, msg), end='', flush=True)
+        elif finish:
+            print(msg)
+        else:
+            print('[%d] %s' % (self._pid, msg))
 
     def _receive(self, conn):
         chunks = []
@@ -399,17 +432,145 @@ class ApiServer:
     def close(self):
         self._sock.close()
 
-    def _reset(self):
-        print('Restarting computing engine to avoid memory leak [NOT IMPLEMENTED]')
-        # CloseComputeEngine("localhost", "")
-        # OpenComputeEngine("localhost", ("-l", "srun", "-np", "1"))
-        # RestoreSession("data/default-visit.session", 0)
+
+class SpawnMaster(ApiServer):
+    MAX_WAIT = 200  # in secs
+
+    def __init__(self, addr='127.0.0.1', port=50007, max_count=2000):
+        self._pid = os.getpid()
+
+        self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self._addr = addr
+        self._port = port
+        self._sock.bind(('', port))
+        self._sock.listen(1)
+        self._sock.settimeout(5)
+
+        self._max_count = max_count
+        self._children = {}
+        self._spawn_cmd = sys.argv[0]
+
+    def _spawn(self, mission, verbose=True):
+        if verbose:
+            self.print('Starting api-server for %s ... ' % mission, start=True)
+
+        if mission not in self._children:
+            self._children[mission] = {
+                'port': max((self._port,) + tuple(v['port'] for v in self._children.values())) + 1,
+                'proc': None,
+                'client': None,
+                'count': 0,
+            }
+        port = self._children[mission]['port']
+
+        # spawn new api-server
+        self._children[mission]['proc'] = subprocess.Popen(['python', self._spawn_cmd, str(port), mission]) #,# shell=True, close_fds=True,
+                                                            #stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                                            #encoding='utf8')#, creationflags=subprocess.CREATE_NEW_PROCESS_GROUP|subprocess.CREATE_NEW_CONSOLE)
+        time.sleep(5)
+        # wait until get acknowledgement of all ready
+        # success = False
+        # for i in range(SpawnMaster.MAX_WAIT):
+        #     try:
+        #         out, err = self._children[mission]['proc'].communicate(timeout=1)
+        #         if self.SERVER_READY_NOTICE in out:
+        #             success = True
+        #             break
+        #         if len(out.strip()) > 0 and verbose:
+        #             print('child process out: %s' % out)
+        #         if len(err.strip()) > 0:
+        #             print('child process err: %s' % err)
+        #             break
+        #     except TimeoutExpired:
+        #         pass
+        #assert success, 'Spawn for %s failed to start in %ds' % (mission, SpawnMaster.MAX_WAIT)
+
+        # open connection to newly spawned sub-process
+        self._subproc_conn(mission)
+        if verbose:
+            self.print('done', finish=True)
+
+    def _subproc_conn(self, mission, max_wait=MAX_WAIT):
+        client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self._children[mission]['client'] = client
+        client.settimeout(self.MAX_WAIT)
+        for i in range(max_wait//5):
+            try:
+                client.connect((self._addr, self._children[mission]['port']))
+                break
+            except ConnectionRefusedError:
+                time.sleep(5)
+            except OSError as e:
+                if 'already connected socket' in str(e):
+                    break
+                else:
+                    raise e
+        return client
+
+    def _reset(self, mission):
+        self.print('Restarting %s api-server to avoid running out of memory due to leaks ... ' % mission, start=True)
+        self.send(mission, 'quit')
+        self._children[mission]['count'] = 0
+        self._spawn(mission, verbose=False)
+        self.print('done', finish=True)
+
+    def _hard_reset(self, mission):
+        client = self._children[mission]['client']
+        proc = self._children[mission]['proc']
+        if client is not None:
+            client.close()
+        if proc is not None:
+            proc.kill()
+        time.sleep(5)
+
+    def _shutdown(self):
+        for m, d in self._children.items():
+            self.send(m, 'quit')
+        raise QuitException()
+
+    def _handle(self, call):
+        if call == 'quit':
+            self._shutdown()
+
+        idx = call.find('|')
+        mission = call[:idx]
+        if mission not in self._children:
+            self._spawn(mission)
+        if self._children[mission]['count'] > self._max_count:
+            self._reset(mission)
+
+        response = self.send(mission, call)
+
+        # detect if child process is out of memory, reset and try again once
+        if 'Insufficient memory' in response \
+                or 'MemoryError' in response \
+                or 'memory allocation failed' in response:
+            self._reset(mission)
+            response = self.send(mission, call)
+
+        self._children[mission]['count'] += 1
+        return response
+
+    def send(self, mission, call):
+        client = self._children[mission]['client']
+        rec = None
+        for i in range(2):
+            client.sendall(call.encode('utf-8'))
+            try:
+                if client._closed:
+                    client = self._subproc_conn(mission, max_wait=10)
+                rec = self._receive(client)
+                break
+            except (ConnectionAbortedError, socket.timeout, OSError):
+                # reset and try again
+                self.print('Can\'t reach %s api-server, trying hard reset' % mission)
+                self._hard_reset(mission)
+                if call == 'quit':
+                    return ''  # if call was quit, just kill process and return
+                self._spawn(mission)
+        assert rec is not None, 'could not receive anything from api-server even if tried twice'
+        return rec
 
 
 if __name__ == '__main__':
-    server = ApiServer(sys.argv[1], hires=True)
-    try:
-        server.listen()
-    finally:
-        server.close()
-    quit()
+    main()

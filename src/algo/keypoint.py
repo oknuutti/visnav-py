@@ -89,7 +89,7 @@ class KeypointAlgo(AlgorithmBase):
 
 
     def solve_pnp(self, orig_sce_img, outfile, feat=ORB, use_feature_db=False, adjust_sc_rot = False,
-            add_noise=False, scale_cam_img=False, vary_scale=False, match_mask_params=None, **kwargs):
+            add_noise=False, scale_cam_img=False, vary_scale=False, match_mask_params=None, verbose=1, **kwargs):
 
         # set max mem usable by reference features, scene features use rest of MAX_WORK_MEM
         ref_max_mem = KeypointAlgo.FDB_MAX_MEM if use_feature_db else KeypointAlgo.MAX_WORK_MEM/2
@@ -198,8 +198,9 @@ class KeypointAlgo(AlgorithmBase):
                 # debug by drawing matches
                 if not BATCH_MODE or DEBUG:
                     print('matches: %s/%s'%(len(matches), min(len(sce_kp), len(ref_kp))), flush=True, end=", ")
-                self._draw_matches(sce_img, sce_img_sc, sce_kp, ref_img, ref_img_sc,
-                                   ref_kp, matches, pause=False, show=DEBUG)
+                if verbose > 0:
+                    self._draw_matches(sce_img, sce_img_sc, sce_kp, ref_img, ref_img_sc,
+                                       ref_kp, matches, pause=False, show=DEBUG)
 
                 if error is not None:
                     raise error
@@ -234,8 +235,9 @@ class KeypointAlgo(AlgorithmBase):
                 rvec, tvec, inliers = KeypointAlgo.solve_pnp_ransac(sm, sce_kp_2d, ref_kp_3d, self._ransac_err)
 
                 # debug by drawing inlier matches
-                self._draw_matches(sce_img, sce_img_sc, sce_kp, ref_img, ref_img_sc, ref_kp,
-                                   [matches[i[0]] for i in inliers], label='c) inliers', pause=self._pause)
+                if verbose > 0:
+                    self._draw_matches(sce_img, sce_img_sc, sce_kp, ref_img, ref_img_sc, ref_kp,
+                                       [matches[i[0]] for i in inliers], label='c) inliers', pause=self._pause)
 
                 inlier_count = self.count_inliers(sce_kp, ref_kp, matches, inliers)
                 if DEBUG:
