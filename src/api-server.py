@@ -544,6 +544,7 @@ class SpawnMaster(ApiServer):
         # detect if child process is out of memory, reset and try again once
         if 'Insufficient memory' in response \
                 or 'MemoryError' in response \
+                or 'cv::Mat::create' in response \
                 or 'memory allocation failed' in response:
             self._reset(mission)
             response = self.send(mission, call)
@@ -552,16 +553,18 @@ class SpawnMaster(ApiServer):
         return response
 
     def send(self, mission, call):
-        client = self._children[mission]['client']
         rec = None
         for i in range(2):
-            client.sendall(call.encode('utf-8'))
+            client = self._children[mission]['client']
             try:
                 if client._closed:
                     client = self._subproc_conn(mission, max_wait=10)
+                client.sendall(call.encode('utf-8'))
                 rec = self._receive(client)
                 break
-            except (ConnectionAbortedError, socket.timeout, OSError):
+            except (ConnectionAbortedError, socket.timeout, OSError) as err:
+                if call == 'quit' and isinstance(err, ConnectionAbortedError):
+                    return ''  # quit executed successfully, it doesn't return anything
                 # reset and try again
                 self.print('Can\'t reach %s api-server, trying hard reset' % mission)
                 self._hard_reset(mission)
