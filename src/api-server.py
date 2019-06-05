@@ -14,6 +14,11 @@ import quaternion
 import sys
 import pytz
 
+import settings
+settings.LOG_DIR = sys.argv[1]
+settings.CACHE_DIR = settings.LOG_DIR
+from settings import *
+
 from algo import tools
 from algo.base import AlgorithmBase
 from algo.keypoint import KeypointAlgo
@@ -22,16 +27,14 @@ from algo.tools import PositioningException
 from batch1 import get_system_model
 from missions.didymos import DidymosPrimary, DidymosSystemModel, DidymosSecondary
 from render.render import RenderEngine
-
-from settings import *
 from testloop import TestLoop
 
 
 def main():
-    port = int(sys.argv[1])
+    port = int(sys.argv[2])
 
-    if len(sys.argv) > 2:
-        server = ApiServer(sys.argv[2], port=port, hires=True, cache_noise=True, result_rendering=False)
+    if len(sys.argv) > 3:
+        server = ApiServer(sys.argv[3], port=port, hires=True, cache_noise=True, result_rendering=False)
     else:
         server = SpawnMaster(port=port, max_count=5000)
 
@@ -473,7 +476,7 @@ class SpawnMaster(ApiServer):
         port = self._children[mission]['port']
 
         # spawn new api-server
-        self._children[mission]['proc'] = subprocess.Popen(['python', self._spawn_cmd, str(port), mission]) #,# shell=True, close_fds=True,
+        self._children[mission]['proc'] = subprocess.Popen(['python', self._spawn_cmd, LOG_DIR, str(port), mission]) #,# shell=True, close_fds=True,
                                                             #stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                                             #encoding='utf8')#, creationflags=subprocess.CREATE_NEW_PROCESS_GROUP|subprocess.CREATE_NEW_CONSOLE)
         time.sleep(5)
