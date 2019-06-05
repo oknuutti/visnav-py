@@ -50,6 +50,7 @@ class QuitException(Exception):
 
 class ApiServer:
     SERVER_READY_NOTICE = 'server started, waiting for connections'
+    MAX_ORI_DIFF_ANGLE = 360  # in deg
 
     def __init__(self, mission, hires=True, addr='127.0.0.1', port=50007, cache_noise=False, result_rendering=True):
         self._pid = os.getpid()
@@ -236,6 +237,9 @@ class ApiServer:
         # set spacecraft orientation
         self._sm.spacecraft_q = init_sc_q
 
+        # initial rel q
+        init_rel_q = init_sc_q.conj() * init_ast_q
+
         # sc-asteroid relative location
         ast_v = d2_v if self._target_d2 else d1_v   # relative to barycenter
         init_sc_pos = tools.q_times_v(SystemModel.sc2gl_q.conj() * init_sc_q.conj(), ast_v - sc_v)
@@ -258,6 +262,11 @@ class ApiServer:
 
             # collect to one result list
             result = [list(rel_v), list(quaternion.as_float_array(rel_q))]
+
+            diff_angle = math.degrees(tools.angle_between_q(init_rel_q, rel_q))
+            if diff_angle > ApiServer.MAX_ORI_DIFF_ANGLE:
+                err = PositioningException('Result orientation too different than initial one, diff %.1f°, max: %.1f°'
+                                           % (diff_angle, ApiServer.MAX_ORI_DIFF_ANGLE))
 
         # render a result image
         if self._result_rendering:
