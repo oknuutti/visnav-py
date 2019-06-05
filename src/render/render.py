@@ -5,7 +5,11 @@ import numpy as np
 import quaternion
 
 import moderngl
-from moderngl.ext.obj import Obj
+
+try:
+    from moderngl.ext.obj import Obj
+except:
+    from ModernGL.ext import obj as Obj
 
 from algo import tools
 from algo.image import ImageProc
