@@ -1,6 +1,7 @@
 import subprocess
 import time
 from subprocess import TimeoutExpired
+from shutil import which
 
 import math
 import socket
@@ -463,6 +464,8 @@ class SpawnMaster(ApiServer):
 
         self._max_count = max_count
         self._children = {}
+        self._python_cmds = ['python'] if which('xvfb-run') is None else \
+                            ['xvfb-run', '--server-args="-screen 0 1x1x24"', 'python']
         self._spawn_cmd = sys.argv[0]
 
     def _spawn(self, mission, verbose=True):
@@ -479,7 +482,7 @@ class SpawnMaster(ApiServer):
         port = self._children[mission]['port']
 
         # spawn new api-server
-        self._children[mission]['proc'] = subprocess.Popen(['python', self._spawn_cmd, LOG_DIR, str(port), mission]) #,# shell=True, close_fds=True,
+        self._children[mission]['proc'] = subprocess.Popen(self._python_cmds + [self._spawn_cmd, LOG_DIR, str(port), mission]) #,# shell=True, close_fds=True,
                                                             #stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                                             #encoding='utf8')#, creationflags=subprocess.CREATE_NEW_PROCESS_GROUP|subprocess.CREATE_NEW_CONSOLE)
         time.sleep(5)
