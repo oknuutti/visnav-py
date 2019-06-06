@@ -328,6 +328,8 @@ class ApiServer:
             return None
         if call == 'quit':
             raise QuitException()
+        elif call == 'ping':
+            return 'pong'
 
         error = False
         rval = False
@@ -402,13 +404,14 @@ class ApiServer:
                     with conn:
                         while True:
                             # inner loop accepting multiple requests on same connection
-                            req = self._receive(conn)
-                            for call in req.strip(' \n\r\t').split('\n'):
-                                # in case multiple calls in one request
-                                out = self._handle(call.strip(' \n\r\t'))
-                                if out is not None:
-                                    out = out.strip(' \n\r\t') + '\n'
-                                    conn.sendall(out.encode('utf-8'))
+                            req = self._receive(conn).strip(' \n\r\t')
+                            if req != '':
+                                for call in req.split('\n'):
+                                    # in case multiple calls in one request
+                                    out = self._handle(call.strip(' \n\r\t'))
+                                    if out is not None:
+                                        out = out.strip(' \n\r\t') + '\n'
+                                        conn.sendall(out.encode('utf-8'))
                 except ConnectionAbortedError:
                     self.print('client closed the connection')
             except socket.timeout:
@@ -543,6 +546,8 @@ class SpawnMaster(ApiServer):
     def _handle(self, call):
         if call == 'quit':
             self._shutdown()
+        elif call == 'ping':
+            return 'pong'
 
         idx = call.find('|')
         mission = call[:idx]
