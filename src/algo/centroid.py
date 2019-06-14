@@ -18,7 +18,7 @@ class CentroidAlgo(AlgorithmBase):
     def __init__(self, system_model, render_engine, obj_idx, **kwargs):
         super(CentroidAlgo, self).__init__(system_model, render_engine, obj_idx)
 
-        self._bg_threshold = None
+        self._bg_threshold = 20                 # default thresholding value
         self._ref_img = None
         
         self.DEBUG_IMG_POSTFIX = 'c'            # fi batch mode, save result image in a file ending like this
@@ -36,7 +36,7 @@ class CentroidAlgo(AlgorithmBase):
     def adjust_iteratively(self, sce_img, outfile=None, **kwargs):
         self.debug_filebase = outfile
         self._bg_threshold = kwargs.get('bg_threshold', self._bg_threshold)
-        sce_img = self.maybe_load_scene_image(sce_img)
+        sce_img = self.maybe_load_scene_image(sce_img, preproc='bg_threshold' not in kwargs)
 
         if DEBUG:
             cv2.imshow('target img', sce_img)
@@ -50,7 +50,7 @@ class CentroidAlgo(AlgorithmBase):
                 self.adjust(sce_img)
             else:
                 try:
-                    self.adjust(sce_img)
+                    self.adjust(sce_img, preproc=False)
                 except PositioningException as e:
                     print(str(e))
                     break
@@ -79,8 +79,8 @@ class CentroidAlgo(AlgorithmBase):
             cv2.destroyAllWindows()
     
     
-    def adjust(self, sce_img, ref_img=None, simple=False):
-        sce_img = self.maybe_load_scene_image(sce_img)
+    def adjust(self, sce_img, ref_img=None, simple=False, preproc=True):
+        sce_img = self.maybe_load_scene_image(sce_img, preproc=preproc)
         
         if not simple:
             if ref_img is None:
@@ -264,10 +264,12 @@ class CentroidAlgo(AlgorithmBase):
         return (x_off, y_off, -dist)
         
 
-    def maybe_load_scene_image(self, sce_img, detect_asteroid=False):
+    def maybe_load_scene_image(self, sce_img, detect_asteroid=False, preproc=False):
         if isinstance(sce_img, str):
-            img = self.load_target_image(sce_img)
-            sce_img, self._bg_threshold = self.remove_background(img)
+            sce_img = self.load_target_image(sce_img)
+
+        if preproc:
+            sce_img, self._bg_threshold = self.remove_background(sce_img)
             if detect_asteroid:
                 self.detect_asteroid(sce_img)
             if DEBUG:

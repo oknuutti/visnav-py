@@ -1,3 +1,4 @@
+import re
 import subprocess
 import time
 from subprocess import TimeoutExpired
@@ -16,6 +17,8 @@ import sys
 import pytz
 
 import settings
+from algo.centroid import CentroidAlgo
+
 settings.LOG_DIR = sys.argv[1]
 settings.CACHE_DIR = settings.LOG_DIR
 from settings import *
@@ -35,7 +38,7 @@ def main():
     port = int(sys.argv[2])
 
     if len(sys.argv) > 3:
-        server = ApiServer(sys.argv[3], port=port, hires=True, cache_noise=True, result_rendering=False)
+        server = ApiServer(sys.argv[3], port=port, hires=True, cache_noise=True, result_rendering=True)
     else:
         server = SpawnMaster(port=port, max_count=5000)
 
@@ -98,9 +101,10 @@ class ApiServer:
         self._onboard_renderer = RenderEngine(sm.view_width, sm.view_height, antialias_samples=0)
         self._target_obj_idx = self._onboard_renderer.load_object(sm.asteroid.target_model_file, smooth=sm.asteroid.render_smooth_faces)
         self._keypoint = KeypointAlgo(sm, self._onboard_renderer, self._target_obj_idx)
+        self._centroid = CentroidAlgo(sm, self._onboard_renderer, self._target_obj_idx)
 
         # laser measurement range given in dlem-20 datasheet
-        self._laser_min_range, self._laser_max_range, self._laser_nominal_max_range = 10, 1200, 5000
+        self._laser_min_range, self._laser_max_range, self._laser_nominal_max_range = 10, 2100, 5000
         self._laser_fail_prob = 0.05   # probability of measurement fail because e.g. asteroid low albedo
         self._laser_false_prob = 0.01  # probability for random measurement even if no target
         self._laser_err_sigma = 0.5    # 0.5m sigma1 accuracy given in dlem-20 datasheet
@@ -222,7 +226,7 @@ class ApiServer:
 
         return fname
 
-    def _get_pose(self, params):
+    def _get_pose(self, params, algo_id=1):
         # load target navcam image
         fname = params[0]
         img = cv2.imread(fname, cv2.IMREAD_GRAYSCALE)
@@ -251,15 +255,22 @@ class ApiServer:
 
         # run keypoint algo
         err = None
+        rot_ok = True
         try:
-            self._keypoint.solve_pnp(img, fname[:-4], KeypointAlgo.AKAZE, verbose=1 if self._result_rendering else 0)
+            if algo_id == 1:
+                self._keypoint.solve_pnp(img, fname[:-4], KeypointAlgo.AKAZE, verbose=1 if self._result_rendering else 0)
+            elif algo_id == 2:
+                self._centroid.adjust_iteratively(img, fname[:-4])
+                rot_ok = False
+            else:
+                assert False, 'invalid algo_id=%s' % algo_id
         except PositioningException as e:
             err = e
 
         if err is None:
             # resulting sc-ast relative orientation
             sc_q = self._sm.spacecraft_q
-            rel_q = sc_q.conj() * self._sm.asteroid_q * ast.ast2sc_q
+            rel_q = sc_q.conj() * self._sm.asteroid_q * ast.ast2sc_q if rot_ok else np.quaternion(*([np.nan]*4))
 
             # sc-ast vector in meters
             rel_v = tools.q_times_v(sc_q * SystemModel.sc2gl_q, np.array(self._sm.spacecraft_pos)*1000)
@@ -355,15 +366,16 @@ class ApiServer:
         if not error:
             for i in range(3):
                 try:
-                    if command == 'render':
-                        rval = self._render(params)
-                        ok = True
-                    elif command == 'get_pose':
+                    get_pose = re.match(r'^get_pose(\d+)$', command)
+                    if get_pose:
                         try:
-                            rval = self._get_pose(params)
+                            rval = self._get_pose(params, algo_id=int(get_pose[1]))
                             ok = True
                         except PositioningException as e:
                             error = 'algo failed: ' + str(e)
+                    elif command == 'render':
+                        rval = self._render(params)
+                        ok = True
                     elif command == 'laser_meas':
                         # return a laser measurement
                         rval = self._laser_meas(params)

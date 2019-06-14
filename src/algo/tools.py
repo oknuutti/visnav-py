@@ -175,7 +175,7 @@ def q_times_v(q, v):
 def q_times_mx(q, mx):
     qqmx = q * mx2qmx(mx) * q.conj()
     aqqmx = quaternion.as_float_array(qqmx)
-    return aqqmx[:,1:]
+    return aqqmx[:, 1:]
 
 def mx2qmx(mx):
     qmx = np.zeros((mx.shape[0],4))
