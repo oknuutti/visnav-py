@@ -7,6 +7,7 @@ from shutil import which
 import math
 import socket
 import json
+import traceback
 from datetime import datetime
 from json import JSONDecodeError
 
@@ -85,11 +86,9 @@ class ApiServer:
         else:
             self.asteroids = [sm.asteroid]
 
-        self._obj_idxs = [
-            self._renderer.load_object(
-                ast.hires_target_model_file if hires else ast.target_model_file,
-                smooth=ast.render_smooth_faces)
-            for ast in self.asteroids]
+        objs = [(ast.hires_target_model_file if hires else ast.target_model_file, ast.render_smooth_faces)
+                for ast in self.asteroids] + [(sm.sc_model_file, False)]
+        self._obj_idxs = [self._renderer.load_object(obj[0], smooth=obj[1]) for obj in objs]
 
         self._wireframe_obj_idxs = [
             self._renderer.load_object(os.path.join(BASE_DIR, 'data/ryugu+tex-%s-100.obj'%ast), wireframe=True)
@@ -133,7 +132,7 @@ class ApiServer:
         rel_rot_q = np.array([q * d1_q * d1.ast2sc_q.conj(), q * d2_q * d2.ast2sc_q.conj()])
         rel_pos_v = np.array([tools.q_times_v(q, d1_v - sc_v), tools.q_times_v(q, d2_v - sc_v)])
 
-        dist = self._renderer.ray_intersect_dist(self._obj_idxs, rel_pos_v, rel_rot_q)
+        dist = self._renderer.ray_intersect_dist(self._obj_idxs[0:2], rel_pos_v, rel_rot_q)
 
         if dist is None:
             if np.random.uniform(0, 1) < self._laser_false_prob:
@@ -213,8 +212,9 @@ class ApiServer:
 
         d1, d2 = self.asteroids
         q = SystemModel.sc2gl_q.conj() * sc_q.conj()
-        rel_rot_q = np.array([q * d1_q * d1.ast2sc_q.conj(), q * d2_q * d2.ast2sc_q.conj()])
-        rel_pos_v = np.array([tools.q_times_v(q, d1_v - sc_v), tools.q_times_v(q, d2_v - sc_v)])
+        rel_rot_q = np.array([q * d1_q * d1.ast2sc_q.conj(), q * d2_q * d2.ast2sc_q.conj(),
+                              np.quaternion(1, 0, 1, 0).normalized()])  # last one is the for the spacecraft
+        rel_pos_v = np.array([tools.q_times_v(q, d1_v - sc_v), tools.q_times_v(q, d2_v - sc_v), [0, 0, 0]])
         light_v = tools.q_times_v(q, sun_ast_v)
 
         img = TestLoop.render_navcam_image_static(self._sm, self._renderer, self._obj_idxs, rel_pos_v, rel_rot_q, light_v,
@@ -395,8 +395,9 @@ class ApiServer:
                     error = 'invalid args: ' + str(e)
                     break
                 except Exception as e:
-                    self.print('Trying to open compute engine again because of: %s' % e)
-                    last_exception = e
+                    self.print('Exception: %s' % e)
+                    last_exception = ''.join(traceback.format_exception(*sys.exc_info()))
+                    self.print('Trying to open compute engine again because of: %s' % last_exception)
                 if ok:
                     break
 
@@ -462,7 +463,7 @@ class ApiServer:
 
 
 class SpawnMaster(ApiServer):
-    MAX_WAIT = 200  # in secs
+    MAX_WAIT = 300  # in secs
 
     def __init__(self, addr='127.0.0.1', port=50007, max_count=2000):
         self._pid = os.getpid()

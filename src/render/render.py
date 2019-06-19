@@ -75,7 +75,7 @@ class RenderEngine:
         self._height = view_height
         self._samples = antialias_samples
 
-        self._wireframe_prog = self._load_prog('wireframe.vert', 'wireframe.frag', 'wireframe.geom')
+        self._wireframe_prog = self._load_prog('wireframe.vert', 'wireframe.frag', 'wireframe2.geom')
         self._shadow_prog = self._load_prog('shadow.vert', 'shadow.frag')
         self._prog = self._load_prog('shader_v400.vert', 'shader_v400.frag')
         self._prog['brightness_coef'].value = 0.65
@@ -88,6 +88,12 @@ class RenderEngine:
             self._cbo2 = self._ctx.renderbuffer((view_width, view_height))
             self._dbo2 = self._ctx.depth_texture((view_width, view_height), alignment=1)
             self._fbo2 = self._ctx.framebuffer(self._cbo2, self._dbo2)
+
+        # for shadows
+        n = int(math.sqrt(self._samples or 1))
+        self._scbo = self._ctx.renderbuffer((view_width*n, view_height*n))
+        self._sdbo = self._ctx.depth_texture((view_width*n, view_height*n), alignment=1)
+        self._sfbo = self._ctx.framebuffer(self._scbo, self._sdbo)
 
         self._objs = []
         self._s_objs = []
@@ -368,7 +374,7 @@ class RenderEngine:
         proj = self._ortho_mx(obj_idxs, mvs)
         bias = self._bias_mx()  # map from [-1,1] x [-1,1] to [0,1]x[0,1] so that can use with "texture" command
 
-        self._fbo.use()
+        self._sfbo.use()
         self._ctx.enable(moderngl.DEPTH_TEST)
         self._ctx.enable(moderngl.CULL_FACE)
         self._ctx.front_face = 'ccw'  # cull back faces (front faces suggested but that had glitches)
@@ -381,14 +387,9 @@ class RenderEngine:
             self._shadow_prog['mvp'].write(mvp.T.astype('float32').tobytes())
             self._s_objs[i].render()
 
-        if self._samples > 0:
-            self._ctx.copy_framebuffer(self._fbo2, self._fbo)
-            dbo = self._dbo2
-        else:
-            dbo = self._dbo
-
-        data = dbo.read(alignment=1)
-        self._shadow_map = self._ctx.texture((self._width, self._height), 1, data=data, alignment=1, dtype='f4')
+        data = self._sdbo.read(alignment=1)
+        n = int(math.sqrt(self._samples or 1))
+        self._shadow_map = self._ctx.texture((self._width*n, self._height*n), 1, data=data, alignment=1, dtype='f4')
 
         if False:
             import cv2
@@ -457,10 +458,10 @@ class RenderEngine:
 if __name__ == '__main__':
     from settings import *
     import cv2
-    sm = DidymosSystemModel(use_narrow_cam=False, target_primary=False)
+    sm = DidymosSystemModel(use_narrow_cam=False, target_primary=False, hi_res_shape_model=True)
 #    sm = RosettaSystemModel()
-    re = RenderEngine(sm.cam.width//2, sm.cam.height//2)
-    re.set_frustum(sm.cam.x_fov, sm.cam.y_fov, sm.min_altitude*0.5, sm.max_distance)
+    re = RenderEngine(sm.cam.width, sm.cam.height, antialias_samples=16)
+    re.set_frustum(sm.cam.x_fov, sm.cam.y_fov, 0.05, 2)
     pos = [0, 0, -sm.min_med_distance * 1]
     q = tools.angleaxis_to_q((math.radians(20), 0, 1, 0))
 
@@ -468,21 +469,23 @@ if __name__ == '__main__':
     #obj_idx = re.load_object('../data/67p-4k.obj')
     #obj_idx = re.load_object('../data/ryugu+tex-d1-4k.obj')
     if False:
+        # test result grid
         obj_idx = re.load_object(os.path.join(BASE_DIR, 'data/ryugu+tex-d1-100.obj'), wireframe=True)
         q = tools.angleaxis_to_q((math.radians(3), 0, 1, 0))
-        pos = [0, 0, -4]
+        pos = [0, 0, -7]
         for i in range(60):
             image = re.render_wireframe(obj_idx, pos, q ** i, (0, 1, 0))
             cv2.imshow('fs', image)
             cv2.waitKey()
         quit()
     else:
-        obj_idx = re.load_object(sm.asteroid.target_model_file)
+        obj_idx = re.load_object(sm.asteroid.real_shape_model)
+        #obj_idx = re.load_object(sm.asteroid.target_model_file)
         #obj_idx = re.load_object(sm.asteroid.hires_target_model_file)
     #obj_idx = re.load_object(sm.asteroid.target_model_file)
     #obj_idx = re.load_object(os.path.join(BASE_DIR, 'data/test-ball.obj'))
 
-    if True:
+    if False:
         # test depth rendering for laser algo
         re.set_orth_frustum(sm.asteroid.max_radius * 0.002, sm.asteroid.max_radius * 0.002, 0, sm.max_distance)
         img, depth = re.render(obj_idx, [0, 0, -0.22], q, [1, 0, 0], get_depth=True, shadows=False, textures=False)
@@ -494,13 +497,15 @@ if __name__ == '__main__':
         cv2.waitKey()
         quit()
 
-    if False:
+    if True:
         # test multi-object shadow rendering
-        RenderEngine.REFLMOD_PARAMS[RenderEngine.REFLMOD_LUNAR_LAMBERT][6] = 2
-        obj_idx1 = re.load_object(DidymosPrimary(hi_res_shape_model=False).target_model_file)
-        p = [obj_idx1, obj_idx], [[0, 0, 1.0], [0, 0, -0.22]], [q, q]
+        #RenderEngine.REFLMOD_PARAMS[RenderEngine.REFLMOD_LUNAR_LAMBERT][6] = 2
+        obj_idx_d1 = re.load_object(DidymosPrimary(hi_res_shape_model=False).target_model_file)
+        obj_idx_sc = re.load_object(sm.sc_model_file)
+        p = [obj_idx_d1, obj_idx, obj_idx_sc], [[0, 1.0, 1.0], [0, 0, -0.22], [0, 0, 0]], [q, q, np.quaternion(1,0,1,0).normalized()]
         # p = obj_idx, [0, 0, -0.22], q
-        img, depth = re.render(*p, [1, 0, 0], get_depth=True, shadows=True, textures=True)
+        img, depth = re.render(*p, [0, 0, -1], get_depth=True, shadows=True, textures=True,
+                               reflection=RenderEngine.REFLMOD_HAPKE)
         cv2.imshow('img', img)
         cv2.waitKey()
         quit()

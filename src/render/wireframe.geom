@@ -11,16 +11,6 @@ void main()
 
     if(b.x*c.y - b.y*c.x - a.x*c.y + a.x*b.y + a.y*c.x - a.y*b.x > 0)
     {
-//        float width = 0.005;
-//        vec3 nab = cross(normalize(b-a), vec3(0, 0, 1));
-//        vec3 nbc = cross(normalize(c-b), vec3(0, 0, 1));
-//        vec3 nca = cross(normalize(a-c), vec3(0, 0, 1));
-//
-//        p0 = a - nab*width;
-//        p1 = a + nab*width;
-//        p2 = b - nab*width;
-//        p3 = b + nab*width;
-
         gl_Position = gl_in[0].gl_Position;
         EmitVertex();
 

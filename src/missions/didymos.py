@@ -85,6 +85,7 @@ class DidymosSystemModel(SystemModel):
             limits=limits,
         )
         self.mission_id = mission_id
+        self.sc_model_file = os.path.join(BASE_DIR, 'data/apex-x1-2019-05-28.obj')
 
 
 class DidymosPrimary(Asteroid):
@@ -144,7 +145,7 @@ class DidymosPrimary(Asteroid):
 
         # use ryugu model for this, ryugu ~162m diameter, ryugu-big ~772m diameter (Didy2 & Didy1)
         self.target_model_file = os.path.join(BASE_DIR, 'data/ryugu+tex-d1-16k.obj')
-        self.hires_target_model_file = os.path.join(BASE_DIR, 'data/ryugu+tex-d1-98k.obj')
+        self.hires_target_model_file = os.path.join(BASE_DIR, 'data/ryugu+tex-d1-400k.obj')
         self.hires_target_model_file_textures = True
 
         self.constant_noise_shape_model = {
@@ -218,7 +219,7 @@ class DidymosSecondary(Asteroid):
 
         # use ryugu model for this, ryugu ~162m diameter, ryugu-big ~772m diameter (Didy2 & Didy1)
         self.target_model_file = os.path.join(BASE_DIR, 'data/ryugu+tex-d2-16k.obj')
-        self.hires_target_model_file = os.path.join(BASE_DIR, 'data/ryugu+tex-d2-98k.obj')
+        self.hires_target_model_file = os.path.join(BASE_DIR, 'data/ryugu+tex-d2-400k.obj')
 
         self.constant_noise_shape_model = {
             '' : os.path.join(BASE_DIR, 'data/ryugu+tex-d2-16k.nsm'),   # same as target_model_file but includes error estimate
