@@ -423,6 +423,7 @@ class TestLoop:
 
         return self._loaded_sm_noise
 
+
     @staticmethod
     def render_navcam_image_static(sm, renderer, obj_idxs, rel_pos_v=None, rel_rot_q=None, light_v=None,
                                    use_shadows=True, use_textures=False, cache_noise=False):

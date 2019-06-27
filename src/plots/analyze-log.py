@@ -20,7 +20,7 @@ except:
 from settings import *
 from algo import tools
 
-EASY_LIMITS = ((80, 180), (0, 12), (50, 270), (0.8, 1))
+EASY_LIMITS = ((80, 180), (0, 12), (3.5, 4.5), (0.8, 1))
 FAIL_ERRS = {
     'rel shift error (m/km)': 200,
     'altitude error': 2000,

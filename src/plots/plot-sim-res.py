@@ -9,8 +9,8 @@ import matplotlib.pyplot as plt
 from algo import tools
 
 
-def main(mission_sc=False):
-    mpl.rcParams['font.size'] = 18
+def main(mission_sc=False, simple=False):
+    mpl.rcParams['font.size'] = 22
 
     try:
         filename = sys.argv[1]
@@ -123,57 +123,98 @@ def main(mission_sc=False):
     # plot didymain & didymoon
     fig1, ax = plt.subplots(figsize=(30, 19.5))
     if not is_4km:
-        plot_orbit_sf(ax, d1_loc_sf, sc_loc_sf, flt_loc_sf, cutoff=int(11.9*2*60))
+        plot_orbit_sf(ax, d1_loc_sf, sc_loc_sf, flt_loc_sf, cutoff=int(2*11.9*3600/30))
     else:
-        plot_orbit_sf(ax, d1_loc, sc_loc, flt_loc, plot_bodies=False, cutoff=int(73.125*2*60))
+        plot_orbit_sf(ax, d1_loc, sc_loc, flt_loc, plot_bodies=False, cutoff=int(2*73.125*3600/60))
     plt.tight_layout()
 
     # normal plots
-    fig2, axs = plt.subplots(4 if cum_delta_v[-1] > 0 else 3, 1, sharex=True, figsize=(30, 19.5))
+    if simple:
+        fig2, axs = plt.subplots(3, 1, sharex=True, figsize=(30, 19.5))
 
-    # location errors
-    i = 0
-    for j, a in enumerate('real '+a for a in c_lab):
-        axs[i].plot(time, sc_loc_stf[:, j], label=a)
-    axs[i].set_prop_cycle(None)
-    for j, a in enumerate('filter '+a for a in c_lab):
-        axs[i].plot(time, flt_loc_stf[:, j], ':', label=a)
+        # fix to adjust time instant used for reference location
+        # if 'id7-' in filename:
+        #     sc_loc_stf = sc_loc_stf[:-1, :]
+        #     flt_loc_stf = flt_loc_stf[1:, :]
+        #     lma_loc_stf = lma_loc_stf[1:, :]
+        #     lsr_loc_stf = lsr_loc_stf[1:, :]
+        #     time = time[:-1]
 
-    axs[i].set_title('filter output\nerr μ=(%.2f, %.2f, %.2f), σ=(%.2f, %.2f, %.2f)' % (*flt_err_mean, *flt_err_std))
-    axs[i].legend(loc='lower right')
+        for i, a in enumerate('real '+a for a in c_lab):
+            axs[i].plot(time, sc_loc_stf[:, i] - sc_loc_stf[:, i], label=a)
 
-    # measurements
-    i += 1
-    for j, a in enumerate('real '+a for a in c_lab):
-        axs[i].plot(time, sc_loc_stf[:, j], label=a)
-    axs[i].set_prop_cycle(None)
+        print('filter err μ=(%.2f, %.2f, %.2f), σ=(%.2f, %.2f, %.2f)' % (*flt_err_mean, *flt_err_std))
+        for i, a in enumerate('filter '+a for a in c_lab):
+            axs[i].plot(time, flt_loc_stf[:, i] - sc_loc_stf[:, i], label=a)
 
-    if has_lma:
-        for j, a in enumerate('optical '+a for a in c_lab):
-            axs[i].plot(time, lma_loc_stf[:, j], '--', label=a)
+        if has_lma:
+            print('spl err μ=(%.2f, %.2f, %.2f), σ=(%.2f, %.2f, %.2f)' % (*lma_err_mean, *lma_err_std))
+            idx = np.logical_not(np.isnan(lma_loc_stf[:, 0]))
+            for i, a in enumerate('spl ' + a for a in c_lab):
+                axs[i].plot(time[idx], lma_loc_stf[idx, i] - sc_loc_stf[idx, i], '--', label=a)
+#            axs[i].set_prop_cycle(None)
+
+        if has_lsr:
+            print('lsr err μ=(%.2f, %.2f, %.2f), σ=(%.2f, %.2f, %.2f)' % (*lsr_err_mean, *lsr_err_std))
+            idx = np.logical_not(np.isnan(lsr_loc_stf[:, 0]))
+            for i, a in enumerate('lsr ' + a for a in c_lab):
+                axs[i].plot(time[idx], lsr_loc_stf[idx, i] - sc_loc_stf[idx, i], ':', label=a)
+
+        for i in range(3):
+            axs[i].legend(loc='lower right')
+            if 'id1-' in filename:
+                axs[i].set_ybound(-1000, 1000)
+            elif 'id4-' in filename:
+                axs[i].set_ybound(-60, 60)
+            elif 'id7-' in filename:
+                axs[i].set_ybound(-30, 30)
+
+    else:
+        fig2, axs = plt.subplots(4 if cum_delta_v[-1] > 0 else 3, 1, sharex=True, figsize=(30, 19.5))
+
+        # location errors
+        i = 0
+        for j, a in enumerate('real '+a for a in c_lab):
+            axs[i].plot(time, sc_loc_stf[:, j], label=a)
+        axs[i].set_prop_cycle(None)
+        for j, a in enumerate('filter '+a for a in c_lab):
+            axs[i].plot(time, flt_loc_stf[:, j], ':', label=a)
+
+        axs[i].set_title('filter output\nerr μ=(%.2f, %.2f, %.2f), σ=(%.2f, %.2f, %.2f)' % (*flt_err_mean, *flt_err_std))
+        axs[i].legend(loc='lower right')
+
+        # measurements
+        i += 1
+        for j, a in enumerate('real '+a for a in c_lab):
+            axs[i].plot(time, sc_loc_stf[:, j], label=a)
         axs[i].set_prop_cycle(None)
 
-    if has_lsr:
-        for j, a in enumerate('laser '+a for a in c_lab):
-            axs[i].plot(time, lsr_loc_stf[:, j], ':', label=a)
-    axs[i].set_title('measurements'
-                     + ('\nopt err μ=(%.2f, %.2f, %.2f), σ=(%.2f, %.2f, %.2f)' % (*lma_err_mean, *lma_err_std) if has_lma else '')
-                     + ('\nlsr err μ=(%.2f, %.2f, %.2f), σ=(%.2f, %.2f, %.2f)' % (*lsr_err_mean, *lsr_err_std) if has_lsr else '')
-                    )
-    axs[i].legend(loc='lower right')
+        if has_lma:
+            for j, a in enumerate('optical '+a for a in c_lab):
+                axs[i].plot(time, lma_loc_stf[:, j], '--', label=a)
+            axs[i].set_prop_cycle(None)
 
-    # measurement likelihood
-    i += 1
-    axs[i].plot(time, meas_ll)
-    axs[i].set_title('measurement likelihood')
+        if has_lsr:
+            for j, a in enumerate('laser '+a for a in c_lab):
+                axs[i].plot(time, lsr_loc_stf[:, j], ':', label=a)
+        axs[i].set_title('measurements'
+                         + ('\nopt err μ=(%.2f, %.2f, %.2f), σ=(%.2f, %.2f, %.2f)' % (*lma_err_mean, *lma_err_std) if has_lma else '')
+                         + ('\nlsr err μ=(%.2f, %.2f, %.2f), σ=(%.2f, %.2f, %.2f)' % (*lsr_err_mean, *lsr_err_std) if has_lsr else '')
+                        )
+        axs[i].legend(loc='lower right')
 
-    # delta-v used
-    if cum_delta_v[-1] > 0:
+        # measurement likelihood
         i += 1
-        axs[i].plot(time, cum_delta_v)
-        axs[i].set_title('cumulative delta-v usage')
+        axs[i].plot(time, meas_ll)
+        axs[i].set_title('measurement likelihood')
 
-    axs[i].set_xlim(np.min(time), np.max(time))
+        # delta-v used
+        if cum_delta_v[-1] > 0:
+            i += 1
+            axs[i].plot(time, cum_delta_v)
+            axs[i].set_title('cumulative delta-v usage')
+
+        axs[i].set_xlim(np.min(time), np.max(time))
     plt.tight_layout()
     plt.show()
 
@@ -259,5 +300,5 @@ def plot_mission_sc(data, format=3):
 
 
 if __name__ == '__main__':
-    main(mission_sc=False)
+    main(mission_sc=False, simple=True)
 

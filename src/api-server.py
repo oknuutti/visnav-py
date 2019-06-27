@@ -39,7 +39,7 @@ def main():
     port = int(sys.argv[2])
 
     if len(sys.argv) > 3:
-        server = ApiServer(sys.argv[3], port=port, hires=True, cache_noise=True, result_rendering=True)
+        server = ApiServer(sys.argv[3], port=port, hires=True, cache_noise=True, result_rendering=False)
     else:
         server = SpawnMaster(port=port, max_count=5000)
 
@@ -86,9 +86,12 @@ class ApiServer:
         else:
             self.asteroids = [sm.asteroid]
 
-        objs = [(ast.hires_target_model_file if hires else ast.target_model_file, ast.render_smooth_faces)
-                for ast in self.asteroids] + [(sm.sc_model_file, False)]
-        self._obj_idxs = [self._renderer.load_object(obj[0], smooth=obj[1]) for obj in objs]
+        self._obj_idxs = []
+        for ast in self.asteroids:
+            file = ast.hires_target_model_file if hires else ast.target_model_file
+            cache_file = os.path.join(CACHE_DIR, os.path.basename(file).split('.')[0] + '.pickle')
+            self._obj_idxs.append(self._renderer.load_object(file, smooth=ast.render_smooth_faces, cache_file=cache_file))
+        self._obj_idxs.append(self._renderer.load_object(sm.sc_model_file, smooth=False))
 
         self._wireframe_obj_idxs = [
             self._renderer.load_object(os.path.join(BASE_DIR, 'data/ryugu+tex-%s-100.obj'%ast), wireframe=True)
@@ -360,48 +363,35 @@ class ApiServer:
         if command == 'quit':
             raise QuitException()
 
-        ok = False
         last_exception = None
-
         if not error:
-            for i in range(3):
-                try:
-                    get_pose = re.match(r'^get_pose(\d+)$', command)
-                    if get_pose:
-                        try:
-                            rval = self._get_pose(params, algo_id=int(get_pose[1]))
-                            ok = True
-                        except PositioningException as e:
-                            error = 'algo failed: ' + str(e)
-                    elif command == 'render':
-                        rval = self._render(params)
-                        ok = True
-                    elif command == 'laser_meas':
-                        # return a laser measurement
-                        rval = self._laser_meas(params)
-                        ok = True
-                    elif command == 'laser_algo':
-                        # return new sc-target vector based on laser measurement
-                        try:
-                            rval = self._laser_algo(params)
-                            ok = True
-                        except PositioningException as e:
-                            error = 'algo failed: ' + str(e)
-                        pass
-                    else:
-                        error = 'invalid command: ' + command
-                        break
-                except (ValueError, TypeError) as e:
-                    error = 'invalid args: ' + str(e)
-                    break
-                except Exception as e:
-                    self.print('Exception: %s' % e)
-                    last_exception = ''.join(traceback.format_exception(*sys.exc_info()))
-                    self.print('Trying to open compute engine again because of: %s' % last_exception)
-                if ok:
-                    break
+            try:
+                get_pose = re.match(r'^get_pose(\d+)$', command)
+                if get_pose:
+                    try:
+                        rval = self._get_pose(params, algo_id=int(get_pose[1]))
+                    except PositioningException as e:
+                        error = 'algo failed: ' + str(e)
+                elif command == 'render':
+                    rval = self._render(params)
+                elif command == 'laser_meas':
+                    # return a laser measurement
+                    rval = self._laser_meas(params)
+                elif command == 'laser_algo':
+                    # return new sc-target vector based on laser measurement
+                    try:
+                        rval = self._laser_algo(params)
+                    except PositioningException as e:
+                        error = 'algo failed: ' + str(e)
+                else:
+                    error = 'invalid command: ' + command
+            except (ValueError, TypeError) as e:
+                error = 'invalid args: ' + str(e)
+            except Exception as e:
+                last_exception = ''.join(traceback.format_exception(*sys.exc_info()))
+                self.print('Exception: %s' % last_exception)
 
-        if not ok and last_exception is not None:
+        if last_exception is not None:
             error = 'Exception encountered: %s' % last_exception
 
         out = ' '.join((('0' if error else '1'),) + ((error,) if error else (rval,) if rval else tuple()))
@@ -432,12 +422,13 @@ class ApiServer:
                 pass
 
     def print(self, msg, start=False, finish=False):
+        prefix = '%s [%d]' % (datetime.now().strftime('%Y-%m-%d %H:%M:%S'), self._pid)
         if start:
-            print('[%d] %s' % (self._pid, msg), end='', flush=True)
+            print(' '.join((prefix, msg)), end='', flush=True)
         elif finish:
             print(msg)
         else:
-            print('[%d] %s' % (self._pid, msg))
+            print(' '.join((prefix, msg)))
 
     def _receive(self, conn):
         chunks = []
@@ -463,7 +454,7 @@ class ApiServer:
 
 
 class SpawnMaster(ApiServer):
-    MAX_WAIT = 300  # in secs
+    MAX_WAIT = 600  # in secs
 
     def __init__(self, addr='127.0.0.1', port=50007, max_count=2000):
         self._pid = os.getpid()
@@ -541,6 +532,7 @@ class SpawnMaster(ApiServer):
     def _reset(self, mission):
         self.print('Restarting %s api-server to avoid running out of memory due to leaks ... ' % mission, start=True)
         self.send(mission, 'quit')
+        time.sleep(20)
         self._children[mission]['count'] = 0
         self._spawn(mission, verbose=False)
         self.print('done', finish=True)
@@ -579,6 +571,7 @@ class SpawnMaster(ApiServer):
                 or 'MemoryError' in response \
                 or 'cv::Mat::create' in response \
                 or 'memory allocation failed' in response:
+            self.print('Child process out of memory detected')
             self._reset(mission)
             response = self.send(mission, call)
 
@@ -591,7 +584,7 @@ class SpawnMaster(ApiServer):
             client = self._children[mission]['client']
             try:
                 if client._closed:
-                    client = self._subproc_conn(mission, max_wait=10)
+                    client = self._subproc_conn(mission)
                 client.sendall(call.encode('utf-8'))
                 rec = self._receive(client)
                 break

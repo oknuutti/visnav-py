@@ -39,7 +39,7 @@ class DidymosSystemModel(SystemModel):
             if use_narrow_cam:
                 mission_id = 'didy1n'
                 limits = (
-                    3.8,    # min_distance in km
+                    3.5,    # min_distance in km
                     7.5,    # min_med_distance in km
                     10.5,   # max_med_distance in km
                     10.5,   # max_distance in km
@@ -49,7 +49,7 @@ class DidymosSystemModel(SystemModel):
             else:
                 mission_id = 'didy1w'
                 limits = (
-                    1.1,  # min_distance in km
+                    1.0,  # min_distance in km
                     1.1,  # min_med_distance in km
                     6.0,  # max_med_distance in km
                     6.0,  # max_distance in km
@@ -60,7 +60,7 @@ class DidymosSystemModel(SystemModel):
             if use_narrow_cam:
                 mission_id = 'didy2n'
                 limits = (
-                    1.1,    # min_distance in km
+                    1.0,    # min_distance in km
                     1.5,    # min_med_distance in km
                     5.3,   # max_med_distance in km
                     5.3,   # max_distance in km
@@ -70,7 +70,7 @@ class DidymosSystemModel(SystemModel):
             else:
                 mission_id = 'didy2w'
                 limits = (
-                    0.15,  # min_distance in km
+                    0.135,  # min_distance in km
                     0.22,  # min_med_distance in km
                     1.3,  # max_med_distance in km
                     1.3,  # max_distance in km
@@ -240,7 +240,7 @@ class DidymosSecondary(Asteroid):
         }
 
         # for cross section, assume spherical object
-        self.max_radius = 100     # in meters, maximum extent of object from asteroid frame coordinate origin
+        self.max_radius = 105     # in meters, maximum extent of object from asteroid frame coordinate origin
         self.mean_radius = 163/2  # in meters
         self.mean_cross_section = math.pi * self.mean_radius ** 2
 

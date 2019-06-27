@@ -1,5 +1,6 @@
 import math
 import os
+import pickle
 
 import numpy as np
 import quaternion
@@ -16,6 +17,8 @@ from algo.image import ImageProc
 from iotools.objloader import ShapeModel
 from missions.didymos import DidymosSystemModel, DidymosPrimary
 from missions.rosetta import RosettaSystemModel, ChuryumovGerasimenko
+
+#from memory_profiler import profile
 
 
 class RenderEngine:
@@ -65,7 +68,6 @@ class RenderEngine:
         [1.00, 0, 0, 0, 0, 0, 0],
     ]).T
 
-
     def __init__(self, view_width, view_height, antialias_samples=0):
         if RenderEngine._ctx is None:
             RenderEngine._ctx = moderngl.create_standalone_context()
@@ -106,6 +108,30 @@ class RenderEngine:
         self._frustum_near = None
         self._frustum_far = None
         self._persp_proj = False
+
+    def __del__(self):
+        self._wireframe_prog.release()
+        self._shadow_prog.release()
+        self._prog.release()
+        self._cbo.release()
+        self._dbo.release()
+        self._fbo.release()
+        self._scbo.release()
+        self._sdbo.release()
+        self._sfbo.release()
+        if self._samples > 0:
+            self._cbo2.release()
+            self._dbo2.release()
+            self._fbo2.release()
+        for o in self._objs:
+            o.release()
+        for o in self._s_objs:
+            o.release()
+        for o in self._w_objs:
+            o.release()
+        for t in self._textures:
+            if t is not None:
+                t.release()
 
     def _load_prog(self, vert, frag, geom=None):
         vertex_shader_source = open(os.path.join(os.path.dirname(__file__), vert)).read()
@@ -156,58 +182,74 @@ class RenderEngine:
         t = height/2
         self._proj_mx = self._ortho_mx_size(l, r, b, t, n, f)
 
-    def load_object(self, object, obj_idx=None, smooth=False, wireframe=False):
-        vertex_data = None
-        if isinstance(object, str):
-            object = ShapeModel(fname=object)
-        elif isinstance(object, Obj):
-            vertex_data = object
-            assert not smooth, 'not supported'
+    def load_object(self, object, obj_idx=None, smooth=False, wireframe=False, cache_file=None):
+        if cache_file is None or not os.path.isfile(cache_file):
+            vertex_data = None
+            if isinstance(object, str):
+                object = ShapeModel(fname=object)
+            elif isinstance(object, Obj):
+                vertex_data = object
+                assert not smooth, 'not supported'
 
-        if isinstance(object, ShapeModel):
-            if smooth:
-                verts, tex, norms, faces = object.export_smooth_faces()
-            else:
-                verts, tex, norms, faces = object.export_angular_faces()
+            if isinstance(object, ShapeModel):
+                if smooth:
+                    verts, tex, norms, faces = object.export_smooth_faces()
+                else:
+                    verts, tex, norms, faces = object.export_angular_faces()
 
-            vertex_data = Obj(verts, tex, norms, faces)
-            texture_data = object.load_texture()
+                vertex_data = Obj(verts, tex, norms, faces)
+                texture_data = object.load_texture()
 
-        assert vertex_data is not None, 'wrong object type'
+            assert vertex_data is not None, 'wrong object type'
+
+            if not wireframe:
+                if cache_file is not None:
+                    with open(cache_file, 'wb') as fh:
+                        pickle.dump((texture_data, vertex_data), fh)
+        else:
+            with open(cache_file, 'rb') as fh:
+                texture_data, vertex_data = pickle.load(fh)
 
         if wireframe:
-            w_vbo = self._ctx.buffer(vertex_data.pack('vx vy vz'))
-            w_obj = self._ctx.simple_vertex_array(self._wireframe_prog, w_vbo, 'vertexPosition_modelFrame')
+            return self.load_cached_wf_object(vertex_data.pack('vx vy vz'), obj_idx=obj_idx)
         else:
-            texture = None
-            if texture_data is not None:
-                texture = self._ctx.texture(texture_data.T.shape, 1, np.flipud(texture_data).tobytes())
-                texture.build_mipmaps()
+            obj_bytes = vertex_data.pack('vx vy vz nx ny nz tx ty')
+            s_obj_bytes = vertex_data.pack('vx vy vz')
+            return self.load_cached_object(vertex_data, obj_bytes, s_obj_bytes, texture_data, obj_idx=obj_idx)
 
-            vbo = self._ctx.buffer(vertex_data.pack('vx vy vz nx ny nz tx ty'))
-            obj = self._ctx.simple_vertex_array(self._prog, vbo, 'vertexPosition_modelFrame', 'vertexNormal_modelFrame', 'aTexCoords')
+    def load_cached_object(self, vertex_data, obj_bytes, s_obj_bytes, texture_data, obj_idx=None):
+        texture = None
+        if texture_data is not None:
+            texture = self._ctx.texture(texture_data.T.shape, 1, np.flipud(texture_data).tobytes())
+            texture.build_mipmaps()
 
-            s_vbo = self._ctx.buffer(vertex_data.pack('vx vy vz'))
-            s_obj = self._ctx.simple_vertex_array(self._shadow_prog, s_vbo, 'vertexPosition_modelFrame')
+        vbo = self._ctx.buffer(obj_bytes)
+        obj = self._ctx.simple_vertex_array(self._prog, vbo, 'vertexPosition_modelFrame', 'vertexNormal_modelFrame', 'aTexCoords')
+
+        s_vbo = self._ctx.buffer(s_obj_bytes)
+        s_obj = self._ctx.simple_vertex_array(self._shadow_prog, s_vbo, 'vertexPosition_modelFrame')
 
         if obj_idx is None:
-            if wireframe:
-                self._w_objs.append(w_obj)
-            else:
-                self._objs.append(obj)
-                self._s_objs.append(s_obj)
-                self._raw_objs.append(vertex_data)
-                self._textures.append(texture)
+            self._objs.append(obj)
+            self._s_objs.append(s_obj)
+            self._raw_objs.append(vertex_data)
+            self._textures.append(texture)
         else:
-            if wireframe:
-                self._w_objs[obj_idx] = w_obj
-            else:
-                self._objs[obj_idx] = obj
-                self._s_objs[obj_idx] = s_obj
-                self._raw_objs[obj_idx] = vertex_data
-                self._textures[obj_idx] = texture
+            self._objs[obj_idx] = obj
+            self._s_objs[obj_idx] = s_obj
+            self._raw_objs[obj_idx] = vertex_data
+            self._textures[obj_idx] = texture
 
-        return len(self._w_objs if wireframe else self._objs)-1
+        return len(self._objs) - 1
+
+    def load_cached_wf_object(self, w_obj_bytes, obj_idx=None):
+        w_vbo = self._ctx.buffer(w_obj_bytes)
+        w_obj = self._ctx.simple_vertex_array(self._wireframe_prog, w_vbo, 'vertexPosition_modelFrame')
+        if obj_idx is None:
+            self._w_objs.append(w_obj)
+        else:
+            self._w_objs[obj_idx] = w_obj
+        return len(self._w_objs) - 1
 
     def ray_intersect_dist(self, obj_idxs, rel_pos_v, rel_rot_q):
         # return distance to objects along -z-axis, supports laser algorithm, put here because efficient
@@ -263,6 +305,7 @@ class RenderEngine:
 
         return data
 
+    # @profile(stream=open('memory_profiler.log', 'w+'))
     def render(self, obj_idxs, rel_pos_v, rel_rot_q, light_v, get_depth=False, shadows=True, textures=True,
                gamma=1.0, reflection=REFLMOD_LUNAR_LAMBERT):
 
@@ -314,6 +357,10 @@ class RenderEngine:
                 # for orthographic projection
                 #  - depth is between 0 and 1
                 depth = depth * (self._frustum_far - self._frustum_near) + self._frustum_near
+
+        # free memory to avoid memory leaks
+        if shadows:
+            self._shadow_map.release()
 
         if gamma != 1.0:
             data = ImageProc.adjust_gamma(data, gamma)

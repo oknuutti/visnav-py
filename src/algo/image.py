@@ -62,7 +62,7 @@ class ImageProc():
         return img
 
     @staticmethod
-    @lru_cache(maxsize=10)
+    @lru_cache(maxsize=1)
     def gkern2d(l=5, sig=1.):
         """
         creates gaussian kernel with side length l and a sigma of sig
@@ -77,26 +77,26 @@ class ImageProc():
         # add power law distributed stars to image
         assert img.shape == img.shape[:2], 'works only with grayscale images'
         if not cache:
-            ImageProc._cached_random_stars.clear_cache()
+            ImageProc._cached_random_stars.cache_clear()
         stars = ImageProc._cached_random_stars(coef, img.shape)
         # can be over 255, will clip later
         img[mask] = np.clip(stars[mask], 0, 600)
         return img
 
     @staticmethod
-    @lru_cache(maxsize=10)
+    @lru_cache(maxsize=1)
     def _cached_random_stars(coef, shape):
         return np.random.pareto(coef, shape)
 
     @staticmethod
     def add_ccd_noise(img, mean=7, sd=2, cache=False):
         if not cache:
-            ImageProc._cached_ccd_noise.clear_cache()
+            ImageProc._cached_ccd_noise.cache_clear()
         img += ImageProc._cached_ccd_noise(mean, sd, img.shape)
         return img
 
     @staticmethod
-    @lru_cache(maxsize=10)
+    @lru_cache(maxsize=1)
     def _cached_ccd_noise(mean, sd, shape):
         return np.random.normal(mean, sd, shape)
 
