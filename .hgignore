@@ -13,3 +13,6 @@ nbproject
 *.xcf
 *.pdf
 ./*.png
+*.zip
+*.avi
+*.log

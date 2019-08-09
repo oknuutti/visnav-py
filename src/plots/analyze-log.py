@@ -1,9 +1,11 @@
 import sys
 import csv
 import math
+from itertools import product
 
 import numpy as np
 import matplotlib.pyplot as plt
+from numpy.linalg import inv
 
 from batch1 import get_system_model
 from missions.didymos import DidymosSystemModel
@@ -17,91 +19,20 @@ except:
     print('Requires scikit-learn, install using "conda install scikit-learn"')
     sys.exit()
 
-from settings import *
 from algo import tools
-
-EASY_LIMITS = ((80, 180), (0, 12), (3.5, 4.5), (0.8, 1))
-FAIL_ERRS = {
-    'rel shift error (m/km)': 200,
-    'altitude error': 2000,
-    'dist error (m/km)': 200,
-    'lat error (m/km)': 200,
-    'rot error': 25,
-}
-MAX_ROTATION_ERR = 7
-
-# read logfiles
-def read_data(sm, logfile, predictors, target):
-    X, y, rot_err, labels = [], [], [], []
-    
-    with open(logfile, newline='') as csvfile:
-        rad = sm.asteroid.mean_radius * 0.001
-        data = csv.reader(csvfile, delimiter='\t')
-        first = True
-        for row in data:
-            if len(row)>10:
-                if first:
-                    first = False
-                    prd_i = [row.index(p) for p in predictors if p not in ('distance', 'visible')]
-                    trg_i = row.index(target)
-                    rot_i = row.index('rot error')
-                    pos_i = [row.index(p+' sc pos') for p in ('x','y','z')]
-                    lbl_i = row.index('iter')
-                else:
-                    row = np.array(row)
-                    try:
-                        pos = row[pos_i].astype(np.float)
-                    except ValueError as e:
-                        print('Can\'t convert cols %s to float on row %s' % (pos_i, row[0]))
-                        raise e
-                    distance = np.sqrt(np.sum(pos**2))
-                    xt = abs(pos[2])*math.tan(math.radians(sm.cam.x_fov)/2)
-                    yt = abs(pos[2])*math.tan(math.radians(sm.cam.y_fov)/2)
-
-                    #xm = np.clip((xt - (abs(pos[0])-rad))/rad/2, 0, 1)
-                    #ym = np.clip((yt - (abs(pos[1])-rad))/rad/2, 0, 1)
-                    xm = 1 - (max(0, pos[0]+rad - xt) + max(0, rad-pos[0] - xt))/rad/2
-                    ym = 1 - (max(0, pos[1]+rad - yt) + max(0, rad-pos[1] - yt))/rad/2
-
-                    X.append(np.concatenate((
-                        row[prd_i].astype(np.float),
-                        [distance],
-                        [xm*ym],
-                    )))
-                    
-                    # err m/km
-                    tmp = row[trg_i].astype(np.float) if len(row)>trg_i else float('nan')
-                    y.append(tmp)
-                    rot_err.append(row[rot_i].astype(np.float))
-                    labels.append(row[lbl_i])
-    
-    X = np.array(X)
-    
-    # for classification of fails
-    yc = np.isnan(y)
-    rot_err = np.array(rot_err)
-    if True:
-        yc = np.logical_or(yc, np.isnan(rot_err))
-    if MAX_ROTATION_ERR > 0:
-        I = np.logical_not(yc)
-        rot_err[I] = np.abs(tools.wrap_degs(rot_err[I]))
-        yc[I] = np.logical_or(yc[I], rot_err[I] > MAX_ROTATION_ERR)
-
-    # for regression
-    yr = np.array(y)
-    #yr[np.isnan(yr)] = FAIL_ERRS[target]   # np.nanmax(yr)
-
-    if target == 'rot error':
-        yr = np.abs(tools.wrap_degs(yr))
-
-    return X, yc, yr, labels
+from iotools.readlog import read_data
+from settings import *
 
 
-if __name__ == '__main__':
-    if len(sys.argv)<2:
+# phase angle (180-elong), ini err, distance, visibility
+EASY_LIMITS = ((20, 100), (0, 10), (3.5, 4.5), (0.8, 1))
+
+
+def main():
+    if len(sys.argv) < 2:
         print('USAGE: python analyze-log.py <path to log file> [gpr|1d|easy] [shift|alt|dist|lat|orient]')
         sys.exit()
-        
+
     mode = sys.argv[2]
     if len(sys.argv) > 3:
         sc = 1
@@ -118,20 +49,21 @@ if __name__ == '__main__':
             target = 'rot error'
         else:
             assert False, 'unknown target: %s' % sys.argv[3]
+    else:
+        target = 'rel shift error (m/km)'  # 'shift error km' #if not one_d_only else 'dist error'
 
     predictors = (
-        'sol elong',    # solar elongation
+        'sol elong',  # solar elongation
         'total dev angle',  # total angle between initial estimate and actual relative orientation
-        'distance',    # distance of object
-        'visible',      # esimate of % visible because of camera view edge
+        'distance',  # distance of object
+        'visible',  # esimate of % visible because of camera view edge
     )
     predictor_labels = (
-        'Solar Elongation (deg)',
+        'Phase Angle (deg)',
         'Initial orientation error (deg)',
         'Distance (km)',
         'In camera view (%)',
     )
-    target = target or 'rel shift error (m/km)'  #'shift error km' #if not one_d_only else 'dist error'
 
     data = []
     for logfile in sys.argv[1].split(" "):
@@ -139,25 +71,25 @@ if __name__ == '__main__':
         sm = get_system_model(mission)
 
         # read data
-        X, yc, yr, labels = read_data(sm, os.path.join(LOG_DIR, logfile), predictors, target)
-        X[:, 1] = np.abs(tools.wrap_degs(X[:, 1]))
-        data.append((logfile, X, yc, yr*sc, labels))
-
+        X, Y, yc, labels = read_data(sm, os.path.join(LOG_DIR, logfile), predictors, [target])
+        #X[:, 1] = np.abs(tools.wrap_degs(X[:, 1]))
+        data.append((logfile, X, yc, Y.flatten(), labels))
 
     if mode in ('1d', 'easy'):
         n_groups = 6
-        #yr = yr/1000
-        #idxs = (0, 1, 2, 3)
+        # yr = yr/1000
+        # idxs = (0, 1, 2, 3)
         idxs = (2,)
         for idx in idxs:
             fig, axs = plt.subplots(len(data), 1, figsize=(20, 18), sharex=True)
             for i, (logfile, X, yc, yr, labels) in enumerate(data):
                 if mode == 'easy':
                     q997 = np.percentile(np.abs(yr), 99.7)
-                    tmp = tuple((X[:, k] >= EASY_LIMITS[k][0], X[:, k] <= EASY_LIMITS[k][1]) for k in idxs if k!=idx)
+                    tmp = tuple((X[:, k] >= EASY_LIMITS[k][0], X[:, k] <= EASY_LIMITS[k][1]) for k in idxs if k != idx)
 
                     # concatenate above & take logical and, also remove worst 0.3%
-                    I = np.logical_and.reduce(sum(tmp, ()) + (np.logical_or(np.abs(yr) < q997, yr == FAIL_ERRS[target]),))
+                    I = np.logical_and.reduce(
+                        sum(tmp, ()) + (np.logical_or(np.abs(yr) < q997, yr == FAIL_ERRS[target]),))
                 else:
                     I = np.ones((X.shape[0],), dtype='bool')
 
@@ -168,17 +100,17 @@ if __name__ == '__main__':
                 if n_groups:
                     # calc means and stds in bins
 
-                    #x = [1/v for v in np.linspace(1/xmin, 1/xmax, n_groups+1)]
+                    # x = [1/v for v in np.linspace(1/xmin, 1/xmax, n_groups+1)]
                     x = np.linspace(xmin, xmax, n_groups + 1)
                     y_grouped = [yr[np.logical_and.reduce((
                         I,
                         np.logical_not(yc),
                         X[:, idx] > x[i],
-                        X[:, idx] < x[i+1],
+                        X[:, idx] < x[i + 1],
                     ))] for i in range(n_groups)]
-                    #means = [np.percentile(yg, 50) for yg in y_grouped]
+                    # means = [np.percentile(yg, 50) for yg in y_grouped]
                     means = np.array([np.mean(yg) for yg in y_grouped])
-                    #stds = np.subtract([np.percentile(yg, 68) for yg in y_grouped], means)
+                    # stds = np.subtract([np.percentile(yg, 68) for yg in y_grouped], means)
                     stds = np.array([np.std(yg) for yg in y_grouped])
                     x = x.reshape((-1, 1))
                     stds = stds.reshape((-1, 1))
@@ -198,12 +130,12 @@ if __name__ == '__main__':
 
                     if False:
                         # exponential weight
-                        weight_fun = lambda d: 0.01**abs(d/(xmax-xmin))
+                        weight_fun = lambda d: 0.01 ** abs(d / (xmax - xmin))
                     else:
                         # gaussian weight
                         from scipy.stats import norm
                         from scipy.interpolate import interp1d
-                        interp = interp1d(xt-xmin, norm.pdf(xt-xmin, 0, (xmax-xmin)/10))
+                        interp = interp1d(xt - xmin, norm.pdf(xt - xmin, 0, (xmax - xmin) / 10))
                         weight_fun = lambda d: interp(abs(d))
 
                     if False:
@@ -214,7 +146,7 @@ if __name__ == '__main__':
                         yma = np.mean(yr[I])
 
                     ym = tools.smooth1d(xt, X[I, idx], yr[I], weight_fun)
-                    ystd = tools.smooth1d(xt, X[I, idx], (yr[I] - yma)**2, weight_fun) ** (1/2)
+                    ystd = tools.smooth1d(xt, X[I, idx], (yr[I] - yma) ** 2, weight_fun) ** (1 / 2)
 
                     ax.plot(xt, ym, '-')
                     ax.plot(xt, ystd, '-')
@@ -229,30 +161,32 @@ if __name__ == '__main__':
                 plt.setp(ax.get_yticklabels(), fontsize=14)
                 tools.hover_annotate(fig, ax, line, np.array(labels)[I])
 
-                #ax.set_xticks((x[1:] + x[:-1]) * 0.5)
-                #ax.set_xticklabels(['%.2f-%.2f' % (x[i], x[i+1]) for i in range(n_groups)])
-                #ax.legend()
+                # ax.set_xticks((x[1:] + x[:-1]) * 0.5)
+                # ax.set_xticklabels(['%.2f-%.2f' % (x[i], x[i+1]) for i in range(n_groups)])
+                # ax.legend()
 
                 # operation zones for didymos mission
-                if mission[:4]=='didy' and idx==2:
+                if mission[:4] == 'didy' and idx == 2:
                     ax.set_xticks(np.arange(0.1, 10.5, 0.2))
-                    if i==0:
+                    if i == 0:
                         ax.axvspan(1.1, 1.3, facecolor='cyan', alpha=0.3)
                         ax.axvspan(3.8, 4.2, facecolor='orange', alpha=0.3)
-                    elif i==1:
+                    elif i == 1:
                         ax.axvspan(0.15, 0.3, facecolor='pink', alpha=0.5)
                         ax.axvspan(1.1, 1.3, facecolor='cyan', alpha=0.3)
                     elif i == 2:
                         ax.axvspan(3.8, 4.2, facecolor='orange', alpha=0.3)
-                    elif i==3:
+                    elif i == 3:
                         ax.axvspan(1.1, 1.3, facecolor='cyan', alpha=0.3)
                         ax.axvspan(2.8, 5.2, facecolor='orange', alpha=0.3)
 
             plt.tight_layout()
-            while(plt.waitforbuttonpress() == False):
+            while (plt.waitforbuttonpress() == False):
                 pass
 
     elif mode == '2d':
+
+        scatter = False
 
         # 0: solar elong
         # 1: initial deviation angle
@@ -260,13 +194,14 @@ if __name__ == '__main__':
         # 3: ratio in view
         idxs = tuple(range(4))
         pairs = (
-        #    (2, 0),
-        #    (1, 3),
-            (2, 3),
-            (0, 1),
+            (2, 0),
+            #    (1, 3),
+            #    (2, 3),
+            #    (0, 1),
         )
 
-        titles = ['ORB', 'AKAZE', 'SURF', 'SIFT']
+        # titles = ['ORB', 'AKAZE', 'SURF', 'SIFT']
+        titles = [d[0][:-4] for d in data]
         nd = len(data)
         r, c = {
             1: (1, 1),
@@ -274,30 +209,82 @@ if __name__ == '__main__':
             3: (3, 1),
             4: (2, 2),
         }[nd]
-        fig, axs = plt.subplots(r, c*len(pairs), figsize=(32, 18))
+        if scatter:
+            fig, axs = plt.subplots(r, c * len(pairs), figsize=(32, 18))
+        else:
+            from mpl_toolkits.mplot3d import Axes3D
+            from matplotlib.colors import Normalize
+            fig = plt.figure(figsize=(32, 18))
+            fig2 = plt.figure(figsize=(32, 18))
 
         for j, (logfile, X, yc, yr, labels) in enumerate(data):
             for i, (i0, i1) in enumerate(pairs):
-                ax = axs.flatten()[j*len(pairs) + i]
-
-                # filter out difficult regions of axis that are not shown
-                tmp = tuple((X[:, k] >= EASY_LIMITS[k][0], X[:, k] <= EASY_LIMITS[k][1]) for k in idxs if k not in (i0, i1))
-                I = np.logical_and.reduce(sum(tmp, ()))
+                if scatter:
+                    # filter out difficult regions of axis that are not shown
+                    tmp = tuple(
+                        (X[:, k] >= EASY_LIMITS[k][0], X[:, k] <= EASY_LIMITS[k][1]) for k in idxs if k not in (i0, i1))
+                    I = np.logical_and.reduce(sum(tmp, ()))
+                else:
+                    I = np.ones((X.shape[0],), dtype='bool')
 
                 # add some offset if ratio in view is one so that they dont all stack in same place
                 offsets = (X[I, 3] == 1) * np.random.uniform(0, 0.2, (np.sum(I),))
                 off0 = 0 if i0 != 3 else offsets
                 off1 = 0 if i1 != 3 else offsets
 
-                line = ax.scatter(X[I, i0] + off0, X[I, i1] + off1, s=60, c=yc[I], cmap=plt.cm.Paired, alpha=0.5)  #edgecolors=(0, 0, 0))
-                ax.tick_params(labelsize=18)
-                ax.set_xlabel(predictors[i0], fontsize=22)
-                ax.set_ylabel(predictors[i1], fontsize=22)
-                tools.hover_annotate(fig, ax, line, np.array(labels)[I])
+                if scatter:
+                    ax = axs.flatten()[j * len(pairs) + i]
+                    line = ax.scatter(X[I, i0] + off0, X[I, i1] + off1, s=60, c=yc[I], cmap=plt.cm.Paired,
+                                      alpha=0.5)  # edgecolors=(0, 0, 0))
+                    tools.hover_annotate(fig, ax, line, np.array(labels)[I])
+                else:
+                    ax = fig.add_subplot(r, c * len(pairs), j * len(pairs) + i + 1, projection='3d')
+                    ax2 = fig2.add_subplot(r, c * len(pairs), j * len(pairs) + i + 1, projection='3d')
 
-                if i==0:
-                    col, row = j%c, j//c
-                    fig.text(0.26+col*0.5, 0.96-row*0.5, titles[j], fontsize=30, horizontalalignment='center')
+                    xmin, xmax = np.min(X[I, i0]), np.max(X[I, i0])
+                    ymin, ymax = np.min(X[I, i1]), np.max(X[I, i1])
+                    x = np.linspace(xmin, xmax, 7)
+                    y = np.linspace(ymin, ymax, 7) if i1 != 0 else np.array([0, 22.5, 45, 67.5, 90, 112.5, 135])
+                    xx, yy = np.meshgrid(x, y)
+
+                    y_grouped = [[yr[np.logical_and.reduce((
+                        I,
+                        np.logical_not(yc),
+                        X[:, i0] > x[i],
+                        X[:, i0] < x[i + 1],
+                        X[:, i1] > y[j],
+                        X[:, i1] < y[j + 1],
+                    ))] for i in range(len(x) - 1)] for j in range(len(y) - 1)]
+
+                    means = np.array([[np.mean(y_grouped[j][i]) for i in range(len(x) - 1)] for j in range(len(y) - 1)])
+                    stds = np.array(
+                        [[np.std(y_grouped[j][i]) + means[j][i] for i in range(len(x) - 1)] for j in range(len(y) - 1)])
+                    samples = np.array([[len(y_grouped[j][i]) for i in range(len(x) - 1)] for j in range(len(y) - 1)])
+
+                    d_coefs, pa_coefs, mod_stds = model_stds2(stds, samples)
+
+                    print_model(titles[j], x, d_coefs, y, pa_coefs)
+
+                    xstep = np.kron(xx, np.ones((2, 2)))[1:-1, 1:-1]
+                    ystep = np.kron(yy, np.ones((2, 2)))[1:-1, 1:-1]
+                    # mstep = np.kron(means, np.ones((2, 2)))
+                    sstep = np.kron(stds, np.ones((2, 2)))
+                    msstep = np.kron(mod_stds, np.ones((2, 2)))
+
+                    scalarMap = plt.cm.ScalarMappable(norm=Normalize(vmin=np.min(sstep), vmax=np.max(sstep)), cmap=plt.cm.PuOr_r)
+                    ax.plot_surface(xstep, ystep, sstep, facecolors=scalarMap.to_rgba(sstep), antialiased=True)
+                    ax.view_init(30, -60)
+
+                    ax2.plot_surface(xstep, ystep, msstep, facecolors=scalarMap.to_rgba(msstep), antialiased=True)
+                    ax2.view_init(30, -60)
+
+                ax.tick_params(labelsize=18)
+                ax.set_xlabel(predictor_labels[i0], fontsize=22)
+                ax.set_ylabel(predictor_labels[i1], fontsize=22)
+
+                if i == 0:
+                    col, row = j % c, j // c
+                    fig.text(0.26 + col * 0.5, 0.96 - row * 0.5, titles[j], fontsize=30, horizontalalignment='center')
                 # ax.set_xbound(xmin, xmax)
                 # ax.set_ybound(ymin, ymax)
 
@@ -395,4 +382,139 @@ if __name__ == '__main__':
     else:
         assert False, 'wrong mode'
 
-    #plt.waitforbuttonpress()
+    # plt.waitforbuttonpress()
+
+
+# read logfiles
+# def read_data(sm, logfile, predictors, target):
+#     X, y, rot_err, labels = [], [], [], []
+#
+#     with open(logfile, newline='') as csvfile:
+#         rad = sm.asteroid.mean_radius * 0.001
+#         data = csv.reader(csvfile, delimiter='\t')
+#         first = True
+#         for row in data:
+#             if len(row)>10:
+#                 if first:
+#                     first = False
+#                     prd_i = [row.index(p) for p in predictors if p not in ('distance', 'visible')]
+#                     trg_i = row.index(target)
+#                     rot_i = row.index('rot error')
+#                     pos_i = [row.index(p+' sc pos') for p in ('x','y','z')]
+#                     lbl_i = row.index('iter')
+#                 else:
+#                     row = np.array(row)
+#                     try:
+#                         pos = row[pos_i].astype(np.float)
+#                     except ValueError as e:
+#                         print('Can\'t convert cols %s to float on row %s' % (pos_i, row[0]))
+#                         raise e
+#                     distance = np.sqrt(np.sum(pos**2))
+#                     xt = abs(pos[2])*math.tan(math.radians(sm.cam.x_fov)/2)
+#                     yt = abs(pos[2])*math.tan(math.radians(sm.cam.y_fov)/2)
+#
+#                     #xm = np.clip((xt - (abs(pos[0])-rad))/rad/2, 0, 1)
+#                     #ym = np.clip((yt - (abs(pos[1])-rad))/rad/2, 0, 1)
+#                     xm = 1 - (max(0, pos[0]+rad - xt) + max(0, rad-pos[0] - xt))/rad/2
+#                     ym = 1 - (max(0, pos[1]+rad - yt) + max(0, rad-pos[1] - yt))/rad/2
+#
+#                     X.append(np.concatenate((
+#                         row[prd_i].astype(np.float),
+#                         [distance],
+#                         [xm*ym],
+#                     )))
+#
+#                     # err m/km
+#                     tmp = row[trg_i].astype(np.float) if len(row)>trg_i else float('nan')
+#                     y.append(tmp)
+#                     rot_err.append(row[rot_i].astype(np.float))
+#                     labels.append(row[lbl_i])
+#
+#     X = np.array(X)
+#
+#     # for classification of fails
+#     yc = np.isnan(y)
+#     rot_err = np.array(rot_err)
+#     if True:
+#         yc = np.logical_or(yc, np.isnan(rot_err))
+#     if MAX_ROTATION_ERR > 0:
+#         I = np.logical_not(yc)
+#         rot_err[I] = np.abs(tools.wrap_degs(rot_err[I]))
+#         yc[I] = np.logical_or(yc[I], rot_err[I] > MAX_ROTATION_ERR)
+#
+#     # for regression
+#     yr = np.array(y)
+#     #yr[np.isnan(yr)] = FAIL_ERRS[target]   # np.nanmax(yr)
+#
+#     if target == 'rot error':
+#         yr = np.abs(tools.wrap_degs(yr))
+#
+#     return X, yc, yr, labels
+
+
+def model_stds(stds):
+    """
+    solve pa_coefs.dot(d_coefs.T) == stds by taking log on both sides,
+    arrange equations so that can use pseudo inverse.
+    E.g. for stds of size 2x2:
+    A = [[1 0 1 0],
+         [1 0 0 1],
+         [0 1 1 0],
+         [0 1 0 1]]
+    y = np.log([stds[0,0],
+                stds[0,1],
+                stds[1,0]
+                stds[1,1]])
+    Aw == y
+    => w = inv(A'A)A'y
+    pa_coefs = np.exp(w[:2])
+    d_coefs = np.exp(w[2:])
+
+    ==> regrettably, turns out there's some bug, also cant figure out how to weight by sample count
+    """
+
+    n = len(stds)       # phase angle
+    m = len(stds[0])    # distance
+    A = np.zeros((n*m, n+m))
+    y = np.zeros((n*m, 1))
+    for k, (j, i) in enumerate(product(range(n), range(m))):
+        A[k, j] = 1
+        A[k, n+i] = 1
+        y[k] = math.log(stds[j, i])
+
+    # pseudo inverse
+    w = inv(A.T.dot(A)).dot(A.T).dot(y)
+
+    pa_coefs = np.exp(w[:n]).flatten()
+    d_coefs = np.exp(w[n:]).flatten()
+    mod_stds = np.array([[p*d for d in d_coefs] for p in pa_coefs])
+    return d_coefs, pa_coefs, mod_stds
+
+
+def model_stds2(stds, samples):
+    n = len(stds)       # phase angle
+    m = len(stds[0])    # distance
+
+    def weighted_mse(w, n, Y, S):
+        return np.average((np.array([[p * d for p in w[n:]] for d in w[:n]]) - Y)**2, weights=S)
+
+    from scipy.optimize import minimize
+    res = minimize(weighted_mse, np.ones(n+m), args=(n, stds, samples), method="BFGS",
+                   options={'maxiter': 10, 'eps': 1e-06, 'gtol': 1e-4})
+
+    #print('cost: %s' % res.fun)
+    pa_coefs = res.x[:n]
+    d_coefs = res.x[n:]
+    mod_stds = np.array([[p * d for d in d_coefs] for p in pa_coefs])
+    return d_coefs, pa_coefs, mod_stds
+
+
+def print_model(name, x, d_coefs, y, pa_coefs):
+    print('%s:\nd_lims = %s;\nd_coefs = %s;\npa_lims = %s;\npa_coefs = %s;\n' % (
+        name, x[1:-1], d_coefs, y[1:-1], pa_coefs
+    ))
+
+
+if __name__ == '__main__':
+    main()
+
