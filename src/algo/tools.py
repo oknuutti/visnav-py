@@ -102,10 +102,15 @@ def angle_between_v(v1, v2):
     return math.acos(np.clip(cos_angle, -1, 1))
 
 
+def rand_q(angle):
+    r = np.random.normal(size=3)
+    return ypr_to_q(*(r/np.linalg.norm(r) * angle))
+
+
 def angle_between_q(q1, q2):
     # from  https://chrischoy.github.io/research/measuring-rotation/
     qd = q1.conj()*q2
-    return 2*math.acos(qd.normalized().w)
+    return wrap_rads(2*math.acos(qd.normalized().w))
 
 
 def angle_between_ypr(ypr1, ypr2):
