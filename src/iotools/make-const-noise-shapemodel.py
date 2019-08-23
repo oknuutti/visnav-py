@@ -20,29 +20,6 @@ from settings import *
 # data/ryugu-hi-res.obj data/ryugu-xl-res.obj data/ryugu_xl.nsm
 # data/ryugu-hi-res.obj data/ryugu-xxl-res.obj data/ryugu_xxl.nsm
 
-@nb.jit(nb.f8[:](nb.f8[:,:], nb.f8[:,:], nb.i4[:,:]), nogil=True, parallel=False)
-def get_model_errors(full_vertices, vertices, faces):
-    count = len(full_vertices)
-    digits = int(math.ceil(math.log10(count//10+1)))
-    print('%s/%d' % ('0' * digits, count//10), end='', flush=True)
-
-    devs = np.empty(full_vertices.shape[0])
-    for i in nb.prange(count):
-        vx = full_vertices[i, :]
-        err = tools.intersections(faces, vertices, np.array(((0, 0, 0), vx)))
-        if math.isinf(err):  # len(pts) == 0:
-            print('no intersections!')
-            continue
-
-        if False:
-            idx = np.argmin([np.linalg.norm(pt-vx) for pt in pts])
-            err = np.linalg.norm(pts[idx]) - np.linalg.norm(vx)
-
-        devs[i] = err
-        print(('%s%0' + str(digits) + 'd/%d') % ('\b' * (digits * 2 + 1), (i+1)//10, count//10), end='', flush=True)
-
-    return devs
-
 
 if __name__ == '__main__':
     if False:
@@ -61,13 +38,9 @@ if __name__ == '__main__':
     obj_fr = objloader.ShapeModel(fname=full_res_model)
     obj = objloader.ShapeModel(fname=infile)
 
-    faces = np.array([f[0] for f in obj.faces], dtype='uint')
-    vertices = np.array(obj.vertices)
-    full_vertices = np.array(obj_fr.vertices)
-
     timer = tools.Stopwatch()
     timer.start()
-    devs = get_model_errors(full_vertices, vertices, faces)
+    devs = tools.point_cloud_vs_model_err(np.array(obj_fr.vertices), obj)
     timer.stop()
     # doesnt work: tools.intersections.parallel_diagnostics(level=4)
 

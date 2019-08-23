@@ -10,6 +10,7 @@ import quaternion
 import sys
 from astropy.coordinates import SkyCoord
 
+from iotools.objloader import ShapeModel
 from settings import *
 
 
@@ -101,6 +102,13 @@ def angle_between_v(v1, v2):
     
     return math.acos(np.clip(cos_angle, -1, 1))
 
+def angle_between_rows(A, B):
+    # from https://stackoverflow.com/questions/50772176/calculate-the-angle-between-the-rows-of-two-matrices-in-numpy/50772253
+    p1 = np.einsum('ij,ij->i', A, B)
+    p2 = np.einsum('ij,ij->i', A, A)
+    p3 = np.einsum('ij,ij->i', B, B)
+    p4 = p1 / np.sqrt(p2 * p3)
+    return np.arccos(np.clip(p4, -1.0, 1.0))
 
 def rand_q(angle):
     r = np.random.normal(size=3)
@@ -377,6 +385,37 @@ def mv_normal(mean, cov=None, L=None, size=None):
     x.shape = tuple(final_shape)
     
     return x, L
+
+
+def point_cloud_vs_model_err(points: np.ndarray, model: ShapeModel) -> np.ndarray:
+    faces = np.array([f[0] for f in model.faces], dtype='uint')
+    vertices = np.array(model.vertices)
+    errs = get_model_errors(points, vertices, faces)
+    return errs
+
+
+@nb.jit(nb.f8[:](nb.f8[:,:], nb.f8[:,:], nb.i4[:,:]), nogil=True, parallel=False)
+def get_model_errors(points, vertices, faces):
+    count = len(points)
+    digits = int(math.ceil(math.log10(count//10+1)))
+    print('%s/%d' % ('0' * digits, count//10), end='', flush=True)
+
+    devs = np.empty(points.shape[0])
+    for i in nb.prange(count):
+        vx = points[i, :]
+        err = intersections(faces, vertices, np.array(((0, 0, 0), vx)))
+        if math.isinf(err):  # len(pts) == 0:
+            print('no intersections!')
+            continue
+
+        if False:
+            idx = np.argmin([np.linalg.norm(pt-vx) for pt in pts])
+            err = np.linalg.norm(pts[idx]) - np.linalg.norm(vx)
+
+        devs[i] = err
+        print(('%s%0' + str(digits) + 'd/%d') % ('\b' * (digits * 2 + 1), (i+1)//10, count//10), end='', flush=True)
+
+    return devs
 
 
 #@nb.njit(nb.f8[:](nb.f8[:, :], nb.f8[:, :]), nogil=True)
@@ -734,6 +773,33 @@ def hover_annotate(fig, ax, line, annotations):
                     fig.canvas.draw_idle()
 
     fig.canvas.mpl_connect("motion_notify_event", hover)
+
+
+def plot_vectors(pts3d, scatter=True, conseq=True, neg_z=True):
+    import matplotlib.pyplot as plt
+    from mpl_toolkits.mplot3d import Axes3D
+
+    fig = plt.figure()
+    ax = Axes3D(fig)
+
+    if scatter:
+        ax.scatter(pts3d[:, 0], pts3d[:, 1], pts3d[:, 2])
+    else:
+        if conseq:
+            ax.set_prop_cycle('color', map(lambda c: '%f' % c, np.linspace(1, 0, len(pts3d))))
+        for i, v1 in enumerate(pts3d):
+            if v1 is not None:
+                ax.plot((0, v1[0]), (0, v1[1]), (0, v1[2]))
+
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+    ax.set_zlabel('Z')
+    if neg_z:
+        ax.view_init(90, -90)
+    else:
+        ax.view_init(-90, -90)
+    plt.show()
+
 
 def plot_quats(quats, conseq=True, wait=True):
     import matplotlib.pyplot as plt

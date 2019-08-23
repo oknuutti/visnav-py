@@ -1,3 +1,4 @@
+import pickle
 import sys
 import math
 from abc import ABC
@@ -675,6 +676,12 @@ class Camera:
 class Asteroid(ABC):
     ast2sc_q = None  # depends on the shape model coordinate frame
 
+    (
+        SM_NOISE_NO,
+        SM_NOISE_LOW,
+        SM_NOISE_HIGH,
+    ) = ('', 'lo', 'hi')
+
     def __init__(self, *args, shape_model=None, **kwargs):
         super(Asteroid, self).__init__()
 
@@ -812,3 +819,10 @@ class Asteroid(ABC):
             v_ba = np.array([sc.x.value, sc.y.value, sc.z.value])
 
         return v_ba
+
+    def load_noisy_shape_model(self, type, return_noise_sd=False):
+        fname = self.constant_noise_shape_model[type]
+        with open(fname, 'rb') as fh:
+            noisy_model, sm_noise = pickle.load(fh)
+        obj = objloader.ShapeModel(data=noisy_model)
+        return obj if not return_noise_sd else (obj, sm_noise)
