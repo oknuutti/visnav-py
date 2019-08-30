@@ -1,3 +1,12 @@
+# Based on DT-SLAM article:
+#  - "DT-SLAM: Deferred Triangulation for Robust SLAM", Herrera, Kim, Kannala, Pulli, Heikkila
+#    https://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber=7035876
+#
+# code also available, it wasn't used for any reference though:
+#  - https://github.com/plumonito/dtslam/tree/master/code/dtslam
+#
+# Note: check ATON (DLR project) for references of using 3d-3d correspondences for absolute navigation
+
 import copy
 
 import math
@@ -7,6 +16,7 @@ import quaternion
 import cv2
 
 from algo import tools
+from algo.bundleadj import bundle_adj
 from algo.model import SystemModel, Asteroid
 from iotools.objloader import ShapeModel
 
@@ -49,15 +59,15 @@ class PoseEstimate:
 class Frame:
     _NEXT_ID = 1
 
-    def __init__(self, time, image, img_sc, pose: PoseEstimate, kps_uv: dict=dict(), id=None):
+    def __init__(self, time, image, img_sc, pose: PoseEstimate, kps_uv: dict=None, id=None):
         self._id = Frame._NEXT_ID if id is None else id
         Frame._NEXT_ID = max(self._id + 1, Frame._NEXT_ID)
         self.time = time
         self.image = image
         self.img_sc = img_sc
         self.pose = pose
-        self.kps_uv = kps_uv   # dict of keypoints with keypoint img coords in this frame
-        self.ini_kp_count = len(kps_uv)
+        self.kps_uv = kps_uv or {}   # dict of keypoints with keypoint img coords in this frame
+        self.ini_kp_count = len(self.kps_uv)
 
     @property
     def id(self):
@@ -94,7 +104,7 @@ class State:
         self.map2d = {}  # id => Keypoint, all keypoints with only uv coordinates (still no 3d coords)
         self.map3d = {}
         self.last_frame = None
-        self.base_keyframe_idx = 0
+        self.last_success_time = None
 
 
 class VisualOdometry:
@@ -111,7 +121,7 @@ class VisualOdometry:
     (
         KEYPOINT_SHI_TOMASI,    # exception thrown if MATCH_DESCRIPTOR used
         KEYPOINT_FAST,          # ORB descriptor if MATCH_DESCRIPTOR used
-        KEYPOINT_PM_G2,         # AKAZE descriptor if MATCH_DESCRIPTOR used
+        KEYPOINT_AKAZE,         # AKAZE descriptor if MATCH_DESCRIPTOR used
     ) = range(3)
     DEF_KEYPOINT_ALGO = KEYPOINT_FAST
     DEF_MIN_KEYPOINT_DIST = 7
@@ -127,19 +137,18 @@ class VisualOdometry:
         POSE_RANSAC_3D,         # solve pnp when enough 3d points available in map, fallback to essential matrix if fails
         POSE_RANSAC_MIXED,      # solve pose from both 2d-2d and 3d-2d matches using ransac, optimize common cost function using inliers only
     ) = range(3)
-    DEF_POSE_ESTIMATION = POSE_RANSAC_3D
+    DEF_POSE_ESTIMATION = POSE_RANSAC_MIXED
 
     # keyframe addition
-    DEF_NEW_KF_MIN_INLIER_RATIO = 0.7             # remaining inliers from previous keyframe features
+    DEF_NEW_KF_MIN_INLIER_RATIO = 0.7              # remaining inliers from previous keyframe features
     DEF_NEW_KF_MIN_DISPL_FOV_RATIO = 0.005         # displacement relative to the fov for triangulation
-    DEF_NEW_KF_TRIANGULATION_TRIGGER_RATIO = 0.3  # ratio of 2d points tracked that can be triangulated
+    DEF_NEW_KF_TRIANGULATION_TRIGGER_RATIO = 0.3   # ratio of 2d points tracked that can be triangulated
     DEF_NEW_KF_TRANS_KP3D_ANGLE = math.radians(5)  # change in viewpoint relative to a 3d point
-    DEF_NEW_KF_TRANS_KP3D_RATIO = 0.1             # ratio of 3d points with significant viewpoint change
-    DEF_NEW_KF_ROT_ANGLE = math.radians(10)       # new keyframe if orientation changed by this much
+    DEF_NEW_KF_TRANS_KP3D_RATIO = 0.1              # ratio of 3d points with significant viewpoint change
+    DEF_NEW_KF_ROT_ANGLE = math.radians(10)        # new keyframe if orientation changed by this much
 
     # map maintenance
     DEF_MAX_KEYFRAMES = 7
-    DEF_MAX_BA_KEYFRAMES = 7
     DEF_MAX_MARG_RATIO = 0.90
     DEF_SEPARATE_BA_THREAD = False
     DEF_REMOVAL_USAGE_LIMIT = 5        # 3d keypoint valid for removal if it was available for use this many times
@@ -148,20 +157,25 @@ class VisualOdometry:
 
     DEF_UNCERTAINTY_LIMIT_RATIO = 30   # current solution has to be this much more uncertain as new initial pose to change base pose
     DEF_MIN_INLIERS = 20
+    DEF_RESET_TIMEOUT = 30*60          # reinitialize if this many seconds without successful pose estimate
+    DEF_MIN_FEATURE_INTENSITY = 15     # minimum level of intensity required near a keypoint
+
+    DEF_USE_BA = True
+    DEF_MAX_BA_KEYFRAMES = 7
+    DEF_BA_INTERVAL = 3                # run ba every this many keyframes
 
     # TODO: (3) try out matching triangulated 3d points to 3d model using icp for all methods with 3d points
     # TODO: (3) try to init pose globally (before ICP) based on some 3d point-cloud descriptor
     DEF_USE_ICP = False
 
-    # TODO: (1) try out bundle adjustment (for all methods?)
-    DEF_USE_BA = False
-
     # TODO: (3) get better distributed keypoints by using grids
+    # TODO: (1) read dt-slam paper
 
-    def __init__(self, sm, img_width=None, verbose=0, **kwargs):
+    def __init__(self, sm, img_width=None, verbose=0, pause=0, **kwargs):
         self.sm = sm
         self.img_width = img_width
         self.verbose = verbose
+        self.pause = pause
         self.cam_mx = self.sm.cam.intrinsic_camera_mx()
 
         # set params
@@ -170,7 +184,6 @@ class VisualOdometry:
                 key = attr[4:].lower()
                 setattr(self, key, kwargs.get(key, getattr(VisualOdometry, attr)))
 
-        assert self.pose_estimation in (VisualOdometry.POSE_RANSAC_2D, VisualOdometry.POSE_RANSAC_3D), 'method not implemented'
         self.lk_params = {
             'winSize': (32, 32),
             'maxLevel': 4,
@@ -179,19 +192,19 @@ class VisualOdometry:
         if self.keypoint_algo == VisualOdometry.KEYPOINT_SHI_TOMASI:
             self.kp_params = {
                 'maxCorners': 2000,
-                'qualityLevel': 0.003,  # default around 0.25?
+                'qualityLevel': 0.05,  # default around 0.05?
                 'minDistance': self.min_keypoint_dist,
                 'blockSize': 7,
             }
         elif self.keypoint_algo == VisualOdometry.KEYPOINT_FAST:
             self.kp_params = {
-                'threshold': 5,         # default around 25?
+                'threshold': 10,         # default around 25?
                 'nonmaxSuppression': True,
             }
-        elif self.keypoint_algo == VisualOdometry.KEYPOINT_PM_G2:
+        elif self.keypoint_algo == VisualOdometry.KEYPOINT_AKAZE:
             self.kp_params = {
-                'diffusivity': cv2.KAZE_DIFF_PM_G2, # default: cv2.KAZE_DIFF_PM_G2, KAZE_DIFF_CHARBONNIER is not as stable
-                'threshold': 0.0001,         # default: 0.001
+                'diffusivity': cv2.KAZE_DIFF_CHARBONNIER, # default: cv2.KAZE_DIFF_PM_G2, KAZE_DIFF_CHARBONNIER
+                'threshold': 0.001,          # default: 0.001
                 'nOctaves': 4,               # default: 4
                 'nOctaveLayers': 4,          # default: 4
             }
@@ -201,6 +214,8 @@ class VisualOdometry:
 
         # current frame specific temp value cache
         self.cache = {}
+        self._track_image = None    # for debug purposes
+        self._track_colors = None   # for debug purposes
 
     def __reduce__(self):
         return (VisualOdometry, (
@@ -228,7 +243,13 @@ class VisualOdometry:
         # maybe do failure recovery
         if new_frame.pose.post is None:
             # TODO: (3) Implement failure recovery
-            pass
+            # if fail for too long, reinitialize (excl if only one keyframe)
+            dt = (new_frame.time - self.state.last_success_time).total_seconds()
+            if len(self.state.keyframes) > 1 and dt > self.reset_timeout:
+                self.state.initialized = False
+            # if too few keypoints to track, reinitialize
+            if len(new_frame.kps_uv) < 2*self.min_inliers:
+                self.state.initialized = False
 
         # add new frame as keyframe?      # TODO: (3) run in another thread
         if self.is_new_keyframe(new_frame):
@@ -243,7 +264,7 @@ class VisualOdometry:
 
     def initialize_frame(self, time, image, prior_pose):
         if self.verbose:
-            print('initializing frame')
+            print('\nnew frame')
 
         # maybe scale image
         img_sc = 1
@@ -255,12 +276,106 @@ class VisualOdometry:
 
     def initialize(self, new_frame):
         if self.verbose:
-            print('initializing')
+            print('initializing tracking')
         self.state = State()
         new_frame.pose.post = new_frame.pose.prior
         self.add_new_keyframe(new_frame)
-        self.state.last_frame = new_frame
-        self.state.initialized = True
+
+        # check that init ok and enough features found
+        if len(self.state.map2d) > self.DEF_MIN_INLIERS * 2:
+            self.state.last_frame = new_frame
+            self.state.last_success_time = new_frame.time
+            self.state.initialized = True
+
+    def check_features(self, image, in_kp2d, simple=False):
+        mask = np.ones((len(in_kp2d),), dtype=np.bool)
+
+        if not simple:
+            out_kp2d = self._detect_features(image, in_kp2d, existing=True)
+            for i, pt in enumerate(in_kp2d):
+                d = np.min(np.max(np.abs(out_kp2d - pt), axis=1))
+                if d > 1.5:
+                    mask[i] = False
+        else:
+            a_mask = self._asteroid_mask(image)
+            h, w = image.shape[:2]
+            for i, pt in enumerate(in_kp2d):
+                d = 2
+                y0, y1 = max(0, int(pt[0, 1]) - d), min(h, int(pt[0, 1]) + d)
+                x0, x1 = max(0, int(pt[0, 0]) - d), min(w, int(pt[0, 0]) + d)
+                if x1 <= x0 or y1 <= y0 \
+                        or np.max(image[y0:y1, x0:x1]) < self.min_feature_intensity\
+                        or a_mask[min(int(pt[0, 1]), h), min(int(pt[0, 0]), w)] == 0:
+                    mask[i] = False
+
+        return mask
+
+    def detect_features(self, new_frame):
+        kp2d = self._detect_features(new_frame.image, new_frame.kps_uv.values())
+
+        for pt in kp2d:
+            kp = Keypoint()  # Keypoint({new_frame.id: pt})
+            new_frame.kps_uv[kp.id] = pt
+            self.state.map2d[kp.id] = kp
+        new_frame.ini_kp_count = len(new_frame.kps_uv)
+
+        if self.verbose:
+            print('%d new keypoints detected' % len(kp2d))
+
+    def _asteroid_mask(self, image):
+        _, mask = cv2.threshold(image, self.min_feature_intensity, 255, cv2.THRESH_BINARY)
+        kernel = np.array([
+                [0, 1, 1, 1, 0],
+                [1, 1, 1, 1, 1],
+                [1, 1, 1, 1, 1],
+                [1, 1, 1, 1, 1],
+                [0, 1, 1, 1, 0]], np.uint8)
+
+        # exclude asteroid limb from feature detection
+        # TODO: (2) optimize amount of dilation and erosion
+        mask = cv2.dilate(mask, kernel, iterations=3)
+        mask = cv2.erode(mask, kernel, iterations=6)
+
+#        cv2.imshow('mask', mask)
+ #       cv2.waitKey(15)
+
+        return mask
+
+    def _detect_features(self, image, kp2d, existing=False):
+        # create mask defining where detection is to be done
+        mask = self._asteroid_mask(image)
+        if existing:
+            mask_a = mask
+            mask = np.zeros(image.shape, dtype=np.uint8)
+
+        d, (h, w) = self.min_keypoint_dist, mask.shape
+        for uv in kp2d:
+            if existing:
+                y, x = int(uv[0, 1]), int(uv[0, 0])
+                mask[y:min(h, y+1), x:min(w, x+1)] = mask_a[y:min(h, y+1), x:min(w, x+1)]
+            else:
+                y0, y1 = max(0, int(uv[0, 1]) - d), min(h, int(uv[0, 1]) + d)
+                x0, x1 = max(0, int(uv[0, 0]) - d), min(w, int(uv[0, 0]) + d)
+                if x1 > x0 and y1 > y0:
+                    mask[y0:y1, x0:x1] = 0
+
+        if self.keypoint_algo == VisualOdometry.KEYPOINT_SHI_TOMASI:
+            # detect Shi-Tomasi keypoints
+            kp2d = cv2.goodFeaturesToTrack(image, mask=mask, **self.kp_params)
+        elif self.keypoint_algo == VisualOdometry.KEYPOINT_FAST:
+            # detect FAST keypoints
+            det = cv2.FastFeatureDetector_create(**self.kp_params)
+            kp2d = det.detect(image, mask=mask)
+            kp2d = self.kp2arr(kp2d)
+        elif self.keypoint_algo == VisualOdometry.KEYPOINT_AKAZE:
+            # detect AKAZE keypoints
+            det = cv2.AKAZE_create(**self.kp_params)
+            kp2d = det.detect(image, mask=mask)
+            kp2d = self.kp2arr(kp2d)
+        else:
+            assert False, 'unknown keypoint detection algorithm: %s' % self.feat
+
+        return kp2d
 
     def track_keypoints(self, new_frame):
         lf, nf = self.state.last_frame, new_frame
@@ -270,7 +385,11 @@ class VisualOdometry:
                 # track keypoints using Lukas-Kanade method
                 ids, old_kp2d = list(map(np.array, zip(*lf.kps_uv.items()) if len(lf.kps_uv) > 0 else ([], [])))
                 new_kp2d, mask, err = cv2.calcOpticalFlowPyrLK(lf.image, nf.image, old_kp2d, None, **self.lk_params)
-                mask = mask.astype(np.bool).flatten()
+
+                # extra sanity check on tracked points, set mask to false if keypoint quality too poor
+                mask2 = self.check_features(nf.image, new_kp2d, simple=True)
+
+                mask = np.logical_and(mask.astype(np.bool).flatten(), mask2)
                 new_kp2d = new_kp2d[mask, :, :]
 
                 # delete non-tracked keypoints!
@@ -329,11 +448,6 @@ class VisualOdometry:
                 #         print('rotated pnp-ransac solution by 180deg around x-axis')
                 #     q = q * tools.ypr_to_q(0, 0, math.pi)
                 #     r = -r
-                # if abs(tools.q_to_ypr(q)[1]) > math.pi * 0.9:
-                #     if self.verbose:
-                #         print('rotated pnp-ransac solution by 180deg around z-axis')
-                #     q = q * tools.ypr_to_q(0, math.pi, 0)
-                #     r = -r
 
                 # calculate delta-q and delta-r
                 dq = q * rf.pose.post.quat.conj()
@@ -361,28 +475,42 @@ class VisualOdometry:
             mask = 0
             if len(old_kp2d) > self.min_inliers:
                 # solve pose using ransac & 5-point algo
-                E, mask2 = cv2.findEssentialMat(old_kp2d / nf.img_sc, new_kp2d / rf.img_sc, self.cam_mx,
+                E, mask2 = cv2.findEssentialMat(old_kp2d / rf.img_sc, new_kp2d / nf.img_sc, self.cam_mx,
                                                 method=cv2.RANSAC, prob=0.999, threshold=1.0)
                 if self.verbose:
                     print('E-mat: %d/%d' % (np.sum(mask2), len(old_kp2d)))
 
                 if np.sum(mask2) > self.min_inliers:
-                    _, R, ur, mask = cv2.recoverPose(E, old_kp2d / nf.img_sc, new_kp2d / rf.img_sc, self.cam_mx, mask=mask2.copy())
+                    _, R, ur, mask = cv2.recoverPose(E, old_kp2d / rf.img_sc, new_kp2d / nf.img_sc, self.cam_mx, mask=mask2.copy())
                     if self.verbose:
                         print('E=>R: %d/%d' % (np.sum(mask), np.sum(mask2)))
 
             # TODO: (3) implement pure rotation estimation as a fallback as E can't solve for that
 
-            if self.pose_estimation == VisualOdometry.POSE_RANSAC_MIXED:
-                # TODO: (3) somehow mix result from solve pnp and this
-                # TODO: (3) do it by optimizing a common cost function including only inliers from both algos
-                assert False, 'not implemented'
-            elif R is not None and np.sum(mask) > self.min_inliers:
-                dq = quaternion.from_rotation_matrix(R).conj()      # returns transformation from new to old (!)
-                dr = -tools.q_times_v(dq, scale * ur)
+            if R is not None and np.sum(mask) > self.min_inliers:
+                # recoverPose returns transformation from new to old (!)
+                dq_ = quaternion.from_rotation_matrix(R).conj()
+                dr_ = -tools.q_times_v(dq_, scale * ur)
+                if self.pose_estimation == VisualOdometry.POSE_RANSAC_MIXED and dq is not None:
+                    # mix result from solve pnp and recoverPose
+                    # TODO: (3) do it by optimizing a common cost function including only inliers from both algos
+                    n2d, n3d = np.sum(mask), len(inliers)
+                    w2dq = n2d/(n2d + n3d * 1.25)
+                    dq = tools.mean_q([dq, dq_], [1 - w2dq, w2dq])
+                    w2dr = n2d/(n2d + n3d * 12.5)
+                    dr = (1 - w2dr) * dr + w2dr*dr_
+                else:
+                    dq = dq_
+                    dr = dr_
 
-            if self.verbose and isinstance(mask, np.ndarray):
-                self._draw_matches(rf.image, nf.image, old_kp2d, new_kp2d, mask.flatten().astype(np.bool))
+        if self.verbose:
+            # TODO: (1) print delta pose relative to previous frame
+            # TODO: (1) print delta delta-pose => diff between (prior_t - prior_{t-1}) and (post_t - post_{t-1})
+            # TODO: (1) add scale parameter and estimate it continuously
+            if dr is not None and dq is not None:
+                print('delta q: ' + ' '.join(['%.3fdeg' % math.degrees(a) for a in tools.q_to_ypr(dq)]))
+                print('delta v: ' + ' '.join(['%.3fm' % a for a in dr * 1000]))
+            self._draw_tracks(nf, pause=self.pause)
 
         if dr is None or dq is None:
             new_frame.pose.post = None
@@ -392,10 +520,6 @@ class VisualOdometry:
         d_r_s2 = np.array([1, 1, 1]) * 0.1
         d_so3_s2 = np.array([1, 1, 1]) * 0.01
 
-        if self.verbose:
-            print('delta q: ' + ' '.join(['%.3fdeg' % math.degrees(a) for a in tools.q_to_ypr(dq)]))
-            print('delta v: ' + ' '.join(['%.3fm' % a for a in dr * 1000]))
-
         # update pose and uncertainty
         new_frame.pose.post = Pose(
             rf.pose.post.loc + tools.q_times_v(rf.pose.post.quat, dr),
@@ -403,6 +527,7 @@ class VisualOdometry:
             rf.pose.post.loc_s2 + tools.q_times_v(rf.pose.post.quat, d_r_s2),
             rf.pose.post.so3_s2 + tools.q_times_v(rf.pose.post.quat, d_so3_s2),
         )
+        self.state.last_success_time = new_frame.time
 
     def is_new_keyframe(self, new_frame):
         # check if
@@ -432,7 +557,9 @@ class VisualOdometry:
             return True
 
         #   c) viewpoint changed for many 3d points
-        if self.use_ba and len(self.viewpoint_changed_kps(nf))/len(self.state.map3d) > self.new_kf_trans_kp3d_ratio:
+        if self.use_ba \
+                and len(self.state.map3d) > 0 \
+                and len(self.viewpoint_changed_kps(nf))/len(self.state.map3d) > self.new_kf_trans_kp3d_ratio:
             return True
 
         return False
@@ -442,8 +569,8 @@ class VisualOdometry:
         self.detect_features(new_frame)
         if self.pose_estimation in (VisualOdometry.POSE_RANSAC_3D, VisualOdometry.POSE_RANSAC_MIXED):
             self.triangulate(new_frame)
-        if self.use_ba:
-            self.bundle_adjustment(max_keyframes=1)
+        # if self.use_ba and len(self.state.map3d) > 0:
+        #     self.bundle_adjustment(max_keyframes=1)
 
     def triangulation_kps(self, new_frame):
         """
@@ -493,40 +620,6 @@ class VisualOdometry:
         self.cache['viewpoint_changed_kps'] = kpset
         return kpset
 
-    def detect_features(self, new_frame):
-        # create mask defining where detection is to be done
-        mask = np.zeros(new_frame.image.shape, dtype=np.uint8)
-        d, (h, w) = self.min_keypoint_dist, mask.shape
-        for uv in new_frame.kps_uv.values():
-            mask[max(0, int(uv[0, 1])-d):min(h, int(uv[0, 1])+d), max(0, int(uv[0, 0])-d):min(w, int(uv[0, 0])+d)] = 1
-        # mask = cv2.filter2D(mask, 1, np.ones((self.min_keypoint_dist, self.min_keypoint_dist), dtype=np.uint8))
-        mask = (1 - mask)*255
-
-        if self.keypoint_algo == VisualOdometry.KEYPOINT_SHI_TOMASI:
-            # detect Shi-Tomasi keypoints
-            kp2d = cv2.goodFeaturesToTrack(new_frame.image, mask=mask, **self.kp_params)
-        elif self.keypoint_algo == VisualOdometry.KEYPOINT_FAST:
-            # detect FAST keypoints
-            det = cv2.FastFeatureDetector_create(**self.kp_params)
-            kp2d = det.detect(new_frame.image, mask=mask)
-            kp2d = self.kp2arr(kp2d)
-        elif self.keypoint_algo == VisualOdometry.KEYPOINT_PM_G2:
-            # detect AKAZE keypoints
-            det = cv2.AKAZE_create(**self.kp_params)
-            kp2d = det.detect(new_frame.image, mask=mask)
-            kp2d = self.kp2arr(kp2d)
-        else:
-            assert False, 'unknown keypoint detection algorithm: %s' % self.feat
-
-        for pt in kp2d:
-            kp = Keypoint()  # Keypoint({new_frame.id: pt})
-            new_frame.kps_uv[kp.id] = pt
-            self.state.map2d[kp.id] = kp
-        new_frame.ini_kp_count = len(new_frame.kps_uv)
-
-        if self.verbose:
-            print('%d new keypoints detected' % len(kp2d))
-
     def triangulate(self, new_frame):
         # triangulate matched 2d keypoints to get 3d keypoints
         tr_kps = self.triangulation_kps(new_frame)
@@ -544,47 +637,78 @@ class VisualOdometry:
             uv1 = new_frame.kps_uv[kp_id] / new_frame.img_sc
 
             kp4d = cv2.triangulatePoints(self.cam_mx.dot(T0), self.cam_mx.dot(T1), uv0.reshape((-1,1,2)), uv1.reshape((-1,1,2)))
-            #kp4d = cv2.triangulatePoints(self.cam_mx.dot(T1), self.cam_mx.dot(T0), uv1.reshape((-1,1,2)), uv0.reshape((-1,1,2)))
-
             kp = self.state.map2d.pop(kp_id)
-
-            kp.pt3d = kp4d.T[:, :3].reshape((-1, 3)) / kp4d.T[:, 3].reshape((-1, 1))
+            kp.pt3d = kp4d.T[:, :3].flatten() / kp4d.T[:, 3].flatten()
             self.state.map3d[kp_id] = kp
 
         if self.verbose:
             print('%d keypoints triangulated' % len(tr_kps))
 
     def bundle_adjustment(self, max_keyframes=None):
-        # TODO: (1) implement this
-        assert False, 'not implemented'
+        if self.verbose:
+            print('starting bundle adjustment')
+
+        max_keyframes = max_keyframes or len(self.state.keyframes)
+
+        tmp = [
+            (pt.id, pt.pt3d)
+            for pt in self.state.map3d.values()
+            if pt.inlier_count > 0  # only include if been an inlier
+        ]
+        if len(tmp) == 0:
+            return
+        ids, pts3d = zip(*tmp)
+        idmap = dict(zip(ids, np.arange(len(ids))))
+
+        poses_mx = np.array([
+            np.hstack((
+                tools.q_to_angleaxis(f.pose.post.quat.conj(), compact=True),            # flip to cam -> world
+                -tools.q_times_v(f.pose.post.quat.conj(), f.pose.post.loc).flatten()
+            ))
+            for f in self.state.keyframes[-max_keyframes:]
+        ])
+
+        cam_idxs, pt3d_idxs, pts2d = list(map(np.array, zip(*[
+            (i, idmap[id], uv.flatten())
+            for i, f in enumerate(self.state.keyframes[-max_keyframes:])
+                for id, uv in f.kps_uv.items() if id in idmap
+        ])))
+
+        poses, pts3d = bundle_adj(poses_mx, np.array(pts3d), pts2d, cam_idxs, pt3d_idxs, self.cam_mx, max_nfev=10)
+
+        for i, p in enumerate(poses):
+            f = self.state.keyframes[-max_keyframes:][i]
+            f.pose.post.quat = tools.angleaxis_to_q(p[:3]).conj()           # flip back so that world -> cam
+            f.pose.post.loc = -tools.q_times_v(f.pose.post.quat, p[3:])
+        for i, pt3d in enumerate(pts3d):
+            self.state.map3d[ids[i]].pt3d = pt3d.flatten()
+
+        if self.verbose:
+            print('bundle adjustment complete')
 
     def is_maintenance_time(self):
-        # TODO: (3) put some logic here maybe? e.g. maintain every nth keyframe added?
-        return True
+        return self.state.keyframes[-1].id % self.ba_interval == 0
 
     def maintain_map(self):
-        # TODO: (1) maybe remove old keyframes
-        # TODO: (1) select new base keyframe so that minimizes posterior uncertainty over the keyframe chain
-        # TODO: (1) transform remaining 3d points to the new base keyframe
-        # TODO: (1) transform all keyframe poses so that the new base frame pose is at origin without rotation
-
         if len(self.state.keyframes) > self.max_keyframes:
             self.prune_keyframes()
 
         if self.pose_estimation in (VisualOdometry.POSE_RANSAC_3D, VisualOdometry.POSE_RANSAC_MIXED):
-            # remove 3d keypoints from map - 2d keypoints removed if 1) tracking fails, or 2) triangulated into 3d points
+            # Remove 3d keypoints from map.
+            # No need to remove 2d keypoints here as they are removed
+            # elsewhere if 1) tracking fails, or 2) triangulated into 3d points.
             self.prune_map3d()
 
-        if self.use_ba:
+        if self.use_ba and len(self.state.map3d) > 0 and len(self.state.keyframes) >= self.max_ba_keyframes:
             self.bundle_adjustment(max_keyframes=self.max_ba_keyframes)
 
     def prune_keyframes(self):
         rem_kfs = self.state.keyframes[:-self.max_keyframes]
-
-        # TODO: (1) implement
-
-        # self.state.keyframes = self.state.keyframes[-self.max_keyframes:]
-
+        self.state.keyframes = self.state.keyframes[-self.max_keyframes:]
+        # no need to remove 3d points as currently only those are retained that can be tracked
+        # no need to transform poses or 3d points as basis is the absolute pose
+        if self.verbose:
+            print('%d keyframes dropped' % len(rem_kfs))
 
     def prune_map3d(self):
         rem = []
@@ -605,28 +729,6 @@ class VisualOdometry:
             f.kps_uv.pop(id, False)
             self.state.last_frame.kps_uv.pop(id, False)
 
-    def best_uncertainty_ref(self):
-        base_frame = self.cache.get('best_uncertainty_ref', None)
-        if base_frame is not None:
-            return base_frame
-
-        # TODO: (1) implement this
-        #
-        # new initial pose is more certain than the result pose by a certain margin, reset pose
-        if np.linalg.norm(res_St) / VisualOdometry.UNCERTAINTY_LIMIT_RATIO > np.linalg.norm(ini_St):
-            pass
-
-        self.cache['best_uncertainty_ref'] = base_frame
-        return base_frame
-
-    def rebase_uncertainty_ref(self, old_base: Frame, new_base: Frame):
-        if self.verbose:
-            print('new initial pose is more certain than the result pose, resetting base pose')
-
-        # TODO: (1) implement this, after this, new_base.pose.prior is taken as the base truth, .post's updated based on delta poses
-
-        self.state.uncertainty_base_frame = new_base.id
-
     def arr2kp(self, arr, size=7):
         return [cv2.KeyPoint(p[0, 0], p[0, 1], size) for p in arr]
 
@@ -634,7 +736,29 @@ class VisualOdometry:
         return np.array([k.pt for k in kp], dtype='f4').reshape((-1, 1, 2))
 
     def get_3d_map_pts(self):
-        return np.array([pt.pt3d for pt in odo.state.map3d.values()]).reshape((-1, 3))
+        return np.array([pt.pt3d for pt in self.state.map3d.values()]).reshape((-1, 3))
+
+    @staticmethod
+    def get_2d_pts(frame):
+        return np.array([uv.flatten() for uv in frame.kps_uv.values()]).reshape((-1, 2))
+
+    def _draw_tracks(self, new_frame, pause=True, label='tracks'):
+        f0, f1 = self.state.last_frame, new_frame
+        ids, uv1 = zip(*[(id, uv.flatten()) for id, uv in f1.kps_uv.items()]) if len(f1.kps_uv) > 0 else ([], [])
+        uv0 = [f0.kps_uv[id].flatten() for id in ids]
+        if self._track_image is None:
+            self._track_image = np.zeros((*f1.image.shape, 3), dtype=np.uint8)
+            self._track_colors = np.random.randint(0, 255, (100, 3))
+        else:
+            self._track_image = (self._track_image * 0.8).astype(np.uint8)
+        img = cv2.cvtColor(f1.image, cv2.COLOR_GRAY2RGB)
+
+        for id, (x0, y0), (x1, y1) in zip(ids, uv0, uv1):
+            self._track_image = cv2.line(self._track_image, (x1, y1), (x0, y0), self._track_colors[id % 100].tolist(), 1)
+            img = cv2.circle(img, (x1, y1), 5, self._track_colors[id % 100].tolist(), -1)
+        img = cv2.add(img, self._track_image)
+        cv2.imshow(label, img)
+        cv2.waitKey(0 if pause else 25)
 
     def _draw_matches(self, img1, img2, kp1, kp2, mask, pause=True, label='matches'):
         idxs = np.array(list(range(len(kp1))))[mask]
@@ -669,22 +793,22 @@ if __name__ == '__main__':
     re.set_frustum(sm.cam.x_fov, sm.cam.y_fov, 0.05, 2)
     ast_v = np.array([0, 0, -sm.min_med_distance * 1])
     #q = tools.angleaxis_to_q((math.radians(2), 0, 1, 0))
-    q = tools.angleaxis_to_q((math.radians(2), 1, 0, 0))
+    q = tools.angleaxis_to_q((math.radians(1), 1, 0, 0))
     #q = tools.rand_q(math.radians(2))
     #lowq_obj = sm.asteroid.load_noisy_shape_model(Asteroid.SM_NOISE_HIGH)
     obj = sm.asteroid.real_shape_model
     obj_idx = re.load_object(obj)
     # obj_idx = re.load_object(sm.asteroid.hires_target_model_file)
 
-    odo = VisualOdometry(sm, sm.cam.width, verbose=True)
+    odo = VisualOdometry(sm, sm.cam.width, verbose=True, pause=False)
 
-    for t in range(30):
+    for t in range(60):
         ast_q = q**t
-        image = re.render(obj_idx, ast_v, ast_q, np.array([1, 0, 0])/math.sqrt(1), get_depth=False)
+        image = re.render(obj_idx, ast_v, ast_q, np.array([1, 0, 0])/math.sqrt(1), gamma=1.8, get_depth=False)
         image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
 
-        #n_ast_q = ast_q * tools.rand_q(math.radians(.3))
-        n_ast_q = ast_q
+        n_ast_q = ast_q * tools.rand_q(math.radians(.3))
+        #n_ast_q = ast_q
         cam_q = SystemModel.cv2gl_q * n_ast_q.conj() * SystemModel.cv2gl_q.conj()
         cam_v = tools.q_times_v(cam_q * SystemModel.cv2gl_q, -ast_v)
         prior = Pose(cam_v, cam_q, np.ones((3,))*0.1, np.ones((3,))*0.01)

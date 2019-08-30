@@ -1,16 +1,13 @@
 
 import math
 import time
-from functools import lru_cache
 
-import cv2
 import numpy as np
 import numba as nb
 import quaternion
 import sys
 from astropy.coordinates import SkyCoord
 
-from iotools.objloader import ShapeModel
 from settings import *
 
 
@@ -102,6 +99,7 @@ def angle_between_v(v1, v2):
     
     return math.acos(np.clip(cos_angle, -1, 1))
 
+
 def angle_between_rows(A, B):
     # from https://stackoverflow.com/questions/50772176/calculate-the-angle-between-the-rows-of-two-matrices-in-numpy/50772253
     p1 = np.einsum('ij,ij->i', A, B)
@@ -110,15 +108,16 @@ def angle_between_rows(A, B):
     p4 = p1 / np.sqrt(p2 * p3)
     return np.arccos(np.clip(p4, -1.0, 1.0))
 
+
 def rand_q(angle):
-    r = np.random.normal(size=3)
-    return ypr_to_q(*(r/np.linalg.norm(r) * angle))
+    r = normalize_v(np.random.normal(size=3))
+    return angleaxis_to_q(np.hstack((angle, r)))
 
 
 def angle_between_q(q1, q2):
     # from  https://chrischoy.github.io/research/measuring-rotation/
     qd = q1.conj()*q2
-    return wrap_rads(2*math.acos(qd.normalized().w))
+    return abs(wrap_rads(2*math.acos(qd.normalized().w)))
 
 
 def angle_between_ypr(ypr1, ypr2):
@@ -142,8 +141,11 @@ def equatorial_to_ecliptic(ra, dec):
     
 def q_to_angleaxis(q, compact=False):
     theta = math.acos(q.w) * 2.0
-    v = np.array([q.x, q.y, q.z])
-    return (theta,) + tuple(normalize_v(v) if sum(v)>0 else v)
+    v = normalize_v(np.array([q.x, q.y, q.z]))
+    if compact:
+        return theta * v
+    else:
+        return np.array((theta,) + tuple(v))
 
 
 def angleaxis_to_q(rv):
@@ -179,7 +181,23 @@ def q_to_ypr(q):
     lon  = np.arctan2(q1*q2+q0*q3, .5-q2**2-q3**2)
     return lat, lon, roll
     
-    
+
+def mean_q(qs, ws=None):
+    """
+    returns a (weighted) mean of a set of quaternions
+    idea is to rotate a bit in the direction of new quaternion from the sum of previous rotations
+    NOTE: not tested properly, might not return same mean quaternion if order of input changed
+    """
+    wtot = 0
+    qtot = quaternion.one
+    for q, w in zip(qs, np.ones((len(qs),)) if ws is None else ws):
+        ddaa = q_to_angleaxis(qtot.conj() * q)
+        ddaa[0] = wrap_rads(ddaa[0]) * w / (w + wtot)
+        qtot = angleaxis_to_q(ddaa) * qtot
+        wtot += w
+    return qtot
+
+
 def q_times_v(q, v):
     qv = np.quaternion(0, *v)
     qv2 = q * qv * q.conj()
@@ -387,7 +405,7 @@ def mv_normal(mean, cov=None, L=None, size=None):
     return x, L
 
 
-def point_cloud_vs_model_err(points: np.ndarray, model: ShapeModel) -> np.ndarray:
+def point_cloud_vs_model_err(points: np.ndarray, model) -> np.ndarray:
     faces = np.array([f[0] for f in model.faces], dtype='uint')
     vertices = np.array(model.vertices)
     errs = get_model_errors(points, vertices, faces)

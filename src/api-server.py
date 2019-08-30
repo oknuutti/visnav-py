@@ -19,6 +19,7 @@ import pytz
 
 import settings
 from algo.centroid import CentroidAlgo
+from algo.odometry import VisualOdometry, Pose
 
 settings.LOG_DIR = sys.argv[1]
 settings.CACHE_DIR = settings.LOG_DIR
@@ -39,7 +40,7 @@ def main():
     port = int(sys.argv[2])
 
     if len(sys.argv) > 3:
-        server = ApiServer(sys.argv[3], port=port, hires=True, cache_noise=True, result_rendering=False)
+        server = ApiServer(sys.argv[3], port=port, hires=False, cache_noise=True, result_rendering=False)
     else:
         server = SpawnMaster(port=port, max_count=5000)
 
@@ -104,6 +105,7 @@ class ApiServer:
         self._target_obj_idx = self._onboard_renderer.load_object(sm.asteroid.target_model_file, smooth=sm.asteroid.render_smooth_faces)
         self._keypoint = KeypointAlgo(sm, self._onboard_renderer, self._target_obj_idx)
         self._centroid = CentroidAlgo(sm, self._onboard_renderer, self._target_obj_idx)
+        self._odometry = {}
 
         # laser measurement range given in dlem-20 datasheet
         self._laser_min_range, self._laser_max_range, self._laser_nominal_max_range = 10, 2100, 5000
@@ -298,6 +300,46 @@ class ApiServer:
         # send back in json format
         return json.dumps(result)
 
+    def _odometry_track(self, params):
+        session = params[0]
+
+        fname = params[1]
+        img = cv2.imread(fname, cv2.IMREAD_GRAYSCALE)
+
+        time = params[2]
+        time = datetime.fromtimestamp(time, pytz.utc)
+
+        d1_v, d1_q, d2_v, d2_q, sc_v, sc_q = self._parse_poses(params, offset=3)
+        ast_q = d2_q if self._target_d2 else d1_q
+        ast_v = d2_v if self._target_d2 else d1_v
+
+        tr_q = SystemModel.cv2gl_q * SystemModel.sc2gl_q.conj()
+        ast_sc_q = tr_q * ast_q.conj() * sc_q * tr_q.conj()
+        ast_sc_v = tools.q_times_v(ast_sc_q * tr_q, sc_v - ast_v)
+        # TODO: modify so that uncertainties are given (or not)
+        prior = Pose(ast_sc_v, ast_sc_q, np.ones((3,))*0.1, np.ones((3,))*0.01)
+
+        if session not in self._odometry:
+            self._odometry[session] = VisualOdometry(self._sm, self._sm.view_width, verbose=1)
+        res = self._odometry[session].process(img, time, prior)
+
+        if res is not None:
+            tq = res.quat * tr_q
+            est_v = -tools.q_times_v(tq.conj(), res.loc)
+            est_q = tq.conj() * res.quat.conj() * tq
+            est_v_s2 = -tools.q_times_v(tq.conj(), res.loc_s2)
+            est_so3_s2 = -tools.q_times_v(tq.conj(), res.so3_s2)
+            # err_q = ast_sc_q.conj() * est_q
+            # err_angle = tools.angle_between_q(ast_sc_v, est_q)
+            # err_v = est_v - ast_sc_v
+
+            result = [list(est_v), list(quaternion.as_float_array(est_q)), list(est_v_s2), list(est_so3_s2)]
+        else:
+            raise PositioningException('No tracking result')
+
+        # send back in json format
+        return json.dumps(result)
+
     def _render_result(self, params):
         fname = params[0]
         img = cv2.imread(fname, cv2.IMREAD_COLOR)
@@ -372,6 +414,11 @@ class ApiServer:
                         rval = self._get_pose(params, algo_id=int(get_pose[1]))
                     except PositioningException as e:
                         error = 'algo failed: ' + str(e)
+                elif command == 'odometry':
+                    try:
+                        rval = self._odometry_track(params)
+                    except PositioningException as e:
+                        error = str(e)
                 elif command == 'render':
                     rval = self._render(params)
                 elif command == 'laser_meas':
@@ -387,6 +434,7 @@ class ApiServer:
                     error = 'invalid command: ' + command
             except (ValueError, TypeError) as e:
                 error = 'invalid args: ' + str(e)
+                self.print(str(e) + ''.join(traceback.format_exception(*sys.exc_info())))
             except Exception as e:
                 last_exception = ''.join(traceback.format_exception(*sys.exc_info()))
                 self.print('Exception: %s' % last_exception)
