@@ -10,7 +10,7 @@ import moderngl
 try:
     from moderngl.ext.obj import Obj
 except:
-    from ModernGL.ext import obj as Obj
+    from ModernGL.ext.obj import Obj
 
 from algo import tools
 from algo.image import ImageProc
