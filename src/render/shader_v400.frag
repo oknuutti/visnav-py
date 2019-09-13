@@ -56,7 +56,7 @@ void main()
             float g = acos(cos_phase_angle);  // phase angle in radians, alpha, g in hapke
 
             // from: "refinement of stereo image analysis using photometric shape recovery as an alternative to bundle adjustment"
-            //   by A. Grumpe, C. Schröer, S. Kauffmann, T. Fricke, C. Wöhler, U. Mall
+            //   by A. Grumpe, C. Schroer, S. Kauffmann, T. Fricke, C. Wohler, U. Mall
             //   in The International Archives of the Photogrammetry, Remote Sensing and Spatial Information Sciences, Volume XLI-B4, 2016
             // and
             //   https://raw.githubusercontent.com/NeoGeographyToolkit/StereoPipeline/master/src/asp/Tools/sfs.cc
