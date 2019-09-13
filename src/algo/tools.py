@@ -511,6 +511,57 @@ def intersections(faces, vertices, line):
     return min_err[i]  # pts[0:i, :]
 
 
+def crop_model(model, cam_v, cam_q, x_fov, y_fov):
+    assert False, 'not implemented'
+
+
+def augment_model(model, multiplier=3, length_scales=(0, 0.1, 1), sds=(1e-5, 1.6e-4, 2.4e-4)):
+    assert multiplier > 1 and multiplier % 1 == 0, 'multiplier must be integer and >1'
+    from scipy.interpolate import LinearNDInterpolator
+    try:
+        from sklearn.gaussian_process.kernels import Matern, WhiteKernel
+    except:
+        print('Requires scikit-learn, install using "conda install scikit-learn"')
+        sys.exit()
+
+    points = np.array(model.vertices)
+    max_rng = np.max(np.ptp(points, axis=0))
+
+    # white noise to ensure positive definite covariance matrix
+    ls = dict(zip(length_scales, sds))
+    sd0 = ls.pop(0, 1e-5)
+    kernel = WhiteKernel(noise_level=sd0*max_rng)
+
+    for l, s in ls.items():
+        kernel += s**2 * Matern(length_scale=l*max_rng, nu=1.5)
+
+    assert False, 'not implemented'
+
+    # TODO: how is the covariance mx constructed again?
+    y_cov = kernel(points)
+
+    # TODO: sample gp ??? how to tie existing points and generate the new points in between?
+    aug_points, L = mv_normal(points, cov=y_cov)
+
+    # TODO: how to interpolate faces?
+    pass
+
+    # interpolate texture
+    # TODO: augment texture
+    interp = LinearNDInterpolator(points, model.texcoords)
+    aug_texcoords = interp(aug_points)
+
+    data = model.as_dict()
+    data['faces'] = aug_faces
+    data['vertices'] = aug_points
+    data['texcoords'] = aug_texcoords
+    from iotools import objloader
+    aug_model = objloader.ShapeModel(data=data)
+    aug_model.recalc_norms()
+
+    return aug_model, L
+
+
 def apply_noise(model, support=None, L=None, len_sc=SHAPE_MODEL_NOISE_LEN_SC, 
                 noise_lv=SHAPE_MODEL_NOISE_LV['lo'], only_z=False):
     

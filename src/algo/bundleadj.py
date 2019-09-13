@@ -35,7 +35,7 @@ def bundle_adj(poses: np.ndarray, pts3d: np.ndarray, pts2d: np.ndarray,
     n_pts = pts3d.shape[0]
     A = _bundle_adjustment_sparsity(n_cams, n_pts, cam_idxs, pt3d_idxs)
     x0 = np.hstack((poses.ravel(), pts3d.ravel()))
-    #err = _costfun(x0, n_cams, n_pts, cam_idxs, pt3d_idxs, pts2d, K)
+    err = _costfun(x0, n_cams, n_pts, cam_idxs, pt3d_idxs, pts2d, K)
 
     res = least_squares(_costfun, x0, jac_sparsity=A, verbose=2, x_scale='jac', ftol=1e-4, method='trf',
                         args=(n_cams, n_pts, cam_idxs, pt3d_idxs, pts2d, K), max_nfev=max_nfev)

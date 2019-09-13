@@ -19,6 +19,7 @@ import pytz
 
 import settings
 from algo.centroid import CentroidAlgo
+from algo.image import ImageProc
 from algo.odometry import VisualOdometry, Pose
 
 settings.LOG_DIR = sys.argv[1]
@@ -320,8 +321,8 @@ class ApiServer:
         prior = Pose(ast_sc_v, ast_sc_q, np.ones((3,))*0.1, np.ones((3,))*0.01)
 
         if session not in self._odometry:
-            self._odometry[session] = VisualOdometry(self._sm, self._sm.view_width, verbose=1)
-        res = self._odometry[session].process(img, time, prior)
+            self._odometry[session] = VisualOdometry(self._sm, self._sm.view_width*2, verbose=1)
+        res = self._odometry[session].process(img, time, prior, sc_q)
 
         if res is not None:
             tq = res.quat * tr_q
