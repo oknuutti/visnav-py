@@ -543,7 +543,8 @@ class SpawnMaster(ApiServer):
 
         # spawn new api-server
         cmdarr = self._python_cmds + [self._spawn_cmd, LOG_DIR, str(port), mission]
-        print('Spawning with: ' + ' '.join(cmdarr))
+        if verbose:
+            self.print('using: ' + ' '.join(cmdarr) + ' ... ', start=True)
         self._children[mission]['proc'] = subprocess.Popen(cmdarr) #,# shell=True, close_fds=True,
                                                             #stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                                             #encoding='utf8')#, creationflags=subprocess.CREATE_NEW_PROCESS_GROUP|subprocess.CREATE_NEW_CONSOLE)
