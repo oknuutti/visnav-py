@@ -517,8 +517,15 @@ class SpawnMaster(ApiServer):
 
         self._max_count = max_count
         self._children = {}
-        self._python_cmds = ['python'] if which('xvfb-run') is None else \
-                            ['xvfb-run', '--server-args="-screen 0 1x1x24"', 'python']
+        if which('singularity_wrapper'):
+            self._python_cmds = ['singularity_wrapper', 'exec', 'xvfb-run',
+                                 '--server-args="-screen 0 1x1x24"',
+                                 '/scratch/work/knuutto1/conda/envs/visnav/bin/python']
+        elif which('xvfb-run'):
+            self._python_cmds = ['xvfb-run', '--server-args="-screen 0 1x1x24"', 'python']
+        else:
+            self._python_cmds = ['python']
+
         self._spawn_cmd = sys.argv[0]
 
     def _spawn(self, mission, verbose=True):
