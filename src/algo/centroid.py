@@ -39,7 +39,8 @@ class CentroidAlgo(AlgorithmBase):
         sce_img = self.maybe_load_scene_image(sce_img, preproc='bg_threshold' not in kwargs)
 
         if DEBUG:
-            cv2.imshow('target img', sce_img)
+            sc = self.system_model.view_width/sce_img.shape[1]
+            cv2.imshow('target img', cv2.resize(sce_img, None, fx=sc, fy=sc))
 
         self.system_model.spacecraft_pos = (0, 0, -self.system_model.min_med_distance)
         for i in range(self.MAX_ITERATIONS):
@@ -47,7 +48,7 @@ class CentroidAlgo(AlgorithmBase):
             od = math.sqrt(ox**2 + oy**2 + oz**2)
             
             if not DEBUG:
-                self.adjust(sce_img)
+                self.adjust(sce_img, preproc=False)
             else:
                 try:
                     self.adjust(sce_img, preproc=False)
@@ -273,7 +274,8 @@ class CentroidAlgo(AlgorithmBase):
             if detect_asteroid:
                 self.detect_asteroid(sce_img)
             if DEBUG:
-                cv2.imshow('scene th=%d'%self._bg_threshold, sce_img)
+                sc = self.system_model.view_width / sce_img.shape[1]
+                cv2.imshow('scene th=%d'%self._bg_threshold, cv2.resize(sce_img, None, fx=sc, fy=sc))
             
         return np.atleast_3d(sce_img)
 

@@ -7,6 +7,7 @@ import numba as nb
 import quaternion
 import sys
 from astropy.coordinates import SkyCoord
+from numba.cgutils import printf
 
 from settings import *
 
@@ -137,10 +138,10 @@ def equatorial_to_ecliptic(ra, dec):
     sc = SkyCoord(ra, dec, unit='deg', frame='icrs', obstime='J2000') \
             .transform_to('barycentrictrueecliptic')
     return sc.lat.value, sc.lon.value
-    
-    
+
+
 def q_to_angleaxis(q, compact=False):
-    theta = math.acos(q.w) * 2.0
+    theta = math.acos(np.clip(q.w, -1, 1)) * 2.0
     v = normalize_v(np.array([q.x, q.y, q.z]))
     if compact:
         return theta * v
@@ -412,30 +413,6 @@ def point_cloud_vs_model_err(points: np.ndarray, model) -> np.ndarray:
     return errs
 
 
-@nb.jit(nb.f8[:](nb.f8[:,:], nb.f8[:,:], nb.i4[:,:]), nogil=True, parallel=False)
-def get_model_errors(points, vertices, faces):
-    count = len(points)
-    digits = int(math.ceil(math.log10(count//10+1)))
-    print('%s/%d' % ('0' * digits, count//10), end='', flush=True)
-
-    devs = np.empty(points.shape[0])
-    for i in nb.prange(count):
-        vx = points[i, :]
-        err = intersections(faces, vertices, np.array(((0, 0, 0), vx)))
-        if math.isinf(err):  # len(pts) == 0:
-            print('no intersections!')
-            continue
-
-        if False:
-            idx = np.argmin([np.linalg.norm(pt-vx) for pt in pts])
-            err = np.linalg.norm(pts[idx]) - np.linalg.norm(vx)
-
-        devs[i] = err
-        print(('%s%0' + str(digits) + 'd/%d') % ('\b' * (digits * 2 + 1), (i+1)//10, count//10), end='', flush=True)
-
-    return devs
-
-
 #@nb.njit(nb.f8[:](nb.f8[:, :], nb.f8[:, :]), nogil=True)
 @nb.njit(nb.f8(nb.f8[:, :], nb.f8[:, :]), nogil=True, cache=True)
 def poly_line_intersect(poly, line):
@@ -452,8 +429,8 @@ def poly_line_intersect(poly, line):
         return none
 
     dir = dir/line_len
-    pvec = cross3d(dir, v0v2)
-    det = v0v1.dot(pvec)
+    pvec = cross3d(dir, v0v2).ravel()
+    det = np.dot(v0v1, pvec)
     if abs(det) < eps:
         return none
 
@@ -472,7 +449,7 @@ def poly_line_intersect(poly, line):
     if u + eps < 0 or u - eps > 1:
         return none
 
-    qvec = cross3d(tvec, v0v1)
+    qvec = cross3d(tvec, v0v1).ravel()
     v = dir.dot(qvec) * inv_det
 
     if v + eps < 0 or u + v - eps > 1:
@@ -509,6 +486,32 @@ def intersections(faces, vertices, line):
 
     i = np.argmin(np.abs(min_err))
     return min_err[i]  # pts[0:i, :]
+
+
+#@nb.jit(nb.f8[:](nb.f8[:, :], nb.f8[:, :], nb.i4[:, :]), nogil=True, parallel=False)
+def get_model_errors(points, vertices, faces):
+    count = len(points)
+    show_progress(count//10, 0)
+    j = 0
+
+    devs = np.empty(points.shape[0])
+    for i in nb.prange(count):
+        vx = points[i, :]
+        err = intersections(faces, vertices, np.array(((0, 0, 0), vx)))
+        if math.isinf(err):  # len(pts) == 0:
+            print('no intersections!')
+            continue
+
+        if False:
+            idx = np.argmin([np.linalg.norm(pt-vx) for pt in pts])
+            err = np.linalg.norm(pts[idx]) - np.linalg.norm(vx)
+
+        devs[i] = err
+        if j < i//10:
+            show_progress(count//10, i//10)
+            j = i//10
+
+    return devs
 
 
 def crop_model(model, cam_v, cam_q, x_fov, y_fov):

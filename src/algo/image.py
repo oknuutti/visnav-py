@@ -73,6 +73,15 @@ class ImageProc():
         return kernel / np.sum(kernel)
 
     @staticmethod
+    def bsphkern(l=5):
+        """
+        creates a binary spherical kernel
+        """
+        gkern = ImageProc.gkern2d(l=l, sig=l)
+        limit = gkern[l//2, -1]*0.995
+        return np.array(gkern >= limit, dtype=np.uint8)
+
+    @staticmethod
     def add_stars(img, mask, coef=2, cache=False):
         # add power law distributed stars to image
         assert img.shape == img.shape[:2], 'works only with grayscale images'
@@ -169,6 +178,14 @@ class ImageProc():
         
         return threshold_value
 
+    @staticmethod
+    def overlay_mask(image, mask):
+        sc_img = min(image.shape[0], mask.shape[0])/image.shape[0]
+        sc_mask = min(image.shape[0], mask.shape[0])/mask.shape[0]
+        img_color = cv2.cvtColor(cv2.resize(image, None, fx=sc_img, fy=sc_img, interpolation=cv2.INTER_CUBIC), cv2.COLOR_GRAY2RGB)
+        mask_color = cv2.cvtColor(cv2.resize((mask > 0).astype(np.uint8)*255, None, fx=sc_mask, fy=sc_mask, interpolation=cv2.INTER_CUBIC), cv2.COLOR_GRAY2RGB)
+        mask_color[:, :, 0:2] = 0
+        return cv2.addWeighted(img_color, 0.5, mask_color, 0.5, 0.0)
 
     @staticmethod
     def norm_xcorr(sce_img, res_img):

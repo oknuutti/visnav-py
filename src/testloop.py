@@ -8,7 +8,6 @@ from decimal import *
 
 import numpy as np
 import quaternion
-from astropy.coordinates import spherical_to_cartesian
 import cv2
 
 from algo.centroid import CentroidAlgo
@@ -38,7 +37,9 @@ from settings import *
 class TestLoop:
     UNIFORM_DISTANCE_GENERATION = True
 
-    def __init__(self, system_model, far=False, est_real_ast_orient=False, operation_zone_only=False):
+    def __init__(self, system_model, file_prefix_mod, est_real_ast_orient=False, operation_zone_only=False,
+                 state_generator=None):
+
         self.system_model = system_model
         self.est_real_ast_orient = est_real_ast_orient
 
@@ -47,14 +48,10 @@ class TestLoop:
         self._smooth_faces = self.system_model.asteroid.render_smooth_faces
         self._opzone_only = operation_zone_only
 
-        file_prefix_mod = ''
-        if far and self.system_model.max_distance > self.system_model.max_med_distance:
-            file_prefix_mod = 'far_'
-            self.max_r = self.system_model.max_distance
-            self.min_r = self.system_model.min_distance
-        else:
-            self.max_r = self.system_model.max_med_distance
-            self.min_r = self.system_model.min_distance
+        self._state_generator = state_generator if state_generator is not None else \
+                                lambda sm: sm.random_state(uniform_distance=TestLoop.UNIFORM_DISTANCE_GENERATION,
+                                                           opzone_only=self._opzone_only)
+
         self.file_prefix = system_model.mission_id+'_'+file_prefix_mod
         self.noisy_sm_prefix = system_model.mission_id
         self.cache_path = os.path.join(CACHE_DIR, system_model.mission_id)
@@ -156,9 +153,12 @@ class TestLoop:
             if self._smn_cache_id or self._constant_sm_noise:
                 sm_noise = self.load_noisy_shape_model(sm, i)
                 if sm_noise is None:
-                    if DEBUG:
-                        print('generating new noisy shape model')
-                    sm_noise = self.generate_noisy_shape_model(sm, i)
+                    if self._smn_cache_id:
+                        if DEBUG:
+                            print('generating new noisy shape model')
+                        sm_noise = self.generate_noisy_shape_model(sm, i)
+                    else:
+                        sm_noise = float('nan')
                     self._maybe_exit()
 
             # try to load system state
@@ -174,8 +174,12 @@ class TestLoop:
                 if DEBUG:
                     print('generating new state')
                 
-                # generate system state
-                self.generate_system_state(sm, i)
+                if self._state_list is not None:
+                    # load system state from image meta data
+                    lblloader.load_image_meta(os.path.join(self._state_db_path, self._state_list[i] + '.LBL'), sm)
+                else:
+                    # generate system state
+                    self._state_generator(sm)
 
                 # add noise to current state, wipe sc pos
                 initial = self.add_noise(sm)
@@ -220,96 +224,6 @@ class TestLoop:
 
         self._close_log(times-skip)
 
-
-    def generate_system_state(self, sm, i):
-        # reset asteroid axis to true values
-        sm.asteroid.reset_to_defaults()
-        sm.asteroid_rotation_from_model()
-        
-        if self._state_list is not None:
-            lblloader.load_image_meta(
-                os.path.join(self._state_db_path, self._state_list[i]+'.LBL'), sm)
-
-            return
-        
-        for i in range(100):
-            ## sample params from suitable distributions
-            ##
-            # datetime dist: uniform, based on rotation period
-            time = np.random.uniform(*sm.time.range)
-
-            # spacecraft position relative to asteroid in ecliptic coords:
-            sc_lat = np.random.uniform(-math.pi/2, math.pi/2)
-            sc_lon = np.random.uniform(-math.pi, math.pi)
-
-            # s/c distance as inverse uniform distribution
-            if TestLoop.UNIFORM_DISTANCE_GENERATION:
-                sc_r = np.random.uniform(self.min_r, self.max_r)
-            else:
-                sc_r = 1/np.random.uniform(1/self.max_r, 1/self.min_r)
-
-            # same in cartesian coord
-            sc_ex_u, sc_ey_u, sc_ez_u = spherical_to_cartesian(sc_r, sc_lat, sc_lon)
-            sc_ex, sc_ey, sc_ez = sc_ex_u.value, sc_ey_u.value, sc_ez_u.value
-
-            # s/c to asteroid vector
-            sc_ast_v = -np.array([sc_ex, sc_ey, sc_ez])
-
-            # sc orientation: uniform, center of asteroid at edge of screen
-            if self._opzone_only:
-                # always get at least 50% of astroid in view, 5% of the time maximum offset angle
-                max_angle = rad(min(sm.cam.x_fov, sm.cam.y_fov)/2)
-                da = min(max_angle, np.abs(np.random.normal(0, max_angle/2)))
-                dd = np.random.uniform(0, 2*math.pi)
-                sco_lat = wrap_rads(-sc_lat + da*math.sin(dd))
-                sco_lon = wrap_rads(math.pi + sc_lon + da*math.cos(dd))
-                sco_rot = np.random.uniform(-math.pi, math.pi)  # rotation around camera axis
-            else:
-                # follows the screen edges so that get more partial views, always at least 25% in view
-                # TODO: add/subtract some margin
-                sco_lat = wrap_rads(-sc_lat)
-                sco_lon = wrap_rads(math.pi + sc_lon)
-                sco_rot = np.random.uniform(-math.pi, math.pi)  # rotation around camera axis
-                sco_q = ypr_to_q(sco_lat, sco_lon, sco_rot)
-
-                ast_ang_r = math.atan(sm.asteroid.mean_radius/1000/sc_r)  # if asteroid close, allow s/c to look at limb
-                dx = max(rad(sm.cam.x_fov/2), ast_ang_r)
-                dy = max(rad(sm.cam.y_fov/2), ast_ang_r)
-                disturbance_q = ypr_to_q(np.random.uniform(-dy, dy), np.random.uniform(-dx, dx), 0)
-                sco_lat, sco_lon, sco_rot = q_to_ypr(sco_q * disturbance_q)
-
-            sco_q = ypr_to_q(sco_lat, sco_lon, sco_rot)
-            
-            # sc_ast_p ecliptic => sc_ast_p open gl -z aligned view
-            sc_pos = q_times_v((sco_q * sm.sc2gl_q).conj(), sc_ast_v)
-            
-            # get asteroid position so that know where sun is
-            # *actually barycenter, not sun
-            as_v = sm.asteroid.position(time)
-            elong, direc = solar_elongation(as_v, sco_q)
-
-            # limit elongation to always be more than set elong
-            if elong > rad(sm.min_elong):
-                break
-        
-        if elong <= rad(sm.min_elong):
-            assert False, 'probable infinite loop'
-        
-        # put real values to model
-        sm.time.value = time
-        sm.spacecraft_pos = sc_pos
-        sm.spacecraft_rot = (deg(sco_lat), deg(sco_lon), deg(sco_rot))
-
-        # save real values so that can compare later
-        sm.time.real_value = sm.time.value
-        sm.real_spacecraft_pos = sm.spacecraft_pos
-        sm.real_spacecraft_rot = sm.spacecraft_rot
-        sm.real_asteroid_axis = sm.asteroid_axis
-
-        # get real relative position of asteroid model vertices
-        sm.asteroid.real_sc_ast_vertices = sm.sc_asteroid_vertices()
-        
-        
     def add_noise(self, sm):
         rotation_noise = True if self._state_list is None else self._rotation_noise
         
@@ -419,6 +333,7 @@ class TestLoop:
                 noisy_model, self._loaded_sm_noise = pickle.load(fh)
             self.render_engine.load_object(objloader.ShapeModel(data=noisy_model), self.obj_idx, smooth=self._smooth_faces)
         except (FileNotFoundError, EOFError):
+            print('cant find shape model "%s"' % fname)
             self._loaded_sm_noise = None
 
         return self._loaded_sm_noise

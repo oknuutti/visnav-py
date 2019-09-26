@@ -3,13 +3,14 @@ import sys
 import math
 from abc import ABC
 from functools import lru_cache
+from math import degrees as deg, radians as rad
 
 import numpy as np
 import quaternion # adds to numpy
 from astropy.time import Time
 from astropy import constants as const
 from astropy import units
-from astropy.coordinates import SkyCoord
+from astropy.coordinates import SkyCoord, spherical_to_cartesian
 import configparser
 
 from iotools import objloader
@@ -510,7 +511,88 @@ class SystemModel(ABC):
 
         return visib if return_array else visib[0]
 
+    def random_state(self, uniform_distance=True, opzone_only=False):
+        # reset asteroid axis to true values
+        self.asteroid.reset_to_defaults()
+        self.asteroid_rotation_from_model()
 
+        for i in range(100):
+            ## sample params from suitable distributions
+            ##
+            # datetime dist: uniform, based on rotation period
+            time = np.random.uniform(*self.time.range)
+
+            # spacecraft position relative to asteroid in ecliptic coords:
+            sc_lat = np.random.uniform(-math.pi / 2, math.pi / 2)
+            sc_lon = np.random.uniform(-math.pi, math.pi)
+
+            # s/c distance as inverse uniform distribution
+            if uniform_distance:
+                sc_r = np.random.uniform(self.min_distance, self.max_distance)
+            else:
+                sc_r = 1 / np.random.uniform(1 / self.max_distance, 1 / self.min_distance)
+
+            # same in cartesian coord
+            sc_ex_u, sc_ey_u, sc_ez_u = spherical_to_cartesian(sc_r, sc_lat, sc_lon)
+            sc_ex, sc_ey, sc_ez = sc_ex_u.value, sc_ey_u.value, sc_ez_u.value
+
+            # s/c to asteroid vector
+            sc_ast_v = -np.array([sc_ex, sc_ey, sc_ez])
+
+            # sc orientation: uniform, center of asteroid at edge of screen
+            if opzone_only:
+                # always get at least 50% of astroid in view, 5% of the time maximum offset angle
+                max_angle = rad(min(self.cam.x_fov, self.cam.y_fov) / 2)
+                da = min(max_angle, np.abs(np.random.normal(0, max_angle / 2)))
+                dd = np.random.uniform(0, 2 * math.pi)
+                sco_lat = tools.wrap_rads(-sc_lat + da * math.sin(dd))
+                sco_lon = tools.wrap_rads(math.pi + sc_lon + da * math.cos(dd))
+                sco_rot = np.random.uniform(-math.pi, math.pi)  # rotation around camera axis
+            else:
+                # follows the screen edges so that get more partial views, always at least 25% in view
+                # TODO: add/subtract some margin
+                sco_lat = tools.wrap_rads(-sc_lat)
+                sco_lon = tools.wrap_rads(math.pi + sc_lon)
+                sco_rot = np.random.uniform(-math.pi, math.pi)  # rotation around camera axis
+                sco_q = tools.ypr_to_q(sco_lat, sco_lon, sco_rot)
+
+                ast_ang_r = math.atan(
+                    self.asteroid.mean_radius / 1000 / sc_r)  # if asteroid close, allow s/c to look at limb
+                dx = max(rad(self.cam.x_fov / 2), ast_ang_r)
+                dy = max(rad(self.cam.y_fov / 2), ast_ang_r)
+                disturbance_q = tools.ypr_to_q(np.random.uniform(-dy, dy), np.random.uniform(-dx, dx), 0)
+                sco_lat, sco_lon, sco_rot = tools.q_to_ypr(sco_q * disturbance_q)
+
+            sco_q = tools.ypr_to_q(sco_lat, sco_lon, sco_rot)
+
+            # sc_ast_p ecliptic => sc_ast_p open gl -z aligned view
+            sc_pos = tools.q_times_v((sco_q * self.sc2gl_q).conj(), sc_ast_v)
+
+            # get asteroid position so that know where sun is
+            # *actually barycenter, not sun
+            as_v = self.asteroid.position(time)
+            elong, direc = tools.solar_elongation(as_v, sco_q)
+
+            # limit elongation to always be more than set elong
+            if elong > rad(self.min_elong):
+                break
+
+        if elong <= rad(self.min_elong):
+            assert False, 'probable infinite loop'
+
+        # put real values to model
+        self.time.value = time
+        self.spacecraft_pos = sc_pos
+        self.spacecraft_rot = (deg(sco_lat), deg(sco_lon), deg(sco_rot))
+
+        # save real values so that can compare later
+        self.time.real_value = self.time.value
+        self.real_spacecraft_pos = self.spacecraft_pos
+        self.real_spacecraft_rot = self.spacecraft_rot
+        self.real_asteroid_axis = self.asteroid_axis
+
+        # get real relative position of asteroid model vertices
+        self.asteroid.real_sc_ast_vertices = self.sc_asteroid_vertices()
 
     def export_state(self, filename):
         """ saves state in an easy to access format """

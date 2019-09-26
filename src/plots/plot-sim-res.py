@@ -5,17 +5,23 @@ import sys
 import numpy as np
 import matplotlib as mpl
 import matplotlib.pyplot as plt
+from scipy import optimize
 
 from algo import tools
 
 
+FIG_SIZE = (10, 6)
+FONT_SIZE = 8
+
+
 def main(mission_sc=False, simple=False):
-    mpl.rcParams['font.size'] = 22
+    mpl.rcParams['font.size'] = FONT_SIZE
 
     try:
         filename = sys.argv[1]
         span = tuple(map(int, sys.argv[2].split(':'))) if len(sys.argv) > 2 else None
         is_4km = '4km' in filename
+        is_vo = '-vo-' in filename
     except:
         print('USAGE: %s <logfile>' % sys.argv[0])
         quit()
@@ -55,18 +61,18 @@ def main(mission_sc=False, simple=False):
     isc_q = data[:, 25:29]
 
     # landmark algo loc (3)
-    lma_loc = data[:, 29:32]
+    spl_loc = data[:, 29:32]
 
     # landmark algo loc ok (1)  33
-    lma_loc_ok = data[:, 32:33]
-    lma_loc[np.logical_not(lma_loc_ok).flatten(), :] = np.nan
+    spl_loc_ok = data[:, 32:33]
+    spl_loc[np.logical_not(spl_loc_ok).flatten(), :] = np.nan
 
     # landmark algo ori (4)
-    lma_q = data[:, 33:37]
+    spl_q = data[:, 33:37]
 
     # landmark algo ori ok (1)  38
-    lma_q_ok = data[:, 37:38]
-    lma_q[np.logical_not(lma_q_ok).flatten(), :] = np.nan
+    spl_q_ok = data[:, 37:38]
+    spl_q[np.logical_not(spl_q_ok).flatten(), :] = np.nan
 
     # laser algo loc (3)
     lsr_loc = data[:, 38:41]
@@ -84,8 +90,33 @@ def main(mission_sc=False, simple=False):
     # delta-v spent (1)
     cum_delta_v = data[:, 46:47]
 
-    has_lma = not np.all(np.isnan(lma_loc))
+    # vo loc (3)
+    vo_loc = data[:, 47:50]
+
+    # vo ori (4)
+    vo_q = data[:, 50:54]
+
+    # vo meas sds (6)
+    vo_meas_sds = data[:, 54:60]
+
+    # vo bias sds (6)
+    vo_bias_sds = data[:, 60:66]
+
+    # vo scale drift sd (1)
+    vo_bias_sds = data[:, 66:67]
+
+    # vo ok
+    vo_ok = data[:, 67:68]
+
+    # phase angle
+    phase_angle = data[:, 68:69]
+
+    # vo scale (1)
+    vo_scale = data[:, 69:70]
+
+    has_spl = not np.all(np.isnan(spl_loc))
     has_lsr = not np.all(np.isnan(lsr_loc))
+    has_vo = not np.all(np.isnan(vo_loc))
 
     # calculate transformation to synodic frame, apply
     tr_sf = calc_transf(d1_loc, d2_loc)
@@ -95,34 +126,57 @@ def main(mission_sc=False, simple=False):
     tr_stf = calc_transf(sc_loc, d2_loc if use_d2 else d1_loc)
     c_lab = ('distance', 'along orbit', 'above orbit')
 
+    if has_vo:
+        trg_loc = d2_loc if use_d2 else d1_loc
+        vo_loc, vo_scale, vo_loc_bias, nkf_idxs, is_mm = vo_data_prep(vo_loc, vo_scale, vo_bias_sds, sc_loc, trg_loc)
+
     d1_loc_sf = apply_transf(tr_sf, d1_loc)
     d2_loc_sf = apply_transf(tr_sf, d2_loc)
     sc_loc_sf = apply_transf(tr_sf, sc_loc)
     isc_loc_sf = apply_transf(tr_sf, isc_loc)
-    lma_loc_sf = apply_transf(tr_sf, lma_loc)
+    spl_loc_sf = apply_transf(tr_sf, spl_loc)
     lsr_loc_sf = apply_transf(tr_sf, lsr_loc)
     flt_loc_sf = apply_transf(tr_sf, flt_loc)
+    vo_loc_sf = apply_transf(tr_sf, vo_loc)
 
     d1_loc_stf = apply_transf(tr_stf, d1_loc)
     d2_loc_stf = apply_transf(tr_stf, d2_loc)
     sc_loc_stf = apply_transf(tr_stf, sc_loc)
     isc_loc_stf = apply_transf(tr_stf, isc_loc)
-    lma_loc_stf = apply_transf(tr_stf, lma_loc)
+    spl_loc_stf = apply_transf(tr_stf, spl_loc)
     lsr_loc_stf = apply_transf(tr_stf, lsr_loc)
     flt_loc_stf = apply_transf(tr_stf, flt_loc)
+    vo_loc_stf = apply_transf(tr_stf, vo_loc)
+    if has_vo:
+        vo_loc_bias_stf = apply_transf(tr_stf, vo_loc_bias)
 
     flt_err_mean = np.mean(flt_loc_stf - sc_loc_stf, axis=0)
     flt_err_std = np.std(flt_loc_stf - sc_loc_stf, axis=0)
-    if has_lma:
-        lma_err_mean = np.nanmean(lma_loc_stf - sc_loc_stf, axis=0)
-        lma_err_std = np.nanstd(lma_loc_stf - sc_loc_stf, axis=0)
+    if has_spl:
+        spl_err_mean = np.nanmean(spl_loc_stf - sc_loc_stf, axis=0)
+        spl_err_std = np.nanstd(spl_loc_stf - sc_loc_stf, axis=0)
     if has_lsr:
         lsr_err_mean = np.nanmean(lsr_loc_stf - sc_loc_stf, axis=0)
         lsr_err_std = np.nanstd(lsr_loc_stf - sc_loc_stf, axis=0)
+    if has_vo:
+        vo_err_mean = np.nanmean(vo_loc_stf - sc_loc_stf, axis=0)
+        vo_err_std = np.nanstd(vo_loc_stf - sc_loc_stf, axis=0)
+
+        # nkf_idxs need to include a nan value between vo resets, is_mm
+        vo_delta_scale_mean = np.nanmean(np.diff(vo_scale[nkf_idxs])[np.logical_not(is_mm[1:])])
+        vo_delta_scale_std = np.nanstd(np.diff(vo_scale[nkf_idxs])[np.logical_not(is_mm[1:])])
+        vo_delta_bias_mean = np.nanmean(np.diff(vo_loc_bias[nkf_idxs], axis=0)[np.logical_not(is_mm[1:]), :], axis=0)
+        vo_delta_bias_std = np.nanstd(np.diff(vo_loc_bias[nkf_idxs], axis=0)[np.logical_not(is_mm[1:]), :], axis=0)
+        vo_mm_delta_scale_mean = np.nanmean(np.diff(vo_scale[nkf_idxs])[is_mm[1:]])
+        vo_mm_delta_scale_std = np.nanstd(np.diff(vo_scale[nkf_idxs])[is_mm[1:]])
+        vo_mm_delta_bias_mean = np.nanmean(np.diff(vo_loc_bias[nkf_idxs], axis=0)[is_mm[1:], :], axis=0)
+        vo_mm_delta_bias_std = np.nanstd(np.diff(vo_loc_bias[nkf_idxs], axis=0)[is_mm[1:], :], axis=0)
 
     # plot didymain & didymoon
-    fig1, ax = plt.subplots(figsize=(30, 19.5))
-    if not is_4km:
+    fig1, ax = plt.subplots(figsize=FIG_SIZE)
+    if is_vo:
+        plot_orbit_sf(ax, d1_loc_sf, sc_loc_sf, vo_loc_sf, cutoff=int(2*11.9*3600/60))
+    elif not is_4km:
         plot_orbit_sf(ax, d1_loc_sf, sc_loc_sf, flt_loc_sf, cutoff=int(2*11.9*3600/30))
     else:
         plot_orbit_sf(ax, d1_loc, sc_loc, flt_loc, plot_bodies=False, cutoff=int(2*73.125*3600/60))
@@ -130,13 +184,13 @@ def main(mission_sc=False, simple=False):
 
     # normal plots
     if simple:
-        fig2, axs = plt.subplots(3, 1, sharex=True, figsize=(30, 19.5))
+        fig2, axs = plt.subplots(3 + (1 if has_vo else 0), 1, sharex=True, figsize=FIG_SIZE)
 
         # fix to adjust time instant used for reference location
         # if 'id7-' in filename:
         #     sc_loc_stf = sc_loc_stf[:-1, :]
         #     flt_loc_stf = flt_loc_stf[1:, :]
-        #     lma_loc_stf = lma_loc_stf[1:, :]
+        #     spl_loc_stf = spl_loc_stf[1:, :]
         #     lsr_loc_stf = lsr_loc_stf[1:, :]
         #     time = time[:-1]
 
@@ -147,11 +201,11 @@ def main(mission_sc=False, simple=False):
         for i, a in enumerate('filter '+a for a in c_lab):
             axs[i].plot(time, flt_loc_stf[:, i] - sc_loc_stf[:, i], label=a)
 
-        if has_lma:
-            print('spl err μ=(%.2f, %.2f, %.2f), σ=(%.2f, %.2f, %.2f)' % (*lma_err_mean, *lma_err_std))
-            idx = np.logical_not(np.isnan(lma_loc_stf[:, 0]))
+        if has_spl:
+            print('spl err μ=(%.2f, %.2f, %.2f), σ=(%.2f, %.2f, %.2f)' % (*spl_err_mean, *spl_err_std))
+            idx = np.logical_not(np.isnan(spl_loc_stf[:, 0]))
             for i, a in enumerate('spl ' + a for a in c_lab):
-                axs[i].plot(time[idx], lma_loc_stf[idx, i] - sc_loc_stf[idx, i], '--', label=a)
+                axs[i].plot(time[idx], spl_loc_stf[idx, i] - sc_loc_stf[idx, i], '--', label=a)
 #            axs[i].set_prop_cycle(None)
 
         if has_lsr:
@@ -159,6 +213,19 @@ def main(mission_sc=False, simple=False):
             idx = np.logical_not(np.isnan(lsr_loc_stf[:, 0]))
             for i, a in enumerate('lsr ' + a for a in c_lab):
                 axs[i].plot(time[idx], lsr_loc_stf[idx, i] - sc_loc_stf[idx, i], ':', label=a)
+
+        if has_vo:
+            print('vo delta scale μ=%.2f, σ=%.2f' % (vo_delta_scale_mean, vo_delta_scale_std))
+            print('vo delta bias μ=(%.2f, %.2f, %.2f), σ=(%.2f, %.2f, %.2f)' % (*vo_delta_bias_mean, *vo_delta_bias_std))
+            print('vo mm delta scale μ=%.2f, σ=%.2f' % (vo_mm_delta_scale_mean, vo_mm_delta_scale_std))
+            print('vo mm delta bias μ=(%.2f, %.2f, %.2f), σ=(%.2f, %.2f, %.2f)' % (*vo_mm_delta_bias_mean, *vo_mm_delta_bias_std))
+            print('vo meas err μ=(%.2f, %.2f, %.2f), σ=(%.2f, %.2f, %.2f)' % (*vo_err_mean, *vo_err_std))
+            idx = np.logical_not(np.isnan(vo_loc_stf[:, 0]))
+            for i, a in enumerate('vo meas' + a for a in c_lab):
+                axs[i].plot(time[idx], vo_loc_stf[idx, i] - sc_loc_stf[idx, i], 'b-.', label=a)
+            for i, a in enumerate('vo bias' + a for a in c_lab):
+                axs[i].plot(time[idx], vo_loc_bias_stf[idx, i], 'b-', label=a)
+            axs[-1].plot(time[idx], vo_scale[idx], 'b-', label='vo scale')
 
         for i in range(3):
             axs[i].legend(loc='lower right')
@@ -170,7 +237,7 @@ def main(mission_sc=False, simple=False):
                 axs[i].set_ybound(-30, 30)
 
     else:
-        fig2, axs = plt.subplots(4 if cum_delta_v[-1] > 0 else 3, 1, sharex=True, figsize=(30, 19.5))
+        fig2, axs = plt.subplots(4 if cum_delta_v[-1] > 0 else 3, 1, sharex=True, figsize=FIG_SIZE)
 
         # location errors
         i = 0
@@ -189,18 +256,26 @@ def main(mission_sc=False, simple=False):
             axs[i].plot(time, sc_loc_stf[:, j], label=a)
         axs[i].set_prop_cycle(None)
 
-        if has_lma:
+        if has_spl:
             for j, a in enumerate('optical '+a for a in c_lab):
-                axs[i].plot(time, lma_loc_stf[:, j], '--', label=a)
+                axs[i].plot(time, spl_loc_stf[:, j], '--', label=a)
             axs[i].set_prop_cycle(None)
 
         if has_lsr:
             for j, a in enumerate('laser '+a for a in c_lab):
                 axs[i].plot(time, lsr_loc_stf[:, j], ':', label=a)
+            axs[i].set_prop_cycle(None)
+
+        if has_vo:
+            for j, a in enumerate('vo '+a for a in c_lab):
+                axs[i].plot(time, vo_loc_stf[:, j], '.-', label=a)
+            axs[i].set_prop_cycle(None)
+
         axs[i].set_title('measurements'
-                         + ('\nopt err μ=(%.2f, %.2f, %.2f), σ=(%.2f, %.2f, %.2f)' % (*lma_err_mean, *lma_err_std) if has_lma else '')
+                         + ('\nopt err μ=(%.2f, %.2f, %.2f), σ=(%.2f, %.2f, %.2f)' % (*spl_err_mean, *spl_err_std) if has_spl else '')
                          + ('\nlsr err μ=(%.2f, %.2f, %.2f), σ=(%.2f, %.2f, %.2f)' % (*lsr_err_mean, *lsr_err_std) if has_lsr else '')
-                        )
+                         + ('\nvo err μ=(%.2f, %.2f, %.2f), σ=(%.2f, %.2f, %.2f)' % (*vo_err_mean, *vo_err_std) if has_vo else '')
+                         )
         axs[i].legend(loc='lower right')
 
         # measurement likelihood
@@ -217,6 +292,57 @@ def main(mission_sc=False, simple=False):
         axs[i].set_xlim(np.min(time), np.max(time))
     plt.tight_layout()
     plt.show()
+
+
+def vo_data_prep(vo_loc, vo_scale, vo_bias_sds, sc_loc, trg_loc):
+    # get raw measures first
+    vo_raw_loc = (vo_loc - trg_loc)/vo_scale
+    new_vo_scale = np.ones(len(vo_loc))*np.nan
+    new_vo_loc_bias = np.ones((len(vo_loc),3))*np.nan
+    new_vo_loc = np.ones((len(vo_loc),3))*np.nan
+
+    # TODO: estimate sc and bias based on likelihood maximization, estimate hyperparams also:
+    #   - delta_scale_sd (1 & 2), delta_bias_sd (1 & 2), dist_err_sd, lat_err_sd
+    #   - current scheme doesnt work as measurement error can be super small so that bias can explain all and scale goes to inf
+
+    nkf_idxs = []
+    is_mm = []
+    bias0 = [0., 0., 0.]
+    j = 0
+    ks = (i for i, sd in enumerate(vo_bias_sds[:, 0]) if sd > 0)
+    while j is not None:
+        k = next(ks, None)
+        if vo_bias_sds[j, 0] is np.inf:
+            nkf_idxs.append(0)
+            is_mm.append(False)
+
+        sc = np.nanmean(1/vo_scale[j:k])
+
+        if np.sum(np.any(np.logical_not(np.isnan(vo_raw_loc[j:k, :])), axis=1)) >= 3:
+            # need to skip keyframes with too few measurements
+            #   => leads to bad scale and bias diffs
+            #   => better way would be some kind of likelihood maximization thing
+
+            # vo_raw_loc[j:k, :]/sc - bias == sc_loc[j:k, :] - trg_loc[j:k, :]
+            def costfun(bias, sc):
+                err = sc_loc[j:k, :] - trg_loc[j:k, :] - vo_raw_loc[j:k, :]/sc + np.array(bias)
+                err = err[np.logical_not(np.any(np.isnan(err), axis=1)), :].flatten()
+                return err
+            (*bias,), _ = optimize.leastsq(costfun, bias0, args=(sc,))
+            nkf_idxs.append(j)
+        else:
+            bias = bias0
+            nkf_idxs.append(0)
+
+        new_vo_scale[j:k] = sc
+        new_vo_loc_bias[j:k, :] = np.array(bias).reshape((1, 3))
+        new_vo_loc[j:k, :] = vo_raw_loc[j:k, :]/sc - np.array(bias).reshape((1, 3))
+
+        is_mm.append(vo_bias_sds[j, 0] == 0.05)
+        bias0 = bias
+        j = k
+
+    return new_vo_loc + trg_loc, new_vo_scale, new_vo_loc_bias + trg_loc, nkf_idxs, is_mm
 
 
 def plot_orbit_sf(ax, d1_loc, sc_loc, flt_loc=None, plot_bodies=True, labels=('x', 'y'), cutoff=None):

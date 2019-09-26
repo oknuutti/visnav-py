@@ -10,7 +10,8 @@ from scipy.optimize import least_squares
 
 
 def bundle_adj(poses: np.ndarray, pts3d: np.ndarray, pts2d: np.ndarray,
-               cam_idxs: np.ndarray, pt3d_idxs: np.ndarray, K: np.ndarray, max_nfev=None):
+               cam_idxs: np.ndarray, pt3d_idxs: np.ndarray, K: np.ndarray,
+               max_nfev=None, skip_pose0=False):
     """
     Returns the bundle adjusted parameters, in this case the optimized rotation and translation vectors.
 
@@ -31,16 +32,23 @@ def bundle_adj(poses: np.ndarray, pts3d: np.ndarray, pts2d: np.ndarray,
             contains indices of points (from 0 to n_points - 1) involved in each observation.
 
     """
+    a = 1 if skip_pose0 else 0
+    assert not skip_pose0, 'some bug with skipping first pose optimization => for some reason cost stays high, maybe problem with A?'
+
     n_cams = poses.shape[0]
     n_pts = pts3d.shape[0]
-    A = _bundle_adjustment_sparsity(n_cams, n_pts, cam_idxs, pt3d_idxs)
-    x0 = np.hstack((poses.ravel(), pts3d.ravel()))
-    err = _costfun(x0, n_cams, n_pts, cam_idxs, pt3d_idxs, pts2d, K)
+    A = _bundle_adjustment_sparsity(n_cams-a, n_pts, cam_idxs, pt3d_idxs)
+    x0 = np.hstack((poses[a:].ravel(), pts3d.ravel()))
+    pose0 = poses[0:a].ravel()
+
+    if False:
+        err = _costfun(x0, pose0, n_cams, n_pts, cam_idxs, pt3d_idxs, pts2d, K)
+        print('ERR: %.4e' % (np.sum(err**2)/2))
 
     res = least_squares(_costfun, x0, jac_sparsity=A, verbose=2, x_scale='jac', ftol=1e-4, method='trf',
-                        args=(n_cams, n_pts, cam_idxs, pt3d_idxs, pts2d, K), max_nfev=max_nfev)
+                        args=(pose0, n_cams, n_pts, cam_idxs, pt3d_idxs, pts2d, K), max_nfev=max_nfev)
 
-    new_poses, new_pts3d = _optimized_params(res.x, n_cams, n_pts)
+    new_poses, new_pts3d = _optimized_params(np.hstack((pose0, res.x)), n_cams, n_pts)
     return new_poses, new_pts3d
 
 
@@ -79,11 +87,12 @@ def _project(pts3d, poses, K):
     return pts2d_proj
 
 
-def _costfun(params, n_cams, n_pts, cam_idxs, pt3d_idxs, pts2d, K):
+def _costfun(params, pose0, n_cams, n_pts, cam_idxs, pt3d_idxs, pts2d, K):
     """
     Compute residuals.
     `params` contains camera parameters and 3-D coordinates.
     """
+    params = np.hstack((pose0, params))
     poses = params[:n_cams * 6].reshape((n_cams, 6))
     points_3d = params[n_cams * 6:].reshape((n_pts, 3))
     points_proj = _project(points_3d[pt3d_idxs], poses[cam_idxs], K)

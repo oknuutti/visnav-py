@@ -16,7 +16,7 @@ from settings import *
 
 
 if __name__ == '__main__':
-    sm = DidymosSystemModel(use_narrow_cam=False, target_primary=False, hi_res_shape_model=True)
+    sm = DidymosSystemModel(use_narrow_cam=False, target_primary=False, hi_res_shape_model=False)
     sm.cam = Camera(1024, 1024, 20, 20)
 
     re = RenderEngine(sm.cam.width, sm.cam.height, antialias_samples=0)
@@ -31,7 +31,8 @@ if __name__ == '__main__':
     # obj_idx = re.load_object(sm.asteroid.hires_target_model_file)
     t0 = datetime.now().timestamp()
 
-    odo = VisualOdometry(sm, sm.cam.width, verbose=True, pause=True)
+    odo = VisualOdometry(sm, sm.cam.width, verbose=True, pause=False, use_scale_correction=True, use_ba=True,
+                         )#keypoint_algo=VisualOdometry.KEYPOINT_FAST)
     # ast_q = quaternion.one
     ast_q = tools.rand_q(math.radians(15))
 
@@ -59,7 +60,7 @@ if __name__ == '__main__':
         image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
 
         # estimate pose
-        res = odo.process(image, datetime.fromtimestamp(t0 + t), prior, quaternion.one)
+        res, bias_sds, scale_sd = odo.process(image, datetime.fromtimestamp(t0 + t), prior, quaternion.one)
 
         if res is not None:
             tq = res.quat * SystemModel.cv2gl_q

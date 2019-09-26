@@ -18,6 +18,7 @@ import cv2
 
 from algo import tools
 from algo.bundleadj import bundle_adj
+from algo.image import ImageProc
 from algo.model import SystemModel, Asteroid
 from iotools.objloader import ShapeModel
 
@@ -52,17 +53,19 @@ class DeltaPose(Pose):
 
 
 class PoseEstimate:
-    def __init__(self, prior: Pose, post: Pose):
+    def __init__(self, prior: Pose, post: Pose, method):
         self.prior = prior
         self.post = post
+        self.method = method
 
 
 class Frame:
     _NEXT_ID = 1
 
     def __init__(self, time, image, img_sc, pose: PoseEstimate, sc_q, kps_uv: dict=None, id=None):
-        self._id = Frame._NEXT_ID if id is None else id
-        Frame._NEXT_ID = max(self._id + 1, Frame._NEXT_ID)
+        self._id = id
+        if id is not None:
+            Frame._NEXT_ID = max(id + 1, Frame._NEXT_ID)
         self.time = time
         self.image = image
         self.img_sc = img_sc
@@ -71,12 +74,18 @@ class Frame:
         self.kps_uv = kps_uv or {}   # dict of keypoints with keypoint img coords in this frame
         self.ini_kp_count = len(self.kps_uv)
 
+    def set_id(self):
+        assert self._id is None, 'id already given, cant set it twice'
+        self._id = Frame._NEXT_ID
+        Frame._NEXT_ID += 1
+
     @property
     def id(self):
+        assert self._id is not None, 'id not given yet'
         return self._id
 
     def __hash__(self):
-        return self._id
+        return self.id
 
 
 class Keypoint:
@@ -107,6 +116,7 @@ class State:
         self.map3d = {}
         self.last_frame = None
         self.last_success_time = None
+        self.first_result_given = False
         self.scale = 1
 
 
@@ -143,14 +153,17 @@ class VisualOdometry:
     DEF_POSE_ESTIMATION = POSE_RANSAC_3D    # MIXED works quite bad as pose from 2d-2d matching is quite inaccurate
 
     # keyframe addition
-    DEF_NEW_KF_MIN_INLIER_RATIO = 0.7              # remaining inliers from previous keyframe features
+    DEF_NEW_KF_MIN_INLIER_RATIO = 0.70             # remaining inliers from previous keyframe features
     DEF_NEW_KF_MIN_DISPL_FOV_RATIO = 0.004         # displacement relative to the fov for triangulation
     DEF_NEW_KF_TRIANGULATION_TRIGGER_RATIO = 0.3   # ratio of 2d points tracked that can be triangulated
+    DEF_INI_KF_TRIANGULATION_TRIGGER_RATIO = 0.5   # ratio of 2d points tracked that can be triangulated for first kf
     DEF_NEW_KF_TRANS_KP3D_ANGLE = math.radians(3)  # change in viewpoint relative to a 3d point
-    DEF_NEW_KF_TRANS_KP3D_RATIO = 0.1              # ratio of 3d points with significant viewpoint change
-    DEF_NEW_KF_ROT_ANGLE = math.radians(5)         # new keyframe if orientation changed by this much
-    DEF_NEW_SC_ROT_ANGLE = math.radians(5)         # new keyframe if s/c orientation changed by this much
+    DEF_NEW_KF_TRANS_KP3D_RATIO = 0.15             # ratio of 3d points with significant viewpoint change
+    DEF_NEW_KF_ROT_ANGLE = math.radians(7)         # new keyframe if orientation changed by this much
+    DEF_NEW_SC_ROT_ANGLE = math.radians(7)         # new keyframe if s/c orientation changed by this much
     DEF_MAX_KP_DIST = 10                           # max keypoint distance when triangulating
+    DEF_KF_BIAS_SDS = np.array([0.01, 0.01, 0.01, 0.01, 0.01, 0.01])  # bias drift sds, x, y, z, then so3
+    DEF_KF_SCALE_SD = 0.01                         # scale drift sd
 
     # map maintenance
     DEF_MAX_KEYFRAMES = 8
@@ -159,23 +172,28 @@ class VisualOdometry:
     DEF_REMOVAL_USAGE_LIMIT = 5        # 3d keypoint valid for removal if it was available for use this many times
     DEF_REMOVAL_RATIO = 0.2            # 3d keypoint inlier participation ratio below which the keypoint is discarded
     DEF_REMOVAL_AGE = 4                # remove if last inlier was this many keyframes ago
+    DEF_MM_BIAS_SDS = np.array([0.05, 0.05, 0.05, 0.05, 0.05, 0.05])  # bias drift sds, x, y, z, then so3
+    DEF_MM_SCALE_SD = 0.05                         # scale drift sd
 
+    DEF_USE_SCALE_CORRECTION = False
 #    DEF_UNCERTAINTY_LIMIT_RATIO = 30   # current solution has to be this much more uncertain as new initial pose to change base pose
-    DEF_MIN_INLIERS = 20
-    DEF_RESET_TIMEOUT = 30*60          # reinitialize if this many seconds without successful pose estimate
-    DEF_MIN_FEATURE_INTENSITY = 10     # minimum level of intensity required near a keypoint
-    DEF_SCALE_EST_COEF = 0.95          # scale correction estimation coefficient
+    DEF_MIN_INLIERS = 30                # discard pose estimate if less inliers than this
+    DEF_MIN_INLIER_RATIO = 0.60         # discard pose estimate if less inliers than this
+    DEF_RESET_TIMEOUT = 30*60           # reinitialize if this many seconds without successful pose estimate
+    DEF_MIN_FEATURE_INTENSITY = 10      # minimum level of intensity required near a keypoint
+    DEF_SCALE_EST_COEF = 0.95           # scale correction estimation coefficient
 
     DEF_USE_BA = True
     DEF_MAX_BA_KEYFRAMES = 8
     DEF_BA_INTERVAL = 4                # run ba every this many keyframes
-    DEF_MAX_BA_FUN_EVAL = 20           # max cost function evaluations during ba
+    DEF_MAX_BA_FUN_EVAL = 30           # max cost function evaluations during ba
 
     # TODO: (3) try out matching triangulated 3d points to 3d model using icp for all methods with 3d points
     # TODO: (3) try to init pose globally (before ICP) based on some 3d point-cloud descriptor
     DEF_USE_ICP = False
 
     # TODO: (3) get better distributed keypoints by using grids
+    # TODO: (3) detect eclipses (based on appearance?) for faster recovery and false estimate suppression
 
     def __init__(self, sm, img_width=None, verbose=0, pause=0, **kwargs):
         self.sm = sm
@@ -210,7 +228,7 @@ class VisualOdometry:
         elif self.keypoint_algo == VisualOdometry.KEYPOINT_AKAZE:
             self.kp_params = {
                 'diffusivity': cv2.KAZE_DIFF_CHARBONNIER, # default: cv2.KAZE_DIFF_PM_G2, KAZE_DIFF_CHARBONNIER
-                'threshold': 0.0003,          # default: 0.001
+                'threshold': 0.0003,         # default: 0.001
                 'nOctaves': 4,               # default: 4
                 'nOctaveLayers': 4,          # default: 4
             }
@@ -228,7 +246,7 @@ class VisualOdometry:
             # init params, state
         ))
 
-    def process(self, new_img, new_time, prior_pose: Pose, sc_q) -> PoseEstimate:
+    def process(self, new_img, new_time, prior_pose: Pose, sc_q) -> (PoseEstimate, np.ndarray, float):
         # reset cache
         self.cache.clear()
 
@@ -238,7 +256,7 @@ class VisualOdometry:
         # maybe initialize state
         if not self.state.initialized:
             self.initialize(new_frame)
-            return None
+            return None, None, None
 
         # track/match keypoints
         self.track_keypoints(new_frame)
@@ -257,16 +275,30 @@ class VisualOdometry:
             if len(new_frame.kps_uv) < 2*self.min_inliers:
                 self.state.initialized = False
 
+        # expected bias and scale drift sds
+        bias_sds, scale_sd = np.zeros((6,)), 0
+
         # add new frame as keyframe?      # TODO: (3) run in another thread
         if self.is_new_keyframe(new_frame):
             self.add_new_keyframe(new_frame)
+            bias_sds, scale_sd = self.kf_bias_sds, self.kf_scale_sd
 
             # maybe do map maintenance    # TODO: (3) run in yet another thread
             if self.is_maintenance_time():
                 self.maintain_map()
+                bias_sds, scale_sd = self.mm_bias_sds, self.mm_scale_sd
+
+        elif new_frame.pose.method == VisualOdometry.POSE_RANSAC_2D and not self.use_scale_correction:
+            # 2d-2d match result only usable for the first added keyframe if scale correction not used,
+            # i.e. for the first frames after init that are not keyframes, dont return pose
+            new_frame.pose.post = None
+
+        if new_frame.pose.post is not None and not self.state.first_result_given:
+            bias_sds, scale_sd = np.ones((6,)) * np.inf, np.inf
+            self.state.first_result_given = True
 
         self.state.last_frame = new_frame
-        return copy.deepcopy(new_frame.pose.post)
+        return copy.deepcopy(new_frame.pose.post), bias_sds, scale_sd
 
     def initialize_frame(self, time, image, prior_pose, sc_q):
         if self.verbose:
@@ -278,7 +310,7 @@ class VisualOdometry:
             img_sc = self.img_width / image.shape[1]
             image = cv2.resize(image, None, fx=img_sc, fy=img_sc)
 
-        nf = Frame(time, image, img_sc, PoseEstimate(prior=prior_pose, post=None), sc_q)
+        nf = Frame(time, image, img_sc, PoseEstimate(prior=prior_pose, post=None, method=None), sc_q)
         nf.ini_kp_count = self.state.keyframes[-1] if len(self.state.keyframes) > 0 else None
         return nf
 
@@ -290,7 +322,7 @@ class VisualOdometry:
         self.add_new_keyframe(new_frame)
 
         # check that init ok and enough features found
-        if len(self.state.map2d) > self.DEF_MIN_INLIERS * 2:
+        if len(self.state.map2d) > self.min_inliers * 2:
             self.state.last_frame = new_frame
             self.state.last_success_time = new_frame.time
             self.state.initialized = True
@@ -332,20 +364,15 @@ class VisualOdometry:
 
     def _asteroid_mask(self, image):
         _, mask = cv2.threshold(image, self.min_feature_intensity, 255, cv2.THRESH_BINARY)
-        kernel = np.array([
-                [0, 1, 1, 1, 0],
-                [1, 1, 1, 1, 1],
-                [1, 1, 1, 1, 1],
-                [1, 1, 1, 1, 1],
-                [0, 1, 1, 1, 0]], np.uint8)
+        kernel = ImageProc.bsphkern(round(6*image.shape[0]/512)*2 + 1)
 
         # exclude asteroid limb from feature detection
-        # TODO: (3) optimize amount of dilation and erosion
-        mask = cv2.dilate(mask, kernel, iterations=3)
-        mask = cv2.erode(mask, kernel, iterations=6)
+        mask = cv2.erode(mask, ImageProc.bsphkern(5), iterations=1)    # remove stars
+        mask = cv2.dilate(mask, kernel, iterations=1)   # remove small shadows inside asteroid
+        mask = cv2.erode(mask, kernel, iterations=2)    # remove asteroid limb
 
-#        cv2.imshow('mask', mask)
- #       cv2.waitKey(15)
+        # cv2.imshow('mask', ImageProc.overlay_mask(image, mask))
+        # cv2.waitKey()
 
         return mask
 
@@ -422,6 +449,7 @@ class VisualOdometry:
         rf, lf, nf = self.state.keyframes[-1], self.state.last_frame, new_frame
         dr, dq = None, None
         inliers = None
+        method = None
 
         if self.pose_estimation in (VisualOdometry.POSE_RANSAC_3D, VisualOdometry.POSE_RANSAC_MIXED):
             # solve pose using ransac & ap3p based on 3d-2d matches
@@ -439,16 +467,17 @@ class VisualOdometry:
             if self.verbose:
                 print('PnP: %d/%d' % (0 if inliers is None else len(inliers), len(pts2d)), end='')
 
-            if ok and len(inliers) > self.min_inliers:
+            if ok and len(inliers) > self.min_inliers and len(inliers)/len(pts3d) > self.min_inlier_ratio:
                 if self.verbose:
-                    print('')
+                    print('')  # finish printed line
 
                 q = tools.angleaxis_to_q(rv).conj()     # solvepnp returns orientation of system origin vs camera (!)
                 r = -tools.q_times_v(q, r)              # solvepnp returns a vector from camera to system origin (!)
 
                 # update & apply 3d map scale correction
-                self.state.scale = self.state.scale * self.scale_est_coef \
-                                   + (np.linalg.norm(nf.pose.prior.loc) / np.linalg.norm(r)) * (1 - self.scale_est_coef)
+                if self.use_scale_correction:
+                    self.state.scale = self.state.scale * self.scale_est_coef \
+                                       + (np.linalg.norm(nf.pose.prior.loc) / np.linalg.norm(r)) * (1 - self.scale_est_coef)
 
                 # TODO: (2) correct orientation estimate towards prior orientation
 
@@ -469,21 +498,27 @@ class VisualOdometry:
                 # calculate delta-q and delta-r
                 dq = q * rf.pose.post.quat.conj()
                 dr = tools.q_times_v(rf.pose.post.quat.conj(), r.flatten() - rf.pose.post.loc)
+                method = VisualOdometry.POSE_RANSAC_3D
 
             elif inliers is None:
                 if self.verbose:
                     print(' => Too few 3D points matched for reliable pose estimation')
-            elif len(inliers) > 0:
+            elif len(inliers) < self.min_inliers:
                 if self.verbose:
                     print(' => PnP was left with too few inliers')
+            elif len(inliers)/len(pts3d) < self.min_inlier_ratio:
+                if self.verbose:
+                    print(' => PnP too few inliers compared to total matches')
             else:
                 if self.verbose:
                     print(' => PnP Failed')
 
-        if dr is None or self.pose_estimation in (VisualOdometry.POSE_RANSAC_2D, VisualOdometry.POSE_RANSAC_MIXED):
+        if (self.use_scale_correction or not self.state.first_result_given) \
+                and (dr is None or
+                     self.pose_estimation in (VisualOdometry.POSE_RANSAC_2D, VisualOdometry.POSE_RANSAC_MIXED)):
             # include all tracked keypoints, i.e. also 3d points
             # TODO: (3) better to compare rf post to nf prior?
-            scale = np.linalg.norm(rf.pose.prior.loc - nf.pose.prior.loc)
+            scale = np.linalg.norm(rf.pose.prior.loc - nf.pose.prior.loc) if self.use_scale_correction else 1
             tmp = [(id, pt2d, rf.kps_uv[id])
                    for id, pt2d in nf.kps_uv.items()
                    if id in rf.kps_uv]
@@ -517,9 +552,11 @@ class VisualOdometry:
                     dq = tools.mean_q([dq, dq_], [1 - w2dq, w2dq])
                     w2dr = n2d/(n2d + n3d * 12.5)
                     dr = (1 - w2dr) * dr + w2dr*dr_
+                    method = VisualOdometry.POSE_RANSAC_MIXED_
                 else:
                     dq = dq_
                     dr = dr_
+                    method = VisualOdometry.POSE_RANSAC_2D
 
         if dr is None or dq is None:
             nf.pose.post = None
@@ -535,6 +572,7 @@ class VisualOdometry:
                 rf.pose.post.loc_s2 + tools.q_times_v(rf.pose.post.quat, d_r_s2),
                 rf.pose.post.so3_s2 + tools.q_times_v(rf.pose.post.quat, d_so3_s2),
             )
+            nf.pose.method = method
             self.state.last_success_time = nf.time
 
         if self.verbose:
@@ -566,6 +604,11 @@ class VisualOdometry:
         if nf.pose.post is None:
             return False
 
+        # if no kp triangulated yet and scale correction not used
+        if not self.use_scale_correction and not self.state.first_result_given:
+            return len(self.state.map2d) > 0 \
+               and len(self.triangulation_kps(nf))/len(self.state.map2d) > self.ini_kf_triangulation_trigger_ratio
+
         #   a) should detect new feats as old ones don't work
         if len(nf.kps_uv)/rf.ini_kp_count < self.new_kf_min_inlier_ratio:
             return True
@@ -593,6 +636,7 @@ class VisualOdometry:
         return False
 
     def add_new_keyframe(self, new_frame):
+        new_frame.set_id()
         self.state.keyframes.append(new_frame)
         self.detect_features(new_frame)
         if self.pose_estimation in (VisualOdometry.POSE_RANSAC_3D, VisualOdometry.POSE_RANSAC_MIXED):
@@ -682,7 +726,7 @@ class VisualOdometry:
         max_keyframes = max_keyframes or len(self.state.keyframes)
 
         tmp = [
-            (pt.id, pt.pt3d)
+            (pt.id, pt.pt3d * self.state.scale)
             for pt in self.state.map3d.values()
             if pt.inlier_count > 0  # only include if been an inlier
         ]
@@ -708,23 +752,31 @@ class VisualOdometry:
         ])))
 
         # TODO: (3) bundle adjustment to include keyframes older than max_keyframes as constraints only
+        map_br0 = np.median(np.array(pts3d), axis=0)
+        norm0 = np.median(np.linalg.norm(np.array(pts3d) - map_br0, axis=1))
+
         poses, pts3d = bundle_adj(poses_mx, np.array(pts3d), pts2d, cam_idxs, pt3d_idxs, self.cam_mx, max_nfev=self.max_ba_fun_eval)
 
-        # TODO: (1) normalize poses & 3d-points so that first pose remains unchanged after bundle adjustment
-
-        # normalize scale as bundle adjustment does not have any constraint on scale
-        scale_adj = np.mean([np.linalg.norm(self.state.keyframes[-max_keyframes:][i].pose.prior.loc)/np.linalg.norm(p[3:])
-                            for i, p in enumerate(poses)])
+        map_br1 = np.median(np.array(pts3d), axis=0)
+        norm1 = np.median(np.linalg.norm(np.array(pts3d) - map_br1, axis=1))
+        scale_adj = norm0 / norm1
 
         for i, p in enumerate(poses):
             f = self.state.keyframes[-max_keyframes:][i]
-            f.pose.post.quat = tools.angleaxis_to_q(p[:3]).conj()           # flip back so that world -> cam
-            f.pose.post.loc = -tools.q_times_v(f.pose.post.quat, p[3:]) * scale_adj
-            # f.pose.post.quat = tools.angleaxis_to_q(p[:3])
-            # f.pose.post.loc = p[3:] * scale_adj
+            nq = tools.angleaxis_to_q(p[:3]).conj()           # flip back so that world -> cam
+            nr = -tools.q_times_v(nq, p[3:]) * scale_adj      # flip back so that world -> cam
+            if i == 0:
+                q0 = f.pose.post.quat
+                r0 = f.pose.post.loc
+                bq = q0 * nq.conj()         # rotate all poses so that first one remains unchanged
+                br = r0 - nr                # translate all poses so that first one remains unchanged
+            f.pose.post.quat = bq * nq
+            f.pose.post.loc = tools.q_times_v(bq, nr + br - r0) + r0
+
+        # transform 3d map so that consistent with first frame being unchanged
         for i, pt3d in enumerate(pts3d):
-            pt3d = pt3d.flatten() * scale_adj / self.state.scale
-            self.state.map3d[ids[i]].pt3d = pt3d
+            pt3d = pt3d.flatten() * scale_adj
+            self.state.map3d[ids[i]].pt3d = (tools.q_times_v(bq, pt3d + br - r0) + r0) / self.state.scale
 
         if self.verbose:
             print('bundle adjustment complete')
@@ -760,7 +812,7 @@ class VisualOdometry:
             consider_usage = kp.total_count >= self.removal_usage_limit
             if consider_usage and (kp.inlier_count/kp.total_count <= self.removal_ratio
                                    or len(kfs) > lim and kp.inlier_time <= kfs[-lim].time) \
-                    or np.linalg.norm(kp.pt3d) > self.max_kp_dist:
+                    or (self.use_scale_correction and np.linalg.norm(kp.pt3d) > self.max_kp_dist):
                 rem.append(kp.id)
         for id in rem:
             self.del_keypoint(id)
@@ -802,7 +854,8 @@ class VisualOdometry:
             self._track_image = cv2.line(self._track_image, (x1, y1), (x0, y0), self._track_colors[id % 100].tolist(), 1)
             img = cv2.circle(img, (x1, y1), 5, self._track_colors[id % 100].tolist(), -1)
         img = cv2.add(img, self._track_image)
-        cv2.imshow(label, img)
+        img_sc = 768/img.shape[0]
+        cv2.imshow(label, cv2.resize(img, None, fx=img_sc, fy=img_sc, interpolation=cv2.INTER_CUBIC))
         cv2.waitKey(0 if pause else 25)
 
     def _draw_matches(self, img1, img2, kp1, kp2, mask, pause=True, label='matches'):
@@ -862,7 +915,7 @@ if __name__ == '__main__':
         prior = Pose(cam_v, cam_q, np.ones((3,))*0.1, np.ones((3,))*0.01)
 
         # estimate pose
-        res = odo.process(image, datetime.fromtimestamp(t0 + t), prior, quaternion.one)
+        res, bias_sds, scale_sd = odo.process(image, datetime.fromtimestamp(t0 + t), prior, quaternion.one)
 
         if res is not None:
             tq = res.quat * SystemModel.cv2gl_q

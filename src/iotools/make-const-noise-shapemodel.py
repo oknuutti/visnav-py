@@ -16,9 +16,12 @@ from settings import *
 # data/CSHP_DV_130_01_LORES_00200.obj data/CSHP_DV_130_01_XXLRES_00200.obj data/67P_xl.nsm
 # data/CSHP_DV_130_01_LORES_00200.obj data/CSHP_DV_130_01_X3RES_00200.obj data/67P_xxl.nsm
 
-# data/ryugu-hi-res.obj data/ryugu-lo-res.obj data/ryugu_baseline.nsm
-# data/ryugu-hi-res.obj data/ryugu-xl-res.obj data/ryugu_xl.nsm
-# data/ryugu-hi-res.obj data/ryugu-xxl-res.obj data/ryugu_xxl.nsm
+# data/ryugu+tex-d1-80k.obj data/ryugu+tex-d1-16k.obj data/ryugu+tex-d1-16k.nsm
+# data/ryugu+tex-d1-80k.obj data/ryugu+tex-d1-4k.obj data/ryugu+tex-d1-4k.nsm
+# data/ryugu+tex-d1-80k.obj data/ryugu+tex-d1-1k.obj data/ryugu+tex-d1-1k.nsm
+# data/ryugu+tex-d2-80k.obj data/ryugu+tex-d2-16k.obj data/ryugu+tex-d2-16k.nsm
+# data/ryugu+tex-d2-80k.obj data/ryugu+tex-d2-4k.obj data/ryugu+tex-d2-4k.nsm
+# data/ryugu+tex-d2-80k.obj data/ryugu+tex-d2-1k.obj data/ryugu+tex-d2-1k.nsm
 
 
 if __name__ == '__main__':
@@ -53,7 +56,7 @@ if __name__ == '__main__':
     dev_std = np.std(clean_devs)
     print('\n\n(%.2fms/vx) dev mean %.6fm/%.6fm, std %.6fm/%.6fm, 2s %.6fm/%.6fm, 3s %.6fm/%.6fm' % tuple(
         map(lambda x: sc*x, (
-            timer.elapsed/(full_vertices.shape[0]),
+            timer.elapsed/len(obj_fr.vertices),
             dev_mean, p50,
             dev_std*1, p68,
             dev_std*2, p95,

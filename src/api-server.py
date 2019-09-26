@@ -41,7 +41,7 @@ def main():
     port = int(sys.argv[2])
 
     if len(sys.argv) > 3:
-        server = ApiServer(sys.argv[3], port=port, hires=False, cache_noise=True, result_rendering=False)
+        server = ApiServer(sys.argv[3], port=port, hires=True, cache_noise=True, result_rendering=False)
     else:
         server = SpawnMaster(port=port, max_count=5000)
 
@@ -307,10 +307,11 @@ class ApiServer:
         fname = params[1]
         img = cv2.imread(fname, cv2.IMREAD_GRAYSCALE)
 
-        time = params[2]
-        time = datetime.fromtimestamp(time, pytz.utc)
+        orig_time = params[2]
+        time = datetime.fromtimestamp(orig_time, pytz.utc)
 
-        d1_v, d1_q, d2_v, d2_q, sc_v, sc_q = self._parse_poses(params, offset=3)
+        sun_ast_v = tools.normalize_v(np.array(params[3][:3]))
+        d1_v, d1_q, d2_v, d2_q, sc_v, sc_q = self._parse_poses(params, offset=4)
         ast_q = d2_q if self._target_d2 else d1_q
         ast_v = d2_v if self._target_d2 else d1_v
 
@@ -321,20 +322,26 @@ class ApiServer:
         prior = Pose(ast_sc_v, ast_sc_q, np.ones((3,))*0.1, np.ones((3,))*0.01)
 
         if session not in self._odometry:
-            self._odometry[session] = VisualOdometry(self._sm, self._sm.view_width*2, verbose=1)
-        res = self._odometry[session].process(img, time, prior, sc_q)
+            self._odometry[session] = VisualOdometry(self._sm, self._sm.view_width*2, verbose=1, use_scale_correction=False)
+        res, bias_sds, scale_sd = self._odometry[session].process(img, time, prior, sc_q)
 
         if res is not None:
             tq = res.quat * tr_q
-            est_v = -tools.q_times_v(tq.conj(), res.loc)
-            est_q = tq.conj() * res.quat.conj() * tq
-            est_v_s2 = -tools.q_times_v(tq.conj(), res.loc_s2)
-            est_so3_s2 = -tools.q_times_v(tq.conj(), res.so3_s2)
+            est_sc_ast_q = tr_q.conj() * res.quat.conj() * tr_q
+            est_sc_ast_lf_v = -tools.q_times_v(tq.conj(), res.loc)        # _lf_: local (cam/sc) frame
+            est_sc_ast_gf_v = -tools.q_times_v(ast_q, -est_sc_ast_lf_v)   # _gf_: global frame
+            est_sc_ast_lf_v_s2 = -tools.q_times_v(tq.conj(), res.loc_s2)
+            est_sc_ast_lf_so3_s2 = -tools.q_times_v(tq.conj(), res.so3_s2)
             # err_q = ast_sc_q.conj() * est_q
             # err_angle = tools.angle_between_q(ast_sc_v, est_q)
             # err_v = est_v - ast_sc_v
 
-            result = [list(est_v), list(quaternion.as_float_array(est_q)), list(est_v_s2), list(est_so3_s2)]
+            result = [
+                list(est_sc_ast_gf_v),
+                list(quaternion.as_float_array(est_sc_ast_q)),
+                list(est_sc_ast_lf_v_s2) + list(est_sc_ast_lf_so3_s2) + list(bias_sds) + [scale_sd],
+                orig_time,
+            ]
         else:
             raise PositioningException('No tracking result')
 

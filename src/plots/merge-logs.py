@@ -20,16 +20,16 @@ if __name__ == '__main__':
         sm = get_system_model(mission)
         start_date = datetime.datetime.strptime(sys.argv[2] + ' ' + sys.argv[3], '%Y-%m-%d %H:%M:%S')
         postfix = sys.argv[4]
-        opzone = sys.argv[5] == 'opzone' if len(sys.argv) > 5 else False
+        opzone = 'opzone' in sys.argv[5:]
+        only_least_noise = 'noiseless' in sys.argv[5:]
+        only_real = 'real' in sys.argv[5:]
+        only_synth = 'synth' in sys.argv[5:]
+        method = next(iter(set(sys.argv[5:]) - {'opzone', 'noiseless', 'real', 'synth'}), False)
     except:
         print('USAGE: python %s <mission> <yyyy-mm-dd> <HH:MM:SS> <postfix> [opzone]\n\tmerges logs dated after given datetime'%(sys.argv[0],))
         quit()
 
     nofdb = True
-    only_synth = False
-    only_real = False
-    only_akaze = False
-    only_least_noise = False
 
     setups = [
         "orb",
@@ -83,6 +83,13 @@ if __name__ == '__main__':
         "sift+fdb+real",
         "sift+fdb+smn+real",
         "sift+fdb+smn_+real",
+
+        "centroid",
+        "centroid+smn",
+        "centroid+smn_",
+        "centroid+real",
+        "centroid+smn+real",
+        "centroid+smn_+real",
     ]
 
     if nofdb:
@@ -91,8 +98,8 @@ if __name__ == '__main__':
         setups = [s for s in setups if 'real' not in s]
     if only_real:
         setups = [s for s in setups if 'real' in s]
-    if only_akaze:
-        setups = [s for s in setups if 'akaze' in s]
+    if method:
+        setups = [s for s in setups if method in s]
     if only_least_noise:
         setups = [s for s in setups if 'smn' not in s]
 

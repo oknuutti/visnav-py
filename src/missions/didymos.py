@@ -40,7 +40,7 @@ class DidymosSystemModel(SystemModel):
                 mission_id = 'didy1n'
                 limits = (
                     3.5,    # min_distance in km
-                    7.5,    # min_med_distance in km
+                    6.5,    # min_med_distance in km
                     10.5,   # max_med_distance in km
                     10.5,   # max_distance in km
                     45,     # min_elong in deg
@@ -52,7 +52,7 @@ class DidymosSystemModel(SystemModel):
                     1.0,  # min_distance in km
                     1.1,  # min_med_distance in km
                     6.0,  # max_med_distance in km
-                    6.0,  # max_distance in km
+                    7.0,  # max_distance in km
                     45,  # min_elong in deg
                     min_time,  # min time instant
                 )
@@ -61,9 +61,9 @@ class DidymosSystemModel(SystemModel):
                 mission_id = 'didy2n'
                 limits = (
                     1.0,    # min_distance in km
-                    1.5,    # min_med_distance in km
+                    1.65,    # min_med_distance in km
                     5.3,   # max_med_distance in km
-                    5.3,   # max_distance in km
+                    7.0,   # max_distance in km
                     45,     # min_elong in deg
                     min_time,  # min time instant
                 )
@@ -71,7 +71,7 @@ class DidymosSystemModel(SystemModel):
                 mission_id = 'didy2w'
                 limits = (
                     0.135,  # min_distance in km
-                    0.22,  # min_med_distance in km
+                    0.28,  # min_med_distance in km
                     1.3,  # max_med_distance in km
                     1.3,  # max_distance in km
                     45,  # min_elong in deg
@@ -149,9 +149,9 @@ class DidymosPrimary(Asteroid):
         self.hires_target_model_file_textures = True
 
         self.constant_noise_shape_model = {
-            '' : os.path.join(BASE_DIR, 'data/ryugu+tex-d1-16k.nsm'),   # same as target_model_file but includes error estimate
-            'lo': os.path.join(BASE_DIR, 'data/ryugu+tex-d1-4k.nsm'),  # 1/3 the vertices
-            'hi': '', #os.path.join(BASE_DIR, 'data/ryugu+tex-d1-4k.nsm'),  # 1/10 the vertices
+            '' : os.path.join(BASE_DIR, 'data/ryugu+tex-d1-16k.nsm'),  # same as target_model_file but includes error estimate
+            'lo': os.path.join(BASE_DIR, 'data/ryugu+tex-d1-4k.nsm'),  # 1/4 the vertices
+            'hi': os.path.join(BASE_DIR, 'data/ryugu+tex-d1-1k.nsm'),  # 1/16 the vertices
         }
 
         self.sample_image_file = None
@@ -222,9 +222,9 @@ class DidymosSecondary(Asteroid):
         self.hires_target_model_file = os.path.join(BASE_DIR, 'data/ryugu+tex-d2-400k.obj')
 
         self.constant_noise_shape_model = {
-            '' : os.path.join(BASE_DIR, 'data/ryugu+tex-d2-16k.nsm'),   # same as target_model_file but includes error estimate
-            'lo': os.path.join(BASE_DIR, 'data/ryugu+tex-d2-4k.nsm'),  # 1/3 the vertices
-            'hi': '', #os.path.join(BASE_DIR, 'data/ryugu+tex-d2-4k.nsm'),  # 1/10 the vertices
+            '' : os.path.join(BASE_DIR, 'data/ryugu+tex-d2-16k.nsm'),  # same as target_model_file but includes error estimate
+            'lo': os.path.join(BASE_DIR, 'data/ryugu+tex-d2-4k.nsm'),  # 1/4 the vertices
+            'hi': os.path.join(BASE_DIR, 'data/ryugu+tex-d2-1k.nsm'),  # 1/16 the vertices
         }
 
         self.sample_image_file = None
@@ -241,8 +241,11 @@ class DidymosSecondary(Asteroid):
 
         # for cross section, assume spherical object
         self.max_radius = 105     # in meters, maximum extent of object from asteroid frame coordinate origin
-        self.mean_radius = 163/2  # in meters
+        self.mean_radius = 163/2  # in meters, dims = [206, 158, 132]
         self.mean_cross_section = math.pi * self.mean_radius ** 2
+
+        # Distance = 1180 (1160-1220) m
+        # L1, L2 = 999.3, 1354.4 m
 
         # epoch for orbital elements, 2019-Apr-27.0 TDB
         self.oe_epoch = Time(2458600.5, format='jd')

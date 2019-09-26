@@ -34,6 +34,7 @@ def get_system_model(mission, hi_res_shape_model=False):
 
 def run_batch(mission, full_method, count, est_real_ast_orient=False):
     m = full_method.split('+')
+    sg = None
     method=m[0]
     
     if False:
@@ -104,6 +105,9 @@ def run_batch(mission, full_method, count, est_real_ast_orient=False):
         kwargs = {'method':'keypoint', 'feat':2}
     elif method=='surf':
         kwargs = {'method':'keypoint', 'feat':3}
+    elif method=='vo':
+        # sg = OrbitAroundPoint(point=(0, 0, 0.18), vel=, sm_axis=0.02, incl=, asc_node=, corotating=True, target=(0, 0, 0))
+        kwargs = {}
     else:
         assert False, 'Invalid method "%s"'%method
 
@@ -132,6 +136,18 @@ def run_batch(mission, full_method, count, est_real_ast_orient=False):
 
     sm = get_system_model(mission, hi_res_shape_model=hi_res_shape_model)
 
+    if method == 'centroid':
+        # target always fits fov: [min_med_distance, max_distance]
+        sm.min_distance = sm.min_med_distance
+        file_prefix_mod = 'far_'
+    elif method == 'keypoint+':
+        # full distance range: [min_distance, max_distance]
+        file_prefix_mod = 'ful_'
+    else:
+        # default is [min_distance, max_med_distnace]
+        sm.max_distance = sm.max_med_distance
+        file_prefix_mod = ''
+
     if 'fdb' in m:
         #sm.view_width = sm.cam.width
         sm.view_width = VIEW_WIDTH
@@ -141,8 +157,9 @@ def run_batch(mission, full_method, count, est_real_ast_orient=False):
         #kwargs['scale_cam_img'] = True
         #kwargs['rotation_noise'] = False
 
-    tl = TestLoop(sm, far=(kwargs['method'] in ('centroid', 'keypoint+')),
-                  est_real_ast_orient=est_real_ast_orient, operation_zone_only=('didy' in mission))
+    tl = TestLoop(sm, file_prefix_mod=file_prefix_mod,
+                  est_real_ast_orient=est_real_ast_orient, operation_zone_only=('didy' in mission),
+                  state_generator=sg)
 
     if sm.mission_id == 'rose':
         tl.enable_initial_location = False

@@ -106,6 +106,7 @@ def load_image_meta(src, sm):
 
     ## set time
     ##
+    sm.asteroid.reset_to_defaults()
     half_range = sm.asteroid.rotation_period/2
     timestamp = Time(image_time, scale='utc', format='isot').unix
     sm.time.range = (timestamp - half_range, timestamp + half_range)
