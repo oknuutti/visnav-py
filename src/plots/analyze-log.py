@@ -4,6 +4,7 @@ import math
 from itertools import product
 
 import numpy as np
+import matplotlib as mpl
 import matplotlib.pyplot as plt
 from numpy.linalg import inv
 
@@ -26,9 +27,18 @@ from settings import *
 
 # phase angle (180-elong), ini err, distance, visibility
 EASY_LIMITS = ((20, 100), (0, 10), (3.5, 4.5), (0.8, 1))
+FIG_SIZE = (8, 6)
+FONT_SIZE = 5
+MARKER_SIZE = 2
+LINE_WIDTH = 0.5
 
 
 def main():
+#    mpl.style.use('classic')
+    mpl.rcParams['font.size'] = FONT_SIZE
+    mpl.rcParams['lines.markersize'] = MARKER_SIZE
+    mpl.rcParams['lines.linewidth'] = LINE_WIDTH
+
     if len(sys.argv) < 2:
         print('USAGE: python analyze-log.py <path to log file> [gpr|1d|easy] [shift|alt|dist|lat|orient]')
         sys.exit()
@@ -75,13 +85,20 @@ def main():
         #X[:, 1] = np.abs(tools.wrap_degs(X[:, 1]))
         data.append((logfile, X, yc, Y.flatten(), labels))
 
+    title_map = {
+        'didy2w': 'D2, WAC',
+        'didy2n': 'D2, NAC',
+        'didy1w': 'D1, WAC',
+        'didy1n': 'D1, NAC',
+    }
+
     if mode in ('1d', 'easy'):
         n_groups = 6
         # yr = yr/1000
         # idxs = (0, 1, 2, 3)
         idxs = (2,)
         for idx in idxs:
-            fig, axs = plt.subplots(len(data), 1, figsize=(20, 18), sharex=True)
+            fig, axs = plt.subplots(len(data), 1, figsize=FIG_SIZE, sharex=True)
             for i, (logfile, X, yc, yr, labels) in enumerate(data):
                 if mode == 'easy':
                     q997 = np.percentile(np.abs(yr), 99.7)
@@ -151,14 +168,16 @@ def main():
                     ax.plot(xt, ym, '-')
                     ax.plot(xt, ystd, '-')
 
-                ax.set_title('%s: %s by %s' % (logfile, target, predictor_labels[idx]))
-                ax.set_xlabel(predictor_labels[idx])
+                # ax.set_title('%s: %s by %s' % (logfile, target, predictor_labels[idx]))
+                ax.set_title('%s' % title_map[logfile.split('-')[0]])
+                if i == len(data)-1:
+                    ax.set_xlabel(predictor_labels[idx])
                 ax.set_ylabel(target)
                 ax.set_yticks(range(-200, 201, 50))
                 ax.hlines(range(-200, 201, 10), xmin, xmax, '0.95', '--')
                 ax.hlines(range(-200, 201, 50), xmin, xmax, '0.7', '-')
-                plt.setp(ax.get_xticklabels(), rotation='vertical', fontsize=14)
-                plt.setp(ax.get_yticklabels(), fontsize=14)
+                plt.setp(ax.get_xticklabels(), rotation=45)
+#                plt.setp(ax.get_yticklabels())
                 tools.hover_annotate(fig, ax, line, np.array(labels)[I])
 
                 # ax.set_xticks((x[1:] + x[:-1]) * 0.5)
@@ -181,6 +200,7 @@ def main():
                         ax.axvspan(2.8, 5.2, facecolor='orange', alpha=0.3)
 
             plt.tight_layout()
+            plt.subplots_adjust(top=0.94, hspace=0.35)
             while (plt.waitforbuttonpress() == False):
                 pass
 
@@ -201,7 +221,9 @@ def main():
         )
 
         # titles = ['ORB', 'AKAZE', 'SURF', 'SIFT']
-        titles = [d[0][:-4] for d in data]
+        # titles = [d[0][:-4] for d in data]
+        titles = [title_map[d[0].split('-')[0]] for d in data]
+
         nd = len(data)
         r, c = {
             1: (1, 1),
@@ -210,12 +232,12 @@ def main():
             4: (2, 2),
         }[nd]
         if scatter:
-            fig, axs = plt.subplots(r, c * len(pairs), figsize=(32, 18))
+            fig, axs = plt.subplots(r, c * len(pairs), figsize=FIG_SIZE)
         else:
             from mpl_toolkits.mplot3d import Axes3D
             from matplotlib.colors import Normalize
-            fig = plt.figure(figsize=(32, 18))
-            fig2 = plt.figure(figsize=(32, 18))
+            fig = plt.figure(figsize=FIG_SIZE)
+            fig2 = plt.figure(figsize=FIG_SIZE)
 
         for j, (logfile, X, yc, yr, labels) in enumerate(data):
             for i, (i0, i1) in enumerate(pairs):
@@ -256,9 +278,9 @@ def main():
                         X[:, i1] < y[j + 1],
                     ))] for i in range(len(x) - 1)] for j in range(len(y) - 1)]
 
-                    means = np.array([[np.mean(y_grouped[j][i]) for i in range(len(x) - 1)] for j in range(len(y) - 1)])
+                    # std when we assume zero mean, remove lowest 0.1% and highest 0.1% before calculating stats
                     stds = np.array(
-                        [[np.std(y_grouped[j][i]) + means[j][i] for i in range(len(x) - 1)] for j in range(len(y) - 1)])
+                        [[np.sqrt(tools.robust_mean(y_grouped[j][i]**2, 0.1)) for i in range(len(x) - 1)] for j in range(len(y) - 1)])
                     samples = np.array([[len(y_grouped[j][i]) for i in range(len(x) - 1)] for j in range(len(y) - 1)])
 
                     d_coefs, pa_coefs, mod_stds = model_stds2(stds, samples)
@@ -278,13 +300,16 @@ def main():
                     ax2.plot_surface(xstep, ystep, msstep, facecolors=scalarMap.to_rgba(msstep), antialiased=True)
                     ax2.view_init(30, -60)
 
-                ax.tick_params(labelsize=18)
-                ax.set_xlabel(predictor_labels[i0], fontsize=22)
-                ax.set_ylabel(predictor_labels[i1], fontsize=22)
+                # ax.tick_params(labelsize=18)
+                ax.set_xlabel(predictor_labels[i0])
+                ax.set_ylabel(predictor_labels[i1])
+                ax2.set_xlabel(predictor_labels[i0])
+                ax2.set_ylabel(predictor_labels[i1])
 
                 if i == 0:
                     col, row = j % c, j // c
-                    fig.text(0.26 + col * 0.5, 0.96 - row * 0.5, titles[j], fontsize=30, horizontalalignment='center')
+                    fig.text(0.36 + col * 0.5, 0.96 - row * 0.5, titles[j], horizontalalignment='center')
+                    fig2.text(0.36 + col * 0.5, 0.96 - row * 0.5, titles[j], horizontalalignment='center')
                 # ax.set_xbound(xmin, xmax)
                 # ax.set_ybound(ymin, ymax)
 
@@ -329,7 +354,7 @@ def main():
             P = P.reshape(xx.shape)
 
             # plot classifier output
-            fig = plt.figure(figsize=(8, 8))
+            fig = plt.figure(figsize=FIG_SIZE)
             if True:
                 print('%s' % ((np.min(P), np.max(P), np.min(y), np.max(y)),))
                 image = plt.imshow(P, interpolation='nearest', extent=(xmin, xmax, ymin, ymax),
@@ -346,10 +371,10 @@ def main():
                                                   cmap=plt.cm.PuOr_r)
                 ax.plot_surface(xx, yy, P, rstride=1, cstride=1, facecolors=scalarMap.to_rgba(P), antialiased=True)
 
-            cb.ax.tick_params(labelsize=18)
-            ax.tick_params(labelsize=18)
-            plt.xlabel(predictors[pair[0]], fontsize=22)
-            plt.ylabel(predictors[pair[1]], fontsize=22)
+            # cb.ax.tick_params(labelsize=18)
+            # ax.tick_params(labelsize=18)
+            plt.xlabel(predictors[pair[0]])
+            plt.ylabel(predictors[pair[1]])
             plt.axis([xmin, xmax, ymin, ymax])
             # plt.title("%s\n Log-Marginal-Likelihood:%.3f" % res, fontsize=12)
             plt.tight_layout()
@@ -363,16 +388,16 @@ def main():
         ymin, ymax = np.min(X[:, 1]), np.max(X[:, 1])
         zmin, zmax = np.min(X[:, 2]), np.max(X[:, 2])
 
-        fig = plt.figure(figsize=(20, 20))
+        fig = plt.figure(figsize=FIG_SIZE)
         ax = fig.add_subplot(111, projection='3d')
         ax.scatter(X[:, 0], X[:, 1], X[:, 2], c=yr, cmap=plt.cm.Paired, edgecolors=(0, 0, 0))
 
         #        cb = plt.colorbar(image)
         #        cb.ax.tick_params(labelsize=18)
-        ax.tick_params(labelsize=18)
-        ax.set_xlabel(predictors[0], fontsize=22)
-        ax.set_ylabel(predictors[1], fontsize=22)
-        ax.set_zlabel(predictors[2], fontsize=22)
+        # ax.tick_params(labelsize=18)
+        ax.set_xlabel(predictors[0])
+        ax.set_ylabel(predictors[1])
+        ax.set_zlabel(predictors[2])
         ax.set_xbound(xmin, xmax)
         ax.set_ybound(ymin, ymax)
         ax.set_zbound(zmin, zmax)
@@ -383,73 +408,6 @@ def main():
         assert False, 'wrong mode'
 
     # plt.waitforbuttonpress()
-
-
-# read logfiles
-# def read_data(sm, logfile, predictors, target):
-#     X, y, rot_err, labels = [], [], [], []
-#
-#     with open(logfile, newline='') as csvfile:
-#         rad = sm.asteroid.mean_radius * 0.001
-#         data = csv.reader(csvfile, delimiter='\t')
-#         first = True
-#         for row in data:
-#             if len(row)>10:
-#                 if first:
-#                     first = False
-#                     prd_i = [row.index(p) for p in predictors if p not in ('distance', 'visible')]
-#                     trg_i = row.index(target)
-#                     rot_i = row.index('rot error')
-#                     pos_i = [row.index(p+' sc pos') for p in ('x','y','z')]
-#                     lbl_i = row.index('iter')
-#                 else:
-#                     row = np.array(row)
-#                     try:
-#                         pos = row[pos_i].astype(np.float)
-#                     except ValueError as e:
-#                         print('Can\'t convert cols %s to float on row %s' % (pos_i, row[0]))
-#                         raise e
-#                     distance = np.sqrt(np.sum(pos**2))
-#                     xt = abs(pos[2])*math.tan(math.radians(sm.cam.x_fov)/2)
-#                     yt = abs(pos[2])*math.tan(math.radians(sm.cam.y_fov)/2)
-#
-#                     #xm = np.clip((xt - (abs(pos[0])-rad))/rad/2, 0, 1)
-#                     #ym = np.clip((yt - (abs(pos[1])-rad))/rad/2, 0, 1)
-#                     xm = 1 - (max(0, pos[0]+rad - xt) + max(0, rad-pos[0] - xt))/rad/2
-#                     ym = 1 - (max(0, pos[1]+rad - yt) + max(0, rad-pos[1] - yt))/rad/2
-#
-#                     X.append(np.concatenate((
-#                         row[prd_i].astype(np.float),
-#                         [distance],
-#                         [xm*ym],
-#                     )))
-#
-#                     # err m/km
-#                     tmp = row[trg_i].astype(np.float) if len(row)>trg_i else float('nan')
-#                     y.append(tmp)
-#                     rot_err.append(row[rot_i].astype(np.float))
-#                     labels.append(row[lbl_i])
-#
-#     X = np.array(X)
-#
-#     # for classification of fails
-#     yc = np.isnan(y)
-#     rot_err = np.array(rot_err)
-#     if True:
-#         yc = np.logical_or(yc, np.isnan(rot_err))
-#     if MAX_ROTATION_ERR > 0:
-#         I = np.logical_not(yc)
-#         rot_err[I] = np.abs(tools.wrap_degs(rot_err[I]))
-#         yc[I] = np.logical_or(yc[I], rot_err[I] > MAX_ROTATION_ERR)
-#
-#     # for regression
-#     yr = np.array(y)
-#     #yr[np.isnan(yr)] = FAIL_ERRS[target]   # np.nanmax(yr)
-#
-#     if target == 'rot error':
-#         yr = np.abs(tools.wrap_degs(yr))
-#
-#     return X, yc, yr, labels
 
 
 def model_stds(stds):

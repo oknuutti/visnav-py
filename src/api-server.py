@@ -62,7 +62,13 @@ class ApiServer:
     SERVER_READY_NOTICE = 'server started, waiting for connections'
     MAX_ORI_DIFF_ANGLE = 360  # in deg
 
-    def __init__(self, mission, hires=True, addr='127.0.0.1', port=50007, cache_noise=False, result_rendering=True):
+    (
+        FRAME_GLOBAL,
+        FRAME_LOCAL,
+    ) = range(2)
+
+    def __init__(self, mission, hires=True, addr='127.0.0.1', port=50007, cache_noise=False, result_rendering=True,
+                 result_frame=FRAME_LOCAL):
         self._pid = os.getpid()
 
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -74,6 +80,7 @@ class ApiServer:
 
         self._cache_noise = cache_noise
         self._result_rendering = result_rendering
+        self._result_frame = result_frame
 
         self._mission = mission
         self._sm = sm = get_system_model(mission, hires)
@@ -207,9 +214,13 @@ class ApiServer:
                                        % (math.sqrt(adj_dist_sqr[j, i]), self._laser_max_adj_dist))
 
         dx, dy, dz = xx[0, i], yy[j, 0], zz[j, i] - dist_meas
-        est_sc_v = ast_v*1000 - tools.q_times_v(q.conj(), rel_pos_v + np.array([dx, dy, dz]))
+
+        if self._result_frame == ApiServer.FRAME_GLOBAL:
+            est_sc_ast_v = ast_v * 1000 - tools.q_times_v(q.conj(), rel_pos_v + np.array([dx, dy, dz]))
+        else:
+            est_sc_ast_v = tools.q_times_v(SystemModel.sc2gl_q, rel_pos_v + np.array([dx, dy, dz]))
         dist_expected = float(dist_expected) if not np.isnan(dist_expected) else -1.0
-        return json.dumps([list(est_sc_v), dist_expected])
+        return json.dumps([list(est_sc_ast_v), dist_expected])
 
     def _render(self, params):
         time = params[0]
@@ -274,12 +285,17 @@ class ApiServer:
             err = e
 
         if err is None:
-            # resulting sc-ast relative orientation
-            sc_q = self._sm.spacecraft_q
-            rel_q = sc_q.conj() * self._sm.asteroid_q * ast.ast2sc_q if rot_ok else np.quaternion(*([np.nan]*4))
+            if self._result_frame == ApiServer.FRAME_GLOBAL:
+                # resulting sc-ast relative orientation
+                sc_q = self._sm.spacecraft_q
+                rel_q = sc_q.conj() * self._sm.asteroid_q * ast.ast2sc_q if rot_ok else np.quaternion(*([np.nan]*4))
 
-            # sc-ast vector in meters
-            rel_v = tools.q_times_v(sc_q * SystemModel.sc2gl_q, np.array(self._sm.spacecraft_pos)*1000)
+                # sc-ast vector in meters
+                rel_v = tools.q_times_v(sc_q * SystemModel.sc2gl_q, np.array(self._sm.spacecraft_pos)*1000)
+            else:
+                # TODO: verify that relative orientation is ok (maybe not ok for global frame either)
+                rel_q = ast.ast2sc_q.conj() * self._sm.asteroid_q * ast.ast2sc_q if rot_ok else np.quaternion(*([np.nan] * 4))
+                rel_v = tools.q_times_v(SystemModel.sc2gl_q, np.array(self._sm.spacecraft_pos) * 1000)
 
             # collect to one result list
             result = [list(rel_v), list(quaternion.as_float_array(rel_q))]
@@ -315,30 +331,52 @@ class ApiServer:
         ast_q = d2_q if self._target_d2 else d1_q
         ast_v = d2_v if self._target_d2 else d1_v
 
-        tr_q = SystemModel.cv2gl_q * SystemModel.sc2gl_q.conj()
-        ast_sc_q = tr_q * ast_q.conj() * sc_q * tr_q.conj()
-        ast_sc_v = tools.q_times_v(ast_sc_q * tr_q, sc_v - ast_v)
+        cv2sc_q = SystemModel.cv2gl_q * SystemModel.sc2gl_q.conj()
+        sc_ast_cvf_q = cv2sc_q * sc_q.conj() * ast_q * cv2sc_q.conj()
+        sc_ast_cvf_v = tools.q_times_v(cv2sc_q * sc_q.conj(), ast_v - sc_v)
+
+        if True:
+            # still from global to old ast-sc frame
+            sc_ast_cvf_q = cv2sc_q * ast_q.conj() * sc_q * cv2sc_q.conj()
+            sc_ast_cvf_v = tools.q_times_v(cv2sc_q * ast_q.conj(), sc_v - ast_v)
+#            sc_ast_cvf_v = tools.q_times_v(sc_ast_cvf_q * cv2sc_q, sc_v - ast_v)
+
         # TODO: modify so that uncertainties are given (or not)
-        prior = Pose(ast_sc_v, ast_sc_q, np.ones((3,))*0.1, np.ones((3,))*0.01)
+        prior = Pose(sc_ast_cvf_v, sc_ast_cvf_q, np.ones((3,))*0.1, np.ones((3,))*0.01)
 
         if session not in self._odometry:
             self._odometry[session] = VisualOdometry(self._sm, self._sm.view_width*2, verbose=1, use_scale_correction=False)
-        res, bias_sds, scale_sd = self._odometry[session].process(img, time, prior, sc_q)
+        post, bias_sds, scale_sd = self._odometry[session].process(img, time, prior, sc_q)
 
-        if res is not None:
-            tq = res.quat * tr_q
-            est_sc_ast_q = tr_q.conj() * res.quat.conj() * tr_q
-            est_sc_ast_lf_v = -tools.q_times_v(tq.conj(), res.loc)        # _lf_: local (cam/sc) frame
-            est_sc_ast_gf_v = -tools.q_times_v(ast_q, -est_sc_ast_lf_v)   # _gf_: global frame
-            est_sc_ast_lf_v_s2 = -tools.q_times_v(tq.conj(), res.loc_s2)
-            est_sc_ast_lf_so3_s2 = -tools.q_times_v(tq.conj(), res.so3_s2)
-            # err_q = ast_sc_q.conj() * est_q
-            # err_angle = tools.angle_between_q(ast_sc_v, est_q)
-            # err_v = est_v - ast_sc_v
+        if post is not None:
+            est_sc_ast_scf_q = cv2sc_q.conj() * post.quat * cv2sc_q
+            est_sc_ast_scf_v = tools.q_times_v(cv2sc_q.conj(), post.loc) * 1000
+
+            if True:
+                # still from old ast-sc frame to local sc-ast frame
+                est_sc_ast_scf_q = cv2sc_q.conj() * post.quat.conj() * cv2sc_q
+                est_sc_ast_scf_v = -tools.q_times_v(cv2sc_q.conj() * post.quat.conj(), post.loc) * 1000
+
+            if self._result_frame == ApiServer.FRAME_GLOBAL:
+                est_sc_ast_scf_q = sc_q * est_sc_ast_scf_q
+                est_sc_ast_scf_v = tools.q_times_v(sc_q, est_sc_ast_scf_v)
+
+            # TODO: (1) return in sc local frame
+            #   - distance err sd
+            #   - lateral err sd
+            #   - orientation err sd (pitch & yaw)
+            #   - orientation err sd (roll)
+            #   - distance bias drift sd
+            #   - lateral bias drift sd
+            #   - orientation bias drift sd (pitch & yaw)
+            #   - orientation bias drift sd (roll)
+            #   - scale drift sd
+            est_sc_ast_lf_v_s2 = post.loc_s2
+            est_sc_ast_lf_so3_s2 = post.so3_s2
 
             result = [
-                list(est_sc_ast_gf_v),
-                list(quaternion.as_float_array(est_sc_ast_q)),
+                list(est_sc_ast_scf_v),
+                list(quaternion.as_float_array(est_sc_ast_scf_q)),
                 list(est_sc_ast_lf_v_s2) + list(est_sc_ast_lf_so3_s2) + list(bias_sds) + [scale_sd],
                 orig_time,
             ]

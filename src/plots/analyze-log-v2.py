@@ -3,14 +3,16 @@ import sys
 import re
 
 import numpy as np
+import matplotlib as mpl
 import matplotlib.pyplot as plt
+from cycler import cycler
 from matplotlib.ticker import MultipleLocator
 
 from scipy.stats import norm
 from scipy.interpolate import interp1d
 
 from algo import tools
-from iotools.readlog import read_data
+from iotools.readlog import read_data, FAIL_ERRS
 from batch1 import get_system_model
 from missions.didymos import DidymosSystemModel
 from missions.rosetta import RosettaSystemModel
@@ -34,6 +36,11 @@ PLOT_LIMITS = {
     },
 }
 
+FONT_SIZE = 6
+MARKER_SIZE = 4
+LINE_WIDTH = 0.5
+default_cycler = (cycler(color=['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728']) +    # default colors in matplotlib v2.0
+                  cycler(linestyle=['--', '-', ':', '-.']))
 
 def windowed_percentile(xp, yr, nx, window=0.05, p_lim=68, plot_xlim=None):
     xmin, xmax = np.min(xp), np.max(xp)
@@ -137,6 +144,12 @@ if __name__ == '__main__':
         print(('USAGE: python %s <mission> <logfile-postfix> <fails|errs> <synth|real|both> <1k|4k|16k|17k> ['+'|'.join(algos)+']') % (sys.argv[0],))
         quit()
 
+    mpl.rcParams['font.size'] = FONT_SIZE
+    mpl.rcParams['lines.markersize'] = MARKER_SIZE
+    mpl.rcParams['lines.linewidth'] = LINE_WIDTH
+    plt.rc('axes', prop_cycle=default_cycler)
+    #mpl.rcParams['legend.fontsize'] = FONT_SIZE
+
     predictors = (
         'distance',     # distance of object
         'sol elong',    # solar elongation
@@ -195,7 +208,7 @@ if __name__ == '__main__':
             'real'  : (0.6, 15, 1.5, 3.5),
         }
         plot_ymax['both'] = plot_ymax['real']
-        fig, axs = plt.subplots(len(targets) + 1, len(predictor_idxs), figsize=(20, 19.5))
+        fig, axs = plt.subplots(len(targets) + 1, len(predictor_idxs), figsize=(8, 6))
         for r, axr in enumerate(axs):
             axr[0].get_shared_y_axes().join(*axs[r])
         for c, axc in enumerate(axs[0]):
@@ -205,8 +218,8 @@ if __name__ == '__main__':
         i = 0
 
         old_itype = None
-        for pi, (ti, target), itype, algo in itertools.product(
-                predictor_idxs, enumerate(('fails',) + targets), image_types, algos):
+        for (pj, pi), (ti, target), itype, algo in itertools.product(
+                enumerate(predictor_idxs), enumerate(('fails',) + targets), image_types, algos):
             tools.show_progress(count, i)
             ti -= 1
             i += 1
@@ -237,7 +250,7 @@ if __name__ == '__main__':
             xlim = PLOT_LIMITS[mode][itype][pi]
             if ti == -1:
                 xt, yt = smooth(X[I, pi], yr, 100, mode='mean', plot_xlim=xlim, p_bins=0,
-                                # weight='mavg', wfun_coef=0.1)
+                                #weight='mavg', wfun_coef=0.1)
                                 weight='gaussian', wfun_coef=0.05)
                 lbl = ' μ'
             elif False:
@@ -254,26 +267,25 @@ if __name__ == '__main__':
             old_itype = itype
 
             if single_algo:
-                ax.plot(xt, yt, '-', label=', '.join((itype, algo)) + lbl)
+                ax.plot(xt, yt, label=', '.join((itype, algo)) + lbl)
                 if ti != -1:
                     xt2, yt2 = windowed_percentile(X[I, pi], yr, 100, window=0.2, p_lim=95, plot_xlim=xlim)
-                    ax.plot(xt2, yt2, '--', color='C1', label=', '.join((itype, algo)) + ' p95')
+                    ax.plot(xt2, yt2, color='C1', label=', '.join((itype, algo)) + ' p95')
             else:
-                ax.plot(xt, yt, '--' if image_type == 'both' and itype == 'real' else '-', label=', '.join((itype, algo))+lbl)
+                # '--' if image_type == 'both' and itype == 'real' else '-'
+                ax.plot(xt, yt, label=', '.join((itype, algo))+lbl)
 
             ax.set_xlim(*PLOT_LIMITS[mode][itype][pi])
             if not single_algo:
                 ax.set_ylim(0, plot_ymax[image_type][ti+1])
 
             # ax.set_title('%s: %s by %s' % (logfile, target, predictor_labels[pi]))
-            ax.set_xlabel(predictor_labels[pi])
-            ax.set_ylabel(target)
             # ax.set_xticks((x[1:] + x[:-1]) * 0.5)
             # ax.set_yticks(range(-200, 201, 50))
             # ax.hlines(range(-200, 201, 10), xmin, xmax, '0.95', '--')
             # ax.hlines(range(-200, 201, 50), xmin, xmax, '0.7', '-')
-            plt.setp(ax.get_xticklabels(), rotation=45, fontsize=14)
-            plt.setp(ax.get_yticklabels(), fontsize=14)
+#            plt.setp(ax.get_xticklabels())#, rotation=45)
+#            plt.setp(ax.get_yticklabels())
 
             if single_algo:
                 tools.hover_annotate(fig, ax, line, np.array(labels)[I])
@@ -300,9 +312,13 @@ if __name__ == '__main__':
                 ax.axvspan(100, 170, facecolor='pink', alpha=0.5)
                 ax.axvspan(220, PLOT_LIMITS[mode][image_type][0][1], facecolor='pink', alpha=0.5)
 
+            if pj == 0:
+                ax.set_ylabel(target)
+            if ti+1 == len(targets):
+                ax.set_xlabel(predictor_labels[pi])
+
         plt.tight_layout()
-        while(plt.waitforbuttonpress() == False):
-            pass
+        plt.show()
 
 
     elif mode == 'fails':
@@ -319,7 +335,7 @@ if __name__ == '__main__':
         )
 
         titles = ['ORB', 'AKAZE', 'SURF', 'SIFT']
-        fig, axs = plt.subplots(len(pairs), len(algos), figsize=(30, 19.5))
+        fig, axs = plt.subplots(len(pairs), len(algos), figsize=(8, 6))
         axs = np.atleast_2d(axs)   # need .T if only one algo?
         for r, axr in enumerate(axs):
             if len(axr) > 1:
@@ -349,11 +365,10 @@ if __name__ == '__main__':
             off0 = 0 if i0 != 3 else offsets
             off1 = 0 if i1 != 3 else offsets
 
-            line = ax.scatter(X[I, i0] + off0, X[I, i1] + off1, s=30, c=yc[I], cmap=plt.cm.Paired, alpha=0.5)  #edgecolors=(0, 0, 0))
-            ax.tick_params(labelsize=18)
+            line = ax.scatter(X[I, i0] + off0, X[I, i1] + off1, s=MARKER_SIZE, linewidth=LINE_WIDTH,
+                              c=yc[I], cmap=plt.cm.Paired, alpha=0.5)  #edgecolors=(0, 0, 0))
+            #ax.tick_params(labelsize=18)
             ax.xaxis.set_minor_locator(MultipleLocator(10))
-            ax.set_xlabel(predictor_labels[i0], fontsize=18)
-            ax.set_ylabel(predictor_labels[i1], fontsize=18)
             tools.hover_annotate(fig, ax, line, np.array(labels)[I])
 #            ax.set_xlim(*PLOT_LIMITS[mode][image_type][i0])
 #            ax.set_ylim(*PLOT_LIMITS[mode][image_type][i1])
@@ -375,13 +390,17 @@ if __name__ == '__main__':
                     ax.axvspan(0.15, 0.3, facecolor='pink', alpha=0.5)
 
             if ip == 0:
-                ax.set_title(algo.upper() if single_algo else titles[ia], fontsize=30)
+                ax.set_title(algo.upper() if single_algo else titles[ia])
                 # col, row = j%c, j//c
                 # fig.text(0.26+col*0.5, 0.96-row*0.5, titles[j], fontsize=30, horizontalalignment='center')
+            if ip == len(pairs) - 1:
+                ax.set_xlabel(predictor_labels[i0])
+            if ia == 0:
+                ax.set_ylabel(predictor_labels[i1])
 
         plt.tight_layout()
         #plt.subplots_adjust(top=0.94, hspace=0.3, wspace=0.25)
-        plt.subplots_adjust(wspace=0.4)
+        plt.subplots_adjust(wspace=0.3)
         plt.show()
 
     else:

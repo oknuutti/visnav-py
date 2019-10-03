@@ -177,6 +177,7 @@ class VisualOdometry:
 
     DEF_USE_SCALE_CORRECTION = False
 #    DEF_UNCERTAINTY_LIMIT_RATIO = 30   # current solution has to be this much more uncertain as new initial pose to change base pose
+    DEF_MIN_2D2D_INLIERS = 50           # discard pose estimate if less inliers than this
     DEF_MIN_INLIERS = 30                # discard pose estimate if less inliers than this
     DEF_MIN_INLIER_RATIO = 0.60         # discard pose estimate if less inliers than this
     DEF_RESET_TIMEOUT = 30*60           # reinitialize if this many seconds without successful pose estimate
@@ -272,7 +273,7 @@ class VisualOdometry:
             if len(self.state.keyframes) > 1 and dt > self.reset_timeout:
                 self.state.initialized = False
             # if too few keypoints to track, reinitialize
-            if len(new_frame.kps_uv) < 2*self.min_inliers:
+            if len(new_frame.kps_uv) < 3*self.min_2d2d_inliers:
                 self.state.initialized = False
 
         # expected bias and scale drift sds
@@ -518,7 +519,7 @@ class VisualOdometry:
                      self.pose_estimation in (VisualOdometry.POSE_RANSAC_2D, VisualOdometry.POSE_RANSAC_MIXED)):
             # include all tracked keypoints, i.e. also 3d points
             # TODO: (3) better to compare rf post to nf prior?
-            scale = np.linalg.norm(rf.pose.prior.loc - nf.pose.prior.loc) if self.use_scale_correction else 1
+            scale = np.linalg.norm(rf.pose.prior.loc - nf.pose.prior.loc) if self.use_scale_correction else 0.01
             tmp = [(id, pt2d, rf.kps_uv[id])
                    for id, pt2d in nf.kps_uv.items()
                    if id in rf.kps_uv]
@@ -526,21 +527,21 @@ class VisualOdometry:
 
             R = None
             mask = 0
-            if len(old_kp2d) > self.min_inliers:
+            if len(old_kp2d) > self.min_2d2d_inliers:
                 # solve pose using ransac & 5-point algo
                 E, mask2 = cv2.findEssentialMat(old_kp2d / rf.img_sc, new_kp2d / nf.img_sc, self.cam_mx,
                                                 method=cv2.RANSAC, prob=0.999, threshold=1.0)
                 if self.verbose:
                     print('E-mat: %d/%d' % (np.sum(mask2), len(old_kp2d)))
 
-                if np.sum(mask2) > self.min_inliers:
+                if np.sum(mask2) > self.min_2d2d_inliers:
                     _, R, ur, mask = cv2.recoverPose(E, old_kp2d / rf.img_sc, new_kp2d / nf.img_sc, self.cam_mx, mask=mask2.copy())
                     if self.verbose:
                         print('E=>R: %d/%d' % (np.sum(mask), np.sum(mask2)))
 
             # TODO: (3) implement pure rotation estimation as a fallback as E can't solve for that
 
-            if R is not None and np.sum(mask) > self.min_inliers:
+            if R is not None and np.sum(mask) > self.min_2d2d_inliers and np.sum(mask)/np.sum(mask2) > self.min_inlier_ratio:
                 # recoverPose returns transformation from new to old (!)
                 dq_ = quaternion.from_rotation_matrix(R).conj()
                 dr_ = -tools.q_times_v(dq_, scale * ur)
@@ -577,11 +578,12 @@ class VisualOdometry:
 
         if self.verbose:
             if dr is not None and dq is not None:
-                self._print_pose_diff('prior', lf.pose.prior.loc, lf.pose.prior.quat, nf.pose.prior.loc, nf.pose.prior.quat)
-                if lf.pose.post is not None:
-                    self._print_pose_diff('poste', lf.pose.post.loc, lf.pose.post.quat, nf.pose.post.loc, nf.pose.post.quat)
-                else:
-                    self._print_pose_diff('pstrf', lf.pose.prior.loc, lf.pose.prior.quat, nf.pose.post.loc, nf.pose.post.quat)
+                self._print_pose_diff('prior->post', nf.pose.prior.loc, nf.pose.prior.quat, nf.pose.post.loc, nf.pose.post.quat)
+                # self._print_pose_diff('prior', lf.pose.prior.loc, lf.pose.prior.quat, nf.pose.prior.loc, nf.pose.prior.quat)
+                # if lf.pose.post is not None:
+                #     self._print_pose_diff('poste', lf.pose.post.loc, lf.pose.post.quat, nf.pose.post.loc, nf.pose.post.quat)
+                # else:
+                #     self._print_pose_diff('pstrf', lf.pose.prior.loc, lf.pose.prior.quat, nf.pose.post.loc, nf.pose.post.quat)
             self._draw_tracks(nf, pause=self.pause)
 
     def _print_pose_diff(self, title, r0, q0, r1, q1):

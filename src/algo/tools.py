@@ -367,6 +367,22 @@ def bf2_lat_lon(tol, lat_range=(-math.pi/2, math.pi/2)):
 
     return points
 
+def robust_mean(arr, discard_percentile=0.2, ret_n=False, axis=None):
+    low = np.nanpercentile(arr, discard_percentile, axis=axis)
+    high = np.nanpercentile(arr, 100 - discard_percentile, axis=axis)
+    I = np.logical_and(low < arr, arr < high)
+    if axis is not None:
+        I = np.all(I, axis=1 if axis==0 else 0)
+    m = np.mean(arr[I], axis=axis)
+    return (m, np.sum(I, axis=axis)) if ret_n else m
+
+def robust_std(arr, discard_percentile=0.2, mean=None, axis=None):
+    corr = 1
+    if mean is None:
+        mean, n = robust_mean(arr, discard_percentile=discard_percentile, ret_n=True, axis=axis)
+        corr = n/(n-1)
+    return np.sqrt(robust_mean((arr-mean)**2, discard_percentile=discard_percentile, axis=axis) * corr)
+
 def mv_normal(mean, cov=None, L=None, size=None):
     if size is None:
         final_shape = []
