@@ -152,6 +152,8 @@ class VisualOdometry:
     ) = range(3)
     DEF_POSE_ESTIMATION = POSE_RANSAC_3D    # MIXED works quite bad as pose from 2d-2d matching is quite inaccurate
 
+    DEF_EST_CAM_POSE = True        # estimate camera pose in target frame instead of target pose in camera frame
+
     # keyframe addition
     DEF_NEW_KF_MIN_INLIER_RATIO = 0.70             # remaining inliers from previous keyframe features
     DEF_NEW_KF_MIN_DISPL_FOV_RATIO = 0.004         # displacement relative to the fov for triangulation
@@ -472,8 +474,10 @@ class VisualOdometry:
                 if self.verbose:
                     print('')  # finish printed line
 
-                q = tools.angleaxis_to_q(rv).conj()     # solvepnp returns orientation of system origin vs camera (!)
-                r = -tools.q_times_v(q, r)              # solvepnp returns a vector from camera to system origin (!)
+                q = tools.angleaxis_to_q(rv)
+                if self.est_cam_pose:
+                    q = q.conj()                    # solvepnp returns orientation of system origin vs camera (!)
+                    r = -tools.q_times_v(q, r)      # solvepnp returns a vector from camera to system origin (!)
 
                 # update & apply 3d map scale correction
                 if self.use_scale_correction:
@@ -519,7 +523,7 @@ class VisualOdometry:
                      self.pose_estimation in (VisualOdometry.POSE_RANSAC_2D, VisualOdometry.POSE_RANSAC_MIXED)):
             # include all tracked keypoints, i.e. also 3d points
             # TODO: (3) better to compare rf post to nf prior?
-            scale = np.linalg.norm(rf.pose.prior.loc - nf.pose.prior.loc) if self.use_scale_correction else 0.01
+            scale = np.linalg.norm(rf.pose.prior.loc - nf.pose.prior.loc)  # if self.use_scale_correction else 0.01
             tmp = [(id, pt2d, rf.kps_uv[id])
                    for id, pt2d in nf.kps_uv.items()
                    if id in rf.kps_uv]
@@ -542,9 +546,13 @@ class VisualOdometry:
             # TODO: (3) implement pure rotation estimation as a fallback as E can't solve for that
 
             if R is not None and np.sum(mask) > self.min_2d2d_inliers and np.sum(mask)/np.sum(mask2) > self.min_inlier_ratio:
-                # recoverPose returns transformation from new to old (!)
-                dq_ = quaternion.from_rotation_matrix(R).conj()
-                dr_ = -tools.q_times_v(dq_, scale * ur)
+                dq_ = quaternion.from_rotation_matrix(R)
+                dr_ = scale * ur
+                if self.est_cam_pose:
+                    # recoverPose returns transformation from new to old (!)
+                    dq_ = dq_.conj()
+                    dr_ = -tools.q_times_v(dq_, dr_)
+
                 if self.pose_estimation == VisualOdometry.POSE_RANSAC_MIXED and dq is not None:
                     # mix result from solve pnp and recoverPose
                     # TODO: (3) do it by optimizing a common cost function including only inliers from both algos
@@ -699,12 +707,20 @@ class VisualOdometry:
         tr_kps = self.triangulation_kps(new_frame)
 
         # need transformation from camera to world coordinate origin, not vice versa (!)
-        T1 = np.hstack((quaternion.as_rotation_matrix(new_frame.pose.post.quat.conj()),
-                        -tools.q_times_v(new_frame.pose.post.quat.conj(), new_frame.pose.post.loc).reshape((-1, 1))))
+        if self.est_cam_pose:
+            T1 = np.hstack((quaternion.as_rotation_matrix(new_frame.pose.post.quat.conj()),
+                            -tools.q_times_v(new_frame.pose.post.quat.conj(), new_frame.pose.post.loc).reshape((-1, 1))))
+        else:
+            T1 = np.hstack((quaternion.as_rotation_matrix(new_frame.pose.post.quat),
+                            new_frame.pose.post.loc.reshape((-1, 1))))
 
         for kp_id, ref_frame in tr_kps.items():
-            T0 = np.hstack((quaternion.as_rotation_matrix(ref_frame.pose.post.quat.conj()),
-                            -tools.q_times_v(ref_frame.pose.post.quat.conj(), ref_frame.pose.post.loc).reshape((-1, 1))))
+            if self.est_cam_pose:
+                T0 = np.hstack((quaternion.as_rotation_matrix(ref_frame.pose.post.quat.conj()),
+                                -tools.q_times_v(ref_frame.pose.post.quat.conj(), ref_frame.pose.post.loc).reshape((-1, 1))))
+            else:
+                T0 = np.hstack((quaternion.as_rotation_matrix(ref_frame.pose.post.quat),
+                                ref_frame.pose.post.loc.reshape((-1, 1))))
 
             # TODO: (3) use multipoint triangulation instead
             # TODO: (3) triangulation with optimization over a distance prior
@@ -737,15 +753,26 @@ class VisualOdometry:
         ids, pts3d = zip(*tmp)
         idmap = dict(zip(ids, np.arange(len(ids))))
 
-        poses_mx = np.array([
-            np.hstack((
-                tools.q_to_angleaxis(f.pose.post.quat.conj(), compact=True),            # flip to cam -> world
-                -tools.q_times_v(f.pose.post.quat.conj(), f.pose.post.loc).flatten()
-                # tools.q_to_angleaxis(f.pose.post.quat, compact=True),
-                # f.pose.post.loc.flatten()
-            ))
-            for f in self.state.keyframes[-max_keyframes:]
-        ])
+        if self.est_cam_pose:
+            poses_mx = np.array([
+                np.hstack((
+                    tools.q_to_angleaxis(f.pose.post.quat.conj(), compact=True),            # flip to cam -> world
+                    -tools.q_times_v(f.pose.post.quat.conj(), f.pose.post.loc).flatten()
+                    # tools.q_to_angleaxis(f.pose.post.quat, compact=True),
+                    # f.pose.post.loc.flatten()
+                ))
+                for f in self.state.keyframes[-max_keyframes:]
+            ])
+        else:
+            poses_mx = np.array([
+                np.hstack((
+                    tools.q_to_angleaxis(f.pose.post.quat, compact=True),            # flip to cam -> world
+                    f.pose.post.loc.flatten()
+                    # tools.q_to_angleaxis(f.pose.post.quat, compact=True),
+                    # f.pose.post.loc.flatten()
+                ))
+                for f in self.state.keyframes[-max_keyframes:]
+            ])
 
         cam_idxs, pt3d_idxs, pts2d = list(map(np.array, zip(*[
             (i, idmap[id], uv.flatten()/f.img_sc)
@@ -765,8 +792,12 @@ class VisualOdometry:
 
         for i, p in enumerate(poses):
             f = self.state.keyframes[-max_keyframes:][i]
-            nq = tools.angleaxis_to_q(p[:3]).conj()           # flip back so that world -> cam
-            nr = -tools.q_times_v(nq, p[3:]) * scale_adj      # flip back so that world -> cam
+            nq = tools.angleaxis_to_q(p[:3])
+            nr = p[3:] * scale_adj
+            if self.est_cam_pose:
+                nq = nq.conj()                      # flip back so that world -> cam
+                nr = -tools.q_times_v(nq, nr)       # flip back so that world -> cam
+
             if i == 0:
                 q0 = f.pose.post.quat
                 r0 = f.pose.post.loc

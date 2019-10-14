@@ -41,7 +41,7 @@ def main():
     port = int(sys.argv[2])
 
     if len(sys.argv) > 3:
-        server = ApiServer(sys.argv[3], port=port, hires=True, cache_noise=True, result_rendering=False)
+        server = ApiServer(sys.argv[3], port=port, hires=True, cache_noise=True, result_rendering=True)
     else:
         server = SpawnMaster(port=port, max_count=5000)
 
@@ -67,7 +67,7 @@ class ApiServer:
         FRAME_LOCAL,
     ) = range(2)
 
-    def __init__(self, mission, hires=True, addr='127.0.0.1', port=50007, cache_noise=False, result_rendering=True,
+    def __init__(self, mission, hires=False, addr='127.0.0.1', port=50007, cache_noise=False, result_rendering=True,
                  result_frame=FRAME_LOCAL):
         self._pid = os.getpid()
 
@@ -81,6 +81,7 @@ class ApiServer:
         self._cache_noise = cache_noise
         self._result_rendering = result_rendering
         self._result_frame = result_frame
+        self._hires = hires
 
         self._mission = mission
         self._sm = sm = get_system_model(mission, hires)
@@ -96,12 +97,6 @@ class ApiServer:
             self.asteroids = [sm.asteroid]
 
         self._obj_idxs = []
-        for ast in self.asteroids:
-            file = ast.hires_target_model_file if hires else ast.target_model_file
-            cache_file = os.path.join(CACHE_DIR, os.path.basename(file).split('.')[0] + '.pickle')
-            self._obj_idxs.append(self._renderer.load_object(file, smooth=ast.render_smooth_faces, cache_file=cache_file))
-        self._obj_idxs.append(self._renderer.load_object(sm.sc_model_file, smooth=False))
-
         self._wireframe_obj_idxs = [
             self._renderer.load_object(os.path.join(BASE_DIR, 'data/ryugu+tex-%s-100.obj'%ast), wireframe=True)
             for ast in ('d1', 'd2')] if result_rendering else []
@@ -126,6 +121,14 @@ class ApiServer:
         self._laser_meas_err_weight = 0.3
         self._laser_max_adj_dist = 100  # in meters
 
+    def _maybe_load_objects(self):
+        if len(self._obj_idxs) == 0:
+            for ast in self.asteroids:
+                file = ast.hires_target_model_file if self._hires else ast.target_model_file
+                cache_file = os.path.join(CACHE_DIR, os.path.basename(file).split('.')[0] + '.pickle')
+                self._obj_idxs.append(self._renderer.load_object(file, smooth=ast.render_smooth_faces, cache_file=cache_file))
+            self._obj_idxs.append(self._renderer.load_object(self._sm.sc_model_file, smooth=False))
+
     @staticmethod
     def _parse_poses(params, offset):
         d1_v = np.array(params[offset][:3])*0.001
@@ -145,6 +148,7 @@ class ApiServer:
         rel_rot_q = np.array([q * d1_q * d1.ast2sc_q.conj(), q * d2_q * d2.ast2sc_q.conj()])
         rel_pos_v = np.array([tools.q_times_v(q, d1_v - sc_v), tools.q_times_v(q, d2_v - sc_v)])
 
+        self._maybe_load_objects()
         dist = self._renderer.ray_intersect_dist(self._obj_idxs[0:2], rel_pos_v, rel_rot_q)
 
         if dist is None:
@@ -234,6 +238,7 @@ class ApiServer:
         rel_pos_v = np.array([tools.q_times_v(q, d1_v - sc_v), tools.q_times_v(q, d2_v - sc_v), [0, 0, 0]])
         light_v = tools.q_times_v(q, sun_ast_v)
 
+        self._maybe_load_objects()  # lazy load objects
         img = TestLoop.render_navcam_image_static(self._sm, self._renderer, self._obj_idxs, rel_pos_v, rel_rot_q, light_v,
                                                   use_shadows=True, use_textures=True, cache_noise=self._cache_noise)
 
@@ -285,22 +290,23 @@ class ApiServer:
             err = e
 
         if err is None:
-            if self._result_frame == ApiServer.FRAME_GLOBAL:
-                # resulting sc-ast relative orientation
-                sc_q = self._sm.spacecraft_q
-                rel_q = sc_q.conj() * self._sm.asteroid_q * ast.ast2sc_q if rot_ok else np.quaternion(*([np.nan]*4))
+            sc_q = self._sm.spacecraft_q
 
-                # sc-ast vector in meters
-                rel_v = tools.q_times_v(sc_q * SystemModel.sc2gl_q, np.array(self._sm.spacecraft_pos)*1000)
-            else:
-                # TODO: verify that relative orientation is ok (maybe not ok for global frame either)
-                rel_q = ast.ast2sc_q.conj() * self._sm.asteroid_q * ast.ast2sc_q if rot_ok else np.quaternion(*([np.nan] * 4))
-                rel_v = tools.q_times_v(SystemModel.sc2gl_q, np.array(self._sm.spacecraft_pos) * 1000)
+            # resulting sc-ast relative orientation
+            rel_lf_q = self._sm.asteroid_q * ast.ast2sc_q if rot_ok else np.quaternion(*([np.nan]*4))
+            rel_gf_q = sc_q.conj() * rel_lf_q
+
+            # sc-ast vector in meters
+            rel_lf_v = tools.q_times_v(SystemModel.sc2gl_q, np.array(self._sm.spacecraft_pos) * 1000)
+            rel_gf_v = tools.q_times_v(sc_q, rel_lf_v)
 
             # collect to one result list
-            result = [list(rel_v), list(quaternion.as_float_array(rel_q))]
+            if self._result_frame == ApiServer.FRAME_GLOBAL:
+                result = [list(rel_gf_v), list(quaternion.as_float_array(rel_gf_q))]
+            else:
+                result = [list(rel_lf_v), list(quaternion.as_float_array(rel_lf_q))]
 
-            diff_angle = math.degrees(tools.angle_between_q(init_rel_q, rel_q))
+            diff_angle = math.degrees(tools.angle_between_q(init_rel_q, rel_gf_q))
             if diff_angle > ApiServer.MAX_ORI_DIFF_ANGLE:
                 err = PositioningException('Result orientation too different than initial one, diff %.1f°, max: %.1f°'
                                            % (diff_angle, ApiServer.MAX_ORI_DIFF_ANGLE))
@@ -308,8 +314,8 @@ class ApiServer:
         # render a result image
         if self._result_rendering:
             self._render_result([fname]
-                + [list(np.array(self._sm.spacecraft_pos)*1000) + (result[1] if err is None else [float('nan')]*4)]
-                + [list(np.array(init_sc_pos)*1000) + list(quaternion.as_float_array(init_sc_q.conj() * init_ast_q))])
+                + [list(np.array(self._sm.spacecraft_pos)*1000) + list(quaternion.as_float_array(rel_gf_q))]
+                + [list(np.array(init_sc_pos)*1000) + list(quaternion.as_float_array(init_rel_q))])
 
         if err is not None:
             raise err
@@ -318,6 +324,8 @@ class ApiServer:
         return json.dumps(result)
 
     def _odometry_track(self, params):
+        VO_EST_CAM_FRAME = False
+
         session = params[0]
 
         fname = params[1]
@@ -335,7 +343,7 @@ class ApiServer:
         sc_ast_cvf_q = cv2sc_q * sc_q.conj() * ast_q * cv2sc_q.conj()
         sc_ast_cvf_v = tools.q_times_v(cv2sc_q * sc_q.conj(), ast_v - sc_v)
 
-        if True:
+        if VO_EST_CAM_FRAME:
             # still from global to old ast-sc frame
             sc_ast_cvf_q = cv2sc_q * ast_q.conj() * sc_q * cv2sc_q.conj()
             sc_ast_cvf_v = tools.q_times_v(cv2sc_q * ast_q.conj(), sc_v - ast_v)
@@ -345,17 +353,19 @@ class ApiServer:
         prior = Pose(sc_ast_cvf_v, sc_ast_cvf_q, np.ones((3,))*0.1, np.ones((3,))*0.01)
 
         if session not in self._odometry:
-            self._odometry[session] = VisualOdometry(self._sm, self._sm.view_width*2, verbose=1, use_scale_correction=False)
+            self._odometry[session] = VisualOdometry(self._sm, self._sm.view_width*2, verbose=1,
+                                                     use_scale_correction=False, est_cam_frame=VO_EST_CAM_FRAME)
         post, bias_sds, scale_sd = self._odometry[session].process(img, time, prior, sc_q)
 
         if post is not None:
             est_sc_ast_scf_q = cv2sc_q.conj() * post.quat * cv2sc_q
             est_sc_ast_scf_v = tools.q_times_v(cv2sc_q.conj(), post.loc) * 1000
 
-            if True:
+            if VO_EST_CAM_FRAME:
                 # still from old ast-sc frame to local sc-ast frame
                 est_sc_ast_scf_q = cv2sc_q.conj() * post.quat.conj() * cv2sc_q
-                est_sc_ast_scf_v = -tools.q_times_v(cv2sc_q.conj() * post.quat.conj(), post.loc) * 1000
+                # NOTE: we use prior orientation instead of posterior one as the error there grows over time
+                est_sc_ast_scf_v = -tools.q_times_v(cv2sc_q.conj() * prior.quat.conj(), post.loc) * 1000
 
             if self._result_frame == ApiServer.FRAME_GLOBAL:
                 est_sc_ast_scf_q = sc_q * est_sc_ast_scf_q
@@ -584,15 +594,25 @@ class SpawnMaster(ApiServer):
                 'client': None,
                 'count': 0,
             }
-        port = self._children[mission]['port']
+        for i in range(5):
+            port = self._children[mission]['port']
 
-        # spawn new api-server
-        cmdarr = self._python_cmds + [self._spawn_cmd, LOG_DIR, str(port), mission]
-        if verbose:
-            self.print('using: ' + ' '.join(cmdarr) + ' ... ', start=True)
-        self._children[mission]['proc'] = subprocess.Popen(cmdarr) #,# shell=True, close_fds=True,
-                                                            #stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                                            #encoding='utf8')#, creationflags=subprocess.CREATE_NEW_PROCESS_GROUP|subprocess.CREATE_NEW_CONSOLE)
+            # spawn new api-server
+            cmdarr = self._python_cmds + [self._spawn_cmd, LOG_DIR, str(port), mission]
+            if verbose:
+                self.print('using: ' + ' '.join(cmdarr) + ' ... ', start=True)
+            try:
+                self._children[mission]['proc'] = subprocess.Popen(cmdarr) #,# shell=True, close_fds=True,
+                                                                #stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                                                #encoding='utf8')#, creationflags=subprocess.CREATE_NEW_PROCESS_GROUP|subprocess.CREATE_NEW_CONSOLE)
+                break
+            except OSError as e:
+                if 'port' in str(e):
+                    self.print('%s => trying next port')
+                    self._children[mission]['port'] += 1
+                else:
+                    raise e
+
         time.sleep(5)
         # wait until get acknowledgement of all ready
         # success = False

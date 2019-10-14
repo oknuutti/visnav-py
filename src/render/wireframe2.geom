@@ -11,7 +11,7 @@ void main()
 
     if(b.x*c.y - b.y*c.x - a.x*c.y + a.x*b.y + a.y*c.x - a.y*b.x > 0)
     {
-        float width = 0.005;
+        float width = 0.002;
         vec3 nab = cross(normalize(b-a), vec3(0, 0, 1));
         vec3 nbc = cross(normalize(c-b), vec3(0, 0, 1));
         vec3 nca = cross(normalize(a-c), vec3(0, 0, 1));

@@ -28,7 +28,7 @@ from settings import *
 # phase angle (180-elong), ini err, distance, visibility
 EASY_LIMITS = ((20, 100), (0, 10), (3.5, 4.5), (0.8, 1))
 FIG_SIZE = (8, 6)
-FONT_SIZE = 5
+FONT_SIZE = 7
 MARKER_SIZE = 2
 LINE_WIDTH = 0.5
 
@@ -284,8 +284,9 @@ def main():
                     samples = np.array([[len(y_grouped[j][i]) for i in range(len(x) - 1)] for j in range(len(y) - 1)])
 
                     d_coefs, pa_coefs, mod_stds = model_stds2(stds, samples)
+                    R2 = (1 - np.sum((stds - mod_stds)**2 * samples) / np.sum(stds**2 * samples)) * 100
 
-                    print_model(titles[j], x, d_coefs, y, pa_coefs)
+                    print_model(titles[j], x, d_coefs, y, pa_coefs, R2)
 
                     xstep = np.kron(xx, np.ones((2, 2)))[1:-1, 1:-1]
                     ystep = np.kron(yy, np.ones((2, 2)))[1:-1, 1:-1]
@@ -309,7 +310,7 @@ def main():
                 if i == 0:
                     col, row = j % c, j // c
                     fig.text(0.36 + col * 0.5, 0.96 - row * 0.5, titles[j], horizontalalignment='center')
-                    fig2.text(0.36 + col * 0.5, 0.96 - row * 0.5, titles[j], horizontalalignment='center')
+                    fig2.text(0.36 + col * 0.5, 0.96 - row * 0.5, titles[j]+' (R2=%.1f%%)'%R2, horizontalalignment='center')
                 # ax.set_xbound(xmin, xmax)
                 # ax.set_ybound(ymin, ymax)
 
@@ -449,27 +450,27 @@ def model_stds(stds):
     return d_coefs, pa_coefs, mod_stds
 
 
-def model_stds2(stds, samples):
+def model_stds2(stds, samples, model_variance=False):
     n = len(stds)       # phase angle
     m = len(stds[0])    # distance
 
     def weighted_mse(w, n, Y, S):
+        w = np.abs(w)
         return np.average((np.array([[p * d for p in w[n:]] for d in w[:n]]) - Y)**2, weights=S)
 
     from scipy.optimize import minimize
-    res = minimize(weighted_mse, np.ones(n+m), args=(n, stds, samples), method="BFGS",
+    res = minimize(weighted_mse, np.ones(n+m), args=(n, stds**2 if model_variance else stds, samples), method="BFGS",
                    options={'maxiter': 10, 'eps': 1e-06, 'gtol': 1e-4})
 
-    #print('cost: %s' % res.fun)
-    pa_coefs = res.x[:n]
-    d_coefs = res.x[n:]
+    pa_coefs = np.abs(res.x[:n])
+    d_coefs = np.abs(res.x[n:])
     mod_stds = np.array([[p * d for d in d_coefs] for p in pa_coefs])
-    return d_coefs, pa_coefs, mod_stds
+    return d_coefs, pa_coefs, np.sqrt(mod_stds) if model_variance else mod_stds
 
 
-def print_model(name, x, d_coefs, y, pa_coefs):
-    print('%s:\nd_lims = %s;\nd_coefs = %s;\npa_lims = %s;\npa_coefs = %s;\n' % (
-        name, x[1:-1], d_coefs, y[1:-1], pa_coefs
+def print_model(name, x, d_coefs, y, pa_coefs, R2):
+    print('%s (R2=%.2f):\nd_lims = %s;\nd_coefs = %s;\npa_lims = %s;\npa_coefs = %s;\n' % (
+        name, R2, x[1:-1], d_coefs, y[1:-1], pa_coefs
     ))
 
 

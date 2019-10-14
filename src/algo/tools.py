@@ -55,6 +55,30 @@ class Stopwatch:
         self.stop()
 
 
+def sphere_angle_radius(loc, r):
+    return np.arcsin(r / np.linalg.norm(loc, axis=1))
+
+
+def point_vector_dist(A, B, dist_along_v=False):
+    """ A: point, B: vector """
+
+    # (length of b)**2
+    normB2 = (B ** 2).sum(-1).reshape((-1, 1))
+
+    # a dot b vector product (project a on b but also times length of b)
+    diagAB = (A * B).sum(-1).reshape((-1, 1))
+
+    # A projected along B (projection = a dot b/||b|| * b/||b||)
+    A_B = (diagAB / normB2) * B
+
+    # vector from projected A to A, it is perpendicular to B
+    AB2A = A - A_B
+
+    # diff vector lengths
+    normD = np.sqrt((AB2A ** 2).sum(-1)).reshape((-1, 1))
+    return (normD, diagAB/np.sqrt(normB2)) if dist_along_v else normD
+
+
 def sc_asteroid_max_shift_error(A, B):
     """
     Calculate max error between two set of vertices when projected to camera,
@@ -62,18 +86,9 @@ def sc_asteroid_max_shift_error(A, B):
     B = true vertex positions
     Error is a vector perpendicular to B, i.e. A - A||
     """
-    
-    # (length of b)**2
-    normB2 = (B**2).sum(-1).reshape((-1,1))
-
-    # a dot b vector product (project a on b but also times length of b)
-    diagAB = (A*B).sum(-1).reshape((-1,1))
-    
-    # diff vector across projection (projection = a dot b/||b|| * b/||b||)
-    D = A - (diagAB / normB2)*B
 
     # diff vector lengths
-    normD = np.sqrt((D**2).sum(-1)).reshape((-1,1))
+    normD = point_vector_dist(A, B)
     
     # max length of diff vectors
     return np.max(normD)
@@ -93,12 +108,16 @@ def angle_between_v(v1, v2):
         
         n1 = v1/np.linalg.norm(v1)
         n2 = v2/np.linalg.norm(v2)
-        
+
         cos_angle = n1.dot(n2)
     except TypeError as e:
         raise Exception('Bad vectors:\n\tv1: %s\n\tv2: %s'%(v1, v2)) from e
     
     return math.acos(np.clip(cos_angle, -1, 1))
+
+
+def angle_between_mx(A, B):
+    return angle_between_rows(A, B)
 
 
 def angle_between_rows(A, B):
@@ -119,6 +138,12 @@ def angle_between_q(q1, q2):
     # from  https://chrischoy.github.io/research/measuring-rotation/
     qd = q1.conj()*q2
     return abs(wrap_rads(2*math.acos(qd.normalized().w)))
+
+
+def angle_between_q_arr(q1, q2):
+    qd = quaternion.as_float_array(q1.conj()*q2)
+    qd = qd / np.linalg.norm(qd, axis=1).reshape((-1, 1))
+    return np.abs(wrap_rads(2 * np.arccos(qd[:, 0])))
 
 
 def angle_between_ypr(ypr1, ypr2):
