@@ -95,16 +95,16 @@ class ChuryumovGerasimenko(Asteroid):
         self.name = '67P/Churyumov-Gerasimenko'
 
         # from http://imagearchives.esac.esa.int/index.php?/category/167/start-224
-        # self._image_db_path = os.path.join(SCRIPT_DIR, '../data/rosetta-mtp017')
+        # self._image_db_path = os.path.join(DATA_DIR, 'rosetta-mtp017')
         self.rosetta_batch = 'mtp006' if rosetta_batch == 'default' else rosetta_batch
-        self.image_db_path = os.path.join(BASE_DIR, 'data/rosetta-'+self.rosetta_batch)
-        self.target_model_file = os.path.join(BASE_DIR, 'data/67p-17k.obj')
+        self.image_db_path = os.path.join(DATA_DIR, 'rosetta-'+self.rosetta_batch)
+        self.target_model_file = os.path.join(DATA_DIR, '67p-17k.obj')
 
-        xtra_hires = os.path.join(BASE_DIR, 'data/original-shapemodels/67P_C-G_shape_model_MALMER_2015_11_20-in-km.obj')
+        xtra_hires = os.path.join(DATA_DIR, 'original-shapemodels/67P_C-G_shape_model_MALMER_2015_11_20-in-km.obj')
         if os.path.exists(xtra_hires):
             self.hires_target_model_file = xtra_hires
         else:
-            self.hires_target_model_file = os.path.join(BASE_DIR, 'data/67p-83k-b.obj')
+            self.hires_target_model_file = os.path.join(DATA_DIR, '67p-83k-b.obj')
             print(('Using lower quality shape model for synthetic navcam '
                 + 'images as highest quality shape model not found: %s') % xtra_hires)
 
@@ -119,9 +119,9 @@ class ChuryumovGerasimenko(Asteroid):
 
         # done using `make-const-noise-shapemodel.py data/67p-83k-b.obj data/67p-17k.obj data/67p-17k.nsm`
         self.constant_noise_shape_model = {
-            '' : os.path.join(BASE_DIR, 'data/67p-17k.nsm'),   # same as target_model_file but includes error estimate
-            'lo': os.path.join(BASE_DIR, 'data/67p-4k.nsm'),  # 1/4 the vertices
-            'hi': os.path.join(BASE_DIR, 'data/67p-1k.nsm'),  # 1/17 the vertices
+            '' : os.path.join(DATA_DIR, '67p-17k.nsm'),   # same as target_model_file but includes error estimate
+            'lo': os.path.join(DATA_DIR, '67p-4k.nsm'),  # 1/4 the vertices
+            'hi': os.path.join(DATA_DIR, '67p-1k.nsm'),  # 1/17 the vertices
         }
 
         sample_image = {

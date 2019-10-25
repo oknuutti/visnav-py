@@ -370,7 +370,7 @@ class VisualOdometry:
         kernel = ImageProc.bsphkern(round(6*image.shape[0]/512)*2 + 1)
 
         # exclude asteroid limb from feature detection
-        mask = cv2.erode(mask, ImageProc.bsphkern(5), iterations=1)    # remove stars
+        mask = cv2.erode(mask, ImageProc.bsphkern(7), iterations=1)    # remove stars
         mask = cv2.dilate(mask, kernel, iterations=1)   # remove small shadows inside asteroid
         mask = cv2.erode(mask, kernel, iterations=2)    # remove asteroid limb
 

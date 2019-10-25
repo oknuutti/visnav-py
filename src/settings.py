@@ -1,12 +1,13 @@
 
 import os
 
-SCRIPT_DIR = os.path.dirname(__file__)
-BASE_DIR = os.path.join(SCRIPT_DIR, '..')
-#LOG_DIR = os.path.join(SCRIPT_DIR, '../logs/')
+BASE_DIR = os.path.join(os.path.dirname(__file__), '..')
+#LOG_DIR = os.path.join(BASE_DIR, 'logs')
 LOG_DIR = 'd:/projects/visnav/logs/'
-#CACHE_DIR = os.path.join(SCRIPT_DIR, '../cache/')
+#CACHE_DIR = os.path.join(BASE_DIR, 'cache')
 CACHE_DIR = 'd:/projects/visnav/cache/'
+DATA_DIR = os.path.join(BASE_DIR, 'data')
+#DATA_DIR = 'd:/projects/visnav/data/'
 
 USE_ICRS = True  # if true, use barycentric equatorial system, else heliocentric ecliptic
 
@@ -27,7 +28,7 @@ SHAPE_MODEL_NOISE_LV = {
 ##  - profile testing setup by "D:\Program Files\Anaconda3\python" -m cProfile -o profile.out src\batch1.py keypoint 10
 ## then snakeviz profile.out
 PROFILE = False
-PROFILE_OUT_FILE = os.path.join(SCRIPT_DIR, '../profile.out')
+PROFILE_OUT_FILE = os.path.join(BASE_DIR, 'profile.out')
 
 START_IN_THREAD = False
 BATCH_MODE = True          # used only in relation to visnav.py

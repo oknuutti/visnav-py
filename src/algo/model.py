@@ -511,6 +511,55 @@ class SystemModel(ABC):
 
         return visib if return_array else visib[0]
 
+    def get_cropped_system_scf(self, x, y, w, h):
+        sc_ast_lf_r = tools.q_times_v(SystemModel.sc2gl_q, self.spacecraft_pos)
+        sc_ast_lf_q = self.spacecraft_q.conj() * self.asteroid.rotation_q(self.time.value)
+        ast_sun_lf_u = tools.q_times_v(self.spacecraft_q.conj(), -tools.normalize_v(self.asteroid.position(self.time.value)))
+        sc, dq = self.cropped_system_tf(x, y, w, h)
+
+        # adjust position
+        sc_ast_lf_r = tools.q_times_v(dq.conj(), sc_ast_lf_r)
+        sc_ast_lf_r[0] *= sc
+
+        # adjust rotation
+        sc_ast_lf_q = dq.conj() * sc_ast_lf_q
+
+        # adjust sun vect
+        ast_sun_lf_u = tools.q_times_v(dq.conj(), ast_sun_lf_u)
+
+        return sc_ast_lf_r, sc_ast_lf_q, ast_sun_lf_u
+
+    def set_cropped_system_scf(self, x, y, w, h, sc_ast_lf_r, sc_ast_lf_q, rotate_sc=False):
+        sc, dq = self.cropped_system_tf(x, y, w, h)
+
+        # adjust and set position
+        sc_ast_lf_r[0] /= sc
+        self.spacecraft_pos = tools.q_times_v(SystemModel.sc2gl_q.conj() * dq, sc_ast_lf_r)
+
+        # adjust and set rotation
+        if rotate_sc:
+            self.spacecraft_q = self.asteroid_q * sc_ast_lf_q.conj()     # TODO: check that valid
+        else:
+            self.asteroid_q = self.spacecraft_q * sc_ast_lf_q
+
+    def cropped_system_tf(self, x, y, w, h):
+        # for rotation adjustment
+        if False:
+            # px are on a plane
+            dx = math.atan(
+                ((x + w / 2) - self.cam.width // 2) / (self.cam.width / 2) * math.tan(math.radians(sm.cam.x_fov / 2)))
+            dy = math.atan(
+                ((y + h / 2) - self.cam.height // 2) / (self.cam.height / 2) * math.tan(math.radians(sm.cam.y_fov / 2)))
+        else:
+            # px are on a curved surface
+            dx = ((x + w / 2) - self.cam.width // 2) / self.cam.width * math.radians(self.cam.x_fov)
+            dy = ((y + h / 2) - self.cam.height // 2) / self.cam.height * math.radians(self.cam.y_fov)
+        dq = tools.ypr_to_q(-dy, -dx, 0)
+
+        # for distance adjustment
+        sc = max(h / self.cam.height, w / self.cam.width)
+        return sc, dq
+
     def random_state(self, uniform_distance=True, opzone_only=False):
         # reset asteroid axis to true values
         self.asteroid.reset_to_defaults()
@@ -644,6 +693,8 @@ class SystemModel(ABC):
         if not os.path.isfile(filename):
             raise FileNotFoundError(filename)
 
+        self.asteroid.reset_to_defaults()
+
         config = configparser.ConfigParser()
         filename = filename+('.lbl' if len(filename)<5 or filename[-4:]!='.lbl' else '')
         config.read(filename)
@@ -682,7 +733,6 @@ class SystemModel(ABC):
         }
         return fqm[fsrc]*fqm[fdst].conj()
 
-    
     def __repr__(self):
         return (
               'system state:\n\t%s\n'

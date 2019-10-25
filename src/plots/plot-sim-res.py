@@ -6,6 +6,7 @@ import numpy as np
 import quaternion
 import matplotlib as mpl
 import matplotlib.pyplot as plt
+from cv2 import cv2
 from scipy import optimize
 
 from algo import tools
@@ -22,8 +23,13 @@ def main(mission_sc=False, simple=False):
     mpl.rcParams['lines.linewidth'] = LINE_WIDTH
 
     try:
-        filename = sys.argv[1]
-        span = tuple(map(int, sys.argv[2].split(':'))) if len(sys.argv) > 2 else None
+        switches = {'--video'}
+        args = sys.argv[1:]
+        video = '--video' in args
+        if video:
+            args = [a for a in args if a not in switches]
+        filename = args[0]
+        span = tuple(map(int, args[1].split(':'))) if len(args) > 1 else None
         is_4km = '4km' in filename
         is_vo = '-vo-' in filename
         is_nac = '-nac-' in filename or '-1n-' in filename or '-2n-' in filename
@@ -137,7 +143,7 @@ def main(mission_sc=False, simple=False):
 
     has_spl = not np.all(np.isnan(spl_loc))
     has_lsr = not np.all(np.isnan(lsr_loc))
-    has_vo = not np.all(np.isnan(vo_loc))
+    has_vo = not np.all(np.isnan(vo_loc)) and False
     has_cnt = not np.all(np.isnan(cnt_loc))
     has_flt = False
 
@@ -153,7 +159,7 @@ def main(mission_sc=False, simple=False):
         is_d1_bg, is_d1_fg = d2_when_d1_in_view(sc_loc, sc_q, d1_loc, d2_loc)
         d1_bg, d1_fg = get_intervals(time, is_d1_bg), get_intervals(time, is_d1_fg)
 
-    if True:
+    if not video:
         cnt_max_dist = {
             True: {             # is_nac
                 True: 1300,     # - use_d2
@@ -168,13 +174,13 @@ def main(mission_sc=False, simple=False):
         cnt_loc[distance.flatten() < cnt_max_dist, :] = np.nan
         spl_loc[phase_angle.flatten() > 135 / 180 * np.pi, :] = np.nan
 
-        incl_for_stats = (phase_angle < 100 / 180 * np.pi).flatten()    # phase angle less than 100 deg
-        if use_d2:
-            incl_for_stats = np.logical_and.reduce((
-                incl_for_stats,
-                np.logical_not(is_d1_fg),
-                np.logical_not(is_d2_ecl),
-            ))
+    incl_for_stats = (phase_angle < 100 / 180 * np.pi).flatten()    # phase angle less than 100 deg
+    if use_d2:
+        incl_for_stats = np.logical_and.reduce((
+            incl_for_stats,
+            np.logical_not(is_d1_fg),
+            np.logical_not(is_d2_ecl),
+        ))
 
     # calculate transformation to synodic frame, apply
     tr_sf = calc_transf(d1_loc, d2_loc)
@@ -412,27 +418,66 @@ def main(mission_sc=False, simple=False):
 
     # plot didymain & didymoon
     fig1, ax = plt.subplots(figsize=(7, 7))
-    if is_vo:
-        for h in range(0, len(d1_loc_sf), 30):
-            plot_orbit_sf(ax, d1_loc_sf, sc_loc_sf, vo_loc_sf, cutoff=h, idx1=1)
-            plt.pause(0.05)
-            plt.waitforbuttonpress()
-        #plot_orbit_sf(ax, d1_loc_sf, sc_loc_sf, vo_loc_sf, cutoff=int(2*11.9*3600/60))
-    elif is_4km:
-        plot_orbit_sf(ax, d1_loc, d2_loc, sc_loc,
-                      flt_loc if has_flt else None,
-                      spl_loc=spl_loc[idx, :] if id in ('id1', 'id2', 'id3') else None,
-                      vo_loc=vo_loc[idx4, :] if id in ('id1', 'id3') else None,
-                      synodic=False, cutoff=cutoff or -1)
-    else:
-        plot_orbit_sf(ax, d1_loc_sf, d2_loc_sf, sc_loc_sf,
-                      flt_loc_sf if has_flt else None,
-                      spl_loc=spl_loc_sf[idx, :] if id in ('id4', 'id5') else None,
-                      #vo_loc=vo_loc_sf[idx4, :] if id in ('id5',) else None,
-                      synodic=True, cutoff=cutoff or -1)
-    plt.tight_layout()
 
-    plt.show()
+    if video:
+        framerate = 25
+        dw, dh = fig1.canvas.get_width_height()
+        writer = cv2.VideoWriter(filename[:-4]+'.avi', cv2.VideoWriter_fourcc(*'DIVX'), framerate, (dw*2, dh*2))
+
+    try:
+        skip = 2
+        for c in range(skip, len(d1_loc_sf), skip):
+            if video:
+                tools.show_progress(len(d1_loc_sf)//skip, c//skip)
+            else:
+                c = cutoff or -1
+
+            if is_vo:
+                # for c in range(0, len(d1_loc_sf), 30):
+                #     plot_orbit_sf(ax, d1_loc_sf, sc_loc_sf, vo_loc_sf, cutoff=c, idx1=1, static=False)
+                plot_orbit_sf(ax, d1_loc_sf, sc_loc_sf, vo_loc_sf, cutoff=c, static=not video)
+            elif is_4km:
+                plot_orbit_sf(ax, d1_loc, d2_loc, sc_loc,
+                              flt_loc if has_flt else None,
+                              spl_loc=spl_loc[idx, :] if id in ('id1', 'id2', 'id3') else None,
+                              vo_loc=vo_loc[idx4, :] if id in ('id1', 'id3') and has_vo else None,
+                              synodic=False, cutoff=c, static=not video)
+            else:
+                plot_orbit_sf(ax, d1_loc_sf, d2_loc_sf, sc_loc_sf,
+                              flt_loc_sf if has_flt else None,
+                              spl_loc=spl_loc_sf[idx, :] if id in ('id4', 'id5') else None,
+                              #vo_loc=vo_loc_sf[idx4, :] if id in ('id5',) else None,
+                              synodic=True, cutoff=c, static=not video)
+            if video:
+                #plt.tight_layout()
+                # plt.pause(0.05)
+                # plt.waitforbuttonpress()
+                mi = [m for m in (5760, 7593) if m < c]
+                if len(mi) > 0:
+                    ax.plot(spl_loc[mi, 0], spl_loc[mi, 1], 'bv', label='Maneuver', fillstyle='none')
+                errtxt = 'error [m]: x=%5.1f, y=%5.1f, z=%5.1f' % tuple(spl_loc[c, :] - sc_loc[c, :])
+                plt.text(2650, 9500, errtxt, family='monospace', fontsize=12, horizontalalignment='center')
+                ax.set_xbound(-5200, 10500)
+                ax.set_ybound(-7100, 8600)
+                fig1.canvas.draw()
+                img = np.frombuffer(fig1.canvas.tostring_argb(), dtype=np.uint8)
+                img.shape = (dh*3, dw*3, 4)     # why need *3 ???
+                # canvas.tostring_argb give pixmap in ARGB mode. Roll the ALPHA channel to have it in RGBA mode
+                img = np.roll(img, 3, axis=2)
+                img = cv2.cvtColor(img, cv2.COLOR_RGBA2BGR)
+                img = cv2.resize(img, (dw*2, dh*2))
+                if False:
+                    cv2.imshow('test', img)
+                    cv2.waitKey()
+                writer.write(img)
+                ax.clear()
+            else:
+                plt.tight_layout()
+                plt.show()
+                break
+    finally:
+        if video:
+            writer.release()
 
 
 def vo_data_prep(vo_loc, vo_scale, vo_bias_sds, sc_loc, trg_loc):
@@ -490,22 +535,19 @@ def vo_data_prep(vo_loc, vo_scale, vo_bias_sds, sc_loc, trg_loc):
 
 
 def plot_orbit_sf(ax, d1_loc, d2_loc, sc_loc, flt_loc=None, spl_loc=None, vo_loc=None,
-                  synodic=True, labels=('x [m]', 'y [m]'), idx0=0, idx1=1, cutoff=None):
+                  synodic=True, labels=('x [m]', 'y [m]'), idx0=0, idx1=1, cutoff=None, static=True):
     if cutoff is not None:
         d1_loc = d1_loc[:cutoff, :]
+        d2_loc = d2_loc[:cutoff, :]
         sc_loc = sc_loc[:cutoff, :]
-        if vo_loc is not None:
-            vo_loc = vo_loc[:cutoff, :]
-        if spl_loc is not None:
-            spl_loc = spl_loc[:cutoff, :]
         if flt_loc is not None:
             flt_loc = flt_loc[:cutoff, :]
+        if spl_loc is not None:
+            spl_loc = spl_loc[:cutoff, :]
+        if vo_loc is not None:
+            vo_loc = vo_loc[:cutoff, :]
 
     ax.axis('equal')
-
-    # plot s/c real loc & nav filter solution
-    ax.plot(sc_loc[:, idx0], sc_loc[:, idx1], 'b--', label='APEX')
-    ax.plot(sc_loc[0, idx0], sc_loc[0, idx1], 'bo', label='Start', fillstyle='none')
 
     if synodic:
         r = np.linspace(0, math.pi * 2, 100, endpoint=True)
@@ -516,15 +558,32 @@ def plot_orbit_sf(ax, d1_loc, d2_loc, sc_loc, flt_loc=None, spl_loc=None, vo_loc
         ax.plot(d1_r * np.cos(r) + d1_xoff, d1_r * np.sin(r) + d1_yoff, 'b-')
     else:
         ax.plot(0, 0, 'bx', label='Barycenter')
-        #ax.plot(d2_loc[:, idx0], d2_loc[:, idx1], 'C2--', label='D2')
-        #ax.plot(d1_loc[:, idx0], d1_loc[:, idx1], 'C3--', label='D1')
+        if not static:
+            ax.plot(d2_loc[:, idx0], d2_loc[:, idx1], 'C4-', label='Didymoon')
+            #ax.plot(d1_loc[:, idx0], d1_loc[:, idx1], 'C5-', label='Didymain')
+            ax.plot(d2_loc[-1, idx0], d2_loc[-1, idx1], 'C4o', fillstyle='none')
+            #ax.plot(d1_loc[-1, idx0], d1_loc[-1, idx1], 'C5o', fillstyle='none')
+
+    # plot s/c real loc & nav filter solution
+    ax.plot(sc_loc[:, idx0], sc_loc[:, idx1], 'b--', label='APEX')
+    if static:
+        ax.plot(sc_loc[0, idx0], sc_loc[0, idx1], 'bo', label='Start', fillstyle='none')
+    else:
+        ax.plot(sc_loc[-1, idx0], sc_loc[-1, idx1], 'bo', fillstyle='none')
+        ax.plot([], [], 'bv', label='Maneuver', fillstyle='none')
 
     if spl_loc is not None:
         ax.plot(spl_loc[:, idx0], spl_loc[:, idx1], 'C1--', label='SPL')
+        if not static:
+            ax.plot(spl_loc[-1, idx0], spl_loc[-1, idx1], 'C1x')
     if vo_loc is not None:
         ax.plot(vo_loc[:, idx0], vo_loc[:, idx1], 'C2--', label='VO')
+        if not static:
+            ax.plot(vo_loc[-1, idx0], vo_loc[-1, idx1], 'C2x')
     if flt_loc is not None:
         ax.plot(flt_loc[:, idx0], flt_loc[:, idx1], 'r--', label='filter')
+        if not static:
+            ax.plot(flt_loc[-1, idx0], flt_loc[-1, idx1], 'rx')
     ax.set_xlabel(labels[0])
     ax.set_ylabel(labels[1])
     ax.legend(loc='lower right')

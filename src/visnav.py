@@ -97,7 +97,7 @@ class Window(QWidget):
 
         bottomLayout = QHBoxLayout()
         render_engine = RenderEngine(sm.view_width, sm.view_width)
-        obj_idx = render_engine.load_object(os.path.join(BASE_DIR, 'data/67p-4k.obj'))
+        obj_idx = render_engine.load_object(os.path.join(DATA_DIR, '67p-4k.obj'))
         self.phasecorr = PhaseCorrelationAlgo(sm, render_engine, obj_idx)
         self.keypoint = KeypointAlgo(sm, render_engine, obj_idx)
         self.centroid = CentroidAlgo(sm, render_engine, obj_idx)
@@ -266,7 +266,7 @@ class GLWidget(QOpenGLWidget):
         self.latest_discretization_err_q = False
         
         self.add_image_noise = True
-        self._noise_image = os.path.join(SCRIPT_DIR, '../data/noise-fg.png')
+        self._noise_image = os.path.join(DATA_DIR, 'noise-fg.png')
         
         self._width = None
         self._height = None

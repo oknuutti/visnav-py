@@ -517,7 +517,7 @@ if __name__ == '__main__':
     #obj_idx = re.load_object('../data/ryugu+tex-d1-4k.obj')
     if False:
         # test result grid
-        obj_idx = re.load_object(os.path.join(BASE_DIR, 'data/ryugu+tex-d1-100.obj'), wireframe=True)
+        obj_idx = re.load_object(os.path.join(DATA_DIR, 'ryugu+tex-d1-100.obj'), wireframe=True)
         q = tools.angleaxis_to_q((math.radians(3), 0, 1, 0))
         pos = [0, 0, -7]
         for i in range(60):
@@ -530,7 +530,7 @@ if __name__ == '__main__':
         #obj_idx = re.load_object(sm.asteroid.target_model_file)
         #obj_idx = re.load_object(sm.asteroid.hires_target_model_file)
     #obj_idx = re.load_object(sm.asteroid.target_model_file)
-    #obj_idx = re.load_object(os.path.join(BASE_DIR, 'data/test-ball.obj'))
+    #obj_idx = re.load_object(os.path.join(DATA_DIR, 'test-ball.obj'))
 
     if False:
         # test depth rendering for laser algo
@@ -544,7 +544,7 @@ if __name__ == '__main__':
         cv2.waitKey()
         quit()
 
-    if True:
+    if False:
         # test multi-object shadow rendering
         #RenderEngine.REFLMOD_PARAMS[RenderEngine.REFLMOD_LUNAR_LAMBERT][6] = 2
         obj_idx_d1 = re.load_object(DidymosPrimary(hi_res_shape_model=False).target_model_file)
@@ -585,5 +585,7 @@ if __name__ == '__main__':
             imgs += (np.vstack(imgs_j),)
 
         #cv2.imshow('depth', np.clip((sm.min_med_distance+sm.asteroid.mean_radius - depth)/5, 0, 1))
-        cv2.imshow('images', np.hstack(imgs))
+        img = np.hstack(imgs)
+        sc = 1536 / img.shape[1]
+        cv2.imshow('images', cv2.resize(img, None, fx=sc, fy=sc))
         cv2.waitKey()

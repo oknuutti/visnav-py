@@ -10,6 +10,7 @@ import numpy as np
 import quaternion
 import cv2
 
+from algo.absnet import AbsoluteNavigationNN
 from algo.centroid import CentroidAlgo
 from algo.image import ImageProc
 from algo.keypoint import KeypointAlgo
@@ -64,6 +65,7 @@ class TestLoop:
         self.centroid = CentroidAlgo(self.system_model, self.render_engine, self.obj_idx)
         self.phasecorr = PhaseCorrelationAlgo(self.system_model, self.render_engine, self.obj_idx)
         self.mixedalgo = MixedAlgo(self.centroid, self.keypoint)
+        self.absnet = AbsoluteNavigationNN(self.system_model, self.render_engine, self.obj_idx, verbose=True)
 
         # init later if needed
         self._synth_navcam = None
@@ -196,10 +198,6 @@ class TestLoop:
                 self._maybe_exit()
 
             if ONLY_POPULATE_CACHE:
-                # TODO: fix synthetic navcam generation to work with onboard rendering
-                #       current work-around:
-                #           1) first generate cache files and skip _run_algo
-                #           2) run again, this time not skipping _run_algo
                 continue
 
             # run algorithm
@@ -405,6 +403,7 @@ class TestLoop:
             'keypoint+': self.mixedalgo,
             'keypoint': self.keypoint,
             'centroid': self.centroid,
+            'absnet': self.absnet,
         }[kwargs['method']], 'extra_values', None)
         final_fval = fvals[-1] if fvals else None
 
@@ -657,6 +656,12 @@ class TestLoop:
         elif method == 'centroid':
             try:
                 self.centroid.adjust_iteratively(imgfile, outfile, **kwargs)
+                ok = True
+            except PositioningException as e:
+                print(str(e))
+        elif method == 'absnet':
+            try:
+                self.absnet.process(imgfile, outfile, **kwargs)
                 ok = True
             except PositioningException as e:
                 print(str(e))

@@ -105,6 +105,8 @@ def run_batch(mission, full_method, count, est_real_ast_orient=False):
         kwargs = {'method':'keypoint', 'feat':2}
     elif method=='surf':
         kwargs = {'method':'keypoint', 'feat':3}
+    elif method == 'absnet':
+        kwargs = {'method': 'absnet'}
     elif method=='vo':
         # sg = OrbitAroundPoint(point=(0, 0, 0.18), vel=, sm_axis=0.02, incl=, asc_node=, corotating=True, target=(0, 0, 0))
         kwargs = {}

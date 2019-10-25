@@ -41,7 +41,7 @@ def main():
     port = int(sys.argv[2])
 
     if len(sys.argv) > 3:
-        server = ApiServer(sys.argv[3], port=port, hires=True, cache_noise=True, result_rendering=True)
+        server = ApiServer(sys.argv[3], port=port, hires=False, cache_noise=True, result_rendering=True)
     else:
         server = SpawnMaster(port=port, max_count=5000)
 
@@ -86,6 +86,9 @@ class ApiServer:
         self._mission = mission
         self._sm = sm = get_system_model(mission, hires)
         self._target_d2 = '2' in mission
+        if not self._target_d2:
+            # so that D2 always contained in frustrum
+            sm.max_distance += 1.3
         self._renderer = RenderEngine(sm.cam.width, sm.cam.height, antialias_samples=16 if hires else 0)
         self._renderer.set_frustum(sm.cam.x_fov, sm.cam.y_fov, sm.min_altitude*.1, sm.max_distance)
         if isinstance(sm, DidymosSystemModel):
@@ -98,7 +101,7 @@ class ApiServer:
 
         self._obj_idxs = []
         self._wireframe_obj_idxs = [
-            self._renderer.load_object(os.path.join(BASE_DIR, 'data/ryugu+tex-%s-100.obj'%ast), wireframe=True)
+            self._renderer.load_object(os.path.join(DATA_DIR, 'ryugu+tex-%s-100.obj'%ast), wireframe=True)
             for ast in ('d1', 'd2')] if result_rendering else []
 
         self._logpath = os.path.join(LOG_DIR, 'api-server', self._mission)
@@ -289,6 +292,7 @@ class ApiServer:
         except PositioningException as e:
             err = e
 
+        rel_gf_q = np.quaternion(*([np.nan]*4))
         if err is None:
             sc_q = self._sm.spacecraft_q
 

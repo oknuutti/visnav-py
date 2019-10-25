@@ -164,7 +164,7 @@ def match_ll_with_hapke(img_n=20, iters=1, init_noise=0.0, verbose=True, hapke_p
 
     re = RenderEngine(512, 512)
     re.set_frustum(5, 5, 25*0.5, 1250)
-    obj = ShapeModel(fname=os.path.join(BASE_DIR, 'data/test-ball.obj'))
+    obj = ShapeModel(fname=os.path.join(DATA_DIR, 'test-ball.obj'))
     obj_idx = re.load_object(obj)
     pos = [0, 0, -70 * 0.8 * 2]
 

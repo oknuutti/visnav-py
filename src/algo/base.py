@@ -137,25 +137,26 @@ class AlgorithmBase:
 
 if __name__ == '__main__':
     sm = RosettaSystemModel(rosetta_batch='mtp006')
-    #img = 'ROS_CAM1_20140823T021833'
-    img = 'ROS_CAM1_20140822T020718'
-    #img = 'ROS_CAM1_20150606T213002'  # 017
+    #img = 'ROS_CAM1_20140822T020718'   # 006 # default
+    img = 'ROS_CAM1_20140819T210718'    # 006
+    #img = 'ROS_CAM1_20150606T213002'   # 017
 
     lblloader.load_image_meta(os.path.join(sm.asteroid.image_db_path, img + '.LBL'), sm)
     sm.swap_values_with_real_vals(),
 
-    compare = False
+    compare = True
     textures = True
-    if False:
+    if True:
         re = RenderEngine(sm.cam.width, sm.cam.height, antialias_samples=16)
-        #obj_idx = re.load_object(sm.asteroid.hires_target_model_file, smooth=False)
-        #obj_idx = re.load_object(os.path.join(BASE_DIR, 'data/original-shapemodels/CSHP_DV_130_01_HIRES_00200.obj'), smooth=False)
-        #obj_idx = re.load_object(os.path.join(BASE_DIR, 'data/original-shapemodels/dissolved_5deg_1.obj'), smooth=False)
-        obj_idx = re.load_object(os.path.join(BASE_DIR, 'data/original-shapemodels/67P_C-G_shape_model_MALMER_2015_11_20-in-km.obj'), smooth=False)
+        #obj_idx = re.load_object(sm.asteroid.target_model_file, smooth=False)
+        obj_idx = re.load_object(sm.asteroid.hires_target_model_file, smooth=False)
+        #obj_idx = re.load_object(os.path.join(DATA_DIR, 'original-shapemodels/CSHP_DV_130_01_HIRES_00200.obj'), smooth=False)
+        #obj_idx = re.load_object(os.path.join(DATA_DIR, 'original-shapemodels/dissolved_5deg_1.obj'), smooth=False)
+        #obj_idx = re.load_object(os.path.join(DATA_DIR, 'original-shapemodels/67P_C-G_shape_model_MALMER_2015_11_20-in-km.obj'), smooth=False)
         textures = False
     else:
         re = RenderEngine(sm.cam.width, sm.cam.height, antialias_samples=0)
-        fname = sm.asteroid.constant_noise_shape_model['hi']   # ''=>17k, 'lo'=>4k, 'hi'=>1k
+        fname = sm.asteroid.constant_noise_shape_model['']   # ''=>17k, 'lo'=>4k, 'hi'=>1k
         with open(fname, 'rb') as fh:
             noisy_model, sm_noise = pickle.load(fh)
         obj_idx = re.load_object(objloader.ShapeModel(data=noisy_model), smooth=sm.asteroid.render_smooth_faces)
@@ -184,10 +185,16 @@ if __name__ == '__main__':
         #real = ImageProc.adjust_gamma(real, 1/4)
 
         real = cv2.resize(real, size)
+
         if compare:
-            cv2.imshow('real vs synthetic', np.concatenate([real, 255*np.ones((real.shape[0], 1), dtype='uint8')] + synth, axis=1))
+            title = 'real vs synthetic'
+            img = np.concatenate([real, 255*np.ones((real.shape[0], 1), dtype='uint8')] + synth, axis=1)
         else:
-            cv2.imshow('synthetic', synth[0])
+            title = 'synthetic'
+            img = synth[0]
+
+        sc = min(1536 / img.shape[1], 1024 / img.shape[0])
+        cv2.imshow(title, cv2.resize(img, None, fx=sc, fy=sc))
         cv2.waitKey()
     else:
         # try different light directions a fixed angle (d) away from default

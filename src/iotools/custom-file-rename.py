@@ -31,7 +31,7 @@ elif False:
 else:
     # replace('F._P.', '_P.')
     for batch in ('mtp024', 'mtp025', 'mtp026'):
-        path = os.path.join(BASE_DIR, 'data/rosetta-' + batch)
+        path = os.path.join(DATA_DIR, 'rosetta-' + batch)
         for fn in os.listdir(path):
             m = re.match(r'.*?F\._P\.png$', fn)
             if m:

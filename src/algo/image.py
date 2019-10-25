@@ -23,10 +23,51 @@ class ImageProc():
         return cv2.add(image, noise_img[:,:,3])
     
     @staticmethod
-    def crop_and_zoom_image(full_image, x_off, y_off, width, height, scale):
-        return cv2.resize(full_image[y_off:(y_off+height), x_off:(x_off+width)],
-                        None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
-        
+    def crop_and_zoom_image(img, x_off, y_off, width, height, scale, trg_w_h=None):
+        if scale is None:
+            scale = min(trg_w_h[1] / height, trg_w_h[0] / width)
+
+        imgc = cv2.resize(img[y_off:y_off + height, x_off:x_off + width], None, fx=scale, fy=scale,
+                          interpolation=cv2.INTER_CUBIC)
+
+        if trg_w_h is not None:
+            imgd = np.zeros((trg_w_h[1], trg_w_h[0]), dtype=img.dtype)
+            y0, x0 = (imgd.shape[0] - imgc.shape[0]) // 2, (imgd.shape[1] - imgc.shape[1]) // 2
+            imgd[y0:y0 + imgc.shape[0], x0:x0 + imgc.shape[1]] = imgc
+        else:
+            imgd = imgc
+
+        return imgd
+
+    @staticmethod
+    def single_object_bounds(img, threshold, crop_marg, min_px, debug=False):
+        # binary image
+        _, mask = cv2.threshold(img, threshold, 255, cv2.THRESH_BINARY)
+
+        # remove stars
+        mask = cv2.erode(mask, ImageProc.bsphkern(9), iterations=1)
+
+        if np.sum(mask) < min_px:
+            return (None,) * 4
+
+        # detect target
+        x_, y_, w_, h_ = cv2.boundingRect(mask)
+
+        # add margin
+        x, y = max(0, x_ - crop_marg), max(0, y_ - crop_marg)
+        w = min(mask.shape[1] - x, w_ + 2*crop_marg - (x - x_ + crop_marg))
+        h = min(mask.shape[0] - y, h_ + 2*crop_marg - (y - y_ + crop_marg))
+
+        if debug:
+            img_color = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+            img_color = cv2.rectangle(img_color, (x, y), (x + w, y + h), (0, 0, 255), thickness=1)
+            img_color[y + h // 2, x + w // 2] = (0, 0, 255)
+            cv2.imshow('box', cv2.resize(img_color, (512, 512)))
+
+        return x, y, w, h
+
+
+
     @staticmethod
     def equalize_brightness(image, ref_image, percentile=98, image_gamma=1):
         image = ImageProc.adjust_gamma(image, 1/image_gamma)
@@ -120,7 +161,10 @@ class ImageProc():
         return image_dst, hist, threshold_value
     
     @staticmethod
-    def optimal_threshold(hist):
+    def optimal_threshold(hist, image=None):
+        if hist is None:
+            hist = cv2.calcHist([image], [0], None, [256], [0, 256])
+
         tot_px = 256 # sum(hist) -- for some reason get error if divide with pixel count
         x = list(range(1,len(hist)+1))
         loghist = np.array(list(map(lambda x: math.log(x+1)/tot_px, hist)))
@@ -162,7 +206,7 @@ class ImageProc():
             print('threshold_value: %s; bg_ratio: %s'%(threshold_value, bg_ratio))
 
         # plot figure with histogram and estimated distributions
-        if True:
+        if DEBUG:
             from matplotlib import pyplot as plt
             plt.clf()
             plt.plot(x, fitfun1(out[0][:3], x), label='background')
@@ -172,8 +216,9 @@ class ImageProc():
             plt.legend()
             fig = plt.gcf()
             fig.canvas.draw()
-            data = np.fromstring(fig.canvas.tostring_rgb(), dtype=np.uint8, sep='')
-            data = data.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+            data = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
+            w, h = fig.canvas.get_width_height()
+            data = data.reshape((h*3, w*3, 3))      # for some reason get_width_height returns 1/3 of the actual dims
             cv2.imshow('histogram fitting', data)
         
         return threshold_value

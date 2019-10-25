@@ -175,7 +175,7 @@ void main()
 
                     // use table 12.1 from Hapke 2012 instead
                     ivec2 ts = textureSize(hapke_K, 0);  // target texel centres
-                    J *= texture(hapke_K, vec2(th_p/radians(60) + .5/ts.x, g/PI + .5/ts.y)).x;
+                    J *= texture(hapke_K, vec2(th_p/radians(60.0) + .5/ts.x, g/PI + .5/ts.y)).x;
 				}
 
                 // final value

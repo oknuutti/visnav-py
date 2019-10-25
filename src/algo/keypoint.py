@@ -607,7 +607,7 @@ class KeypointAlgo(AlgorithmBase):
         if rotate_sc:
             sc2cv_q = sm.frm_conv_q(sm.SPACECRAFT_FRAME, sm.OPENCV_FRAME)
             sc_delta_q = err_q * sc2cv_q * cv_cam_delta_q.conj() * sc2cv_q.conj()
-            sm.rotate_spacecraft(sc_delta_q)
+            sm.rotate_spacecraft(sc_delta_q)  # TODO: check that rotation ok, changed from sc_q = sc_q * dq to sc_q = dq * sc_q
         else:
             sc2cv_q = sm.frm_conv_q(sm.SPACECRAFT_FRAME, sm.OPENCV_FRAME)
             sc_q = sm.spacecraft_q
