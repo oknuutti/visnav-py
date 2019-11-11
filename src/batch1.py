@@ -159,6 +159,13 @@ def run_batch(mission, full_method, count, est_real_ast_orient=False):
         #kwargs['scale_cam_img'] = True
         #kwargs['rotation_noise'] = False
 
+    if 'real_' in m:
+        # TODO: continue here!
+        #   - load real lbl files, render and use synthetic images based on them
+        kwargs['state_db_path'] = sm.asteroid.image_db_path
+        kwargs['resynth_cam_image'] = True
+
+
     tl = TestLoop(sm, file_prefix_mod=file_prefix_mod,
                   est_real_ast_orient=est_real_ast_orient, operation_zone_only=('didy' in mission),
                   state_generator=sg)

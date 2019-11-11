@@ -12,11 +12,12 @@ in vec3 vertexPosition_shadowFrame;
 out vec4 fragColor;
 
 uniform vec3 lightDirection_viewFrame;  // assume is normalized to length 1
-uniform float brightness_coef;          // 0.4 seemed good
+uniform float brightness_coef;          // in simple case just a scaling factor, otherwise flux density of incident light
 uniform int reflection_model;           // 0: lambertian, 1: lunar-lambert, 2: hapke
 uniform float model_coefs[10];
 uniform bool use_texture;
 uniform bool use_shadows;
+uniform bool use_flux_density;
 uniform sampler2D texture_map;
 uniform sampler2D shadow_map;
 uniform sampler2D hapke_K;
@@ -27,10 +28,11 @@ void main()
     float cos_incidence = clamp(dot(normal, lightDirection_viewFrame), 0.0, 1.0);  // mu0 in hapke
     //float debug = 1;
     float radiance = 1;
+    float relative_albedo = 1;
 
     if (use_texture) {
         // monochromatic textures for now only
-        radiance *= texture(texture_map, texCoords).r;
+        relative_albedo = texture(texture_map, texCoords).r;
     }
 
     if(use_shadows) {
@@ -46,7 +48,7 @@ void main()
     if(radiance>0) {
         radiance *= brightness_coef;
         if(reflection_model == 0) {
-             radiance *= cos_incidence;
+             radiance *= cos_incidence * relative_albedo;
         }
         else if(reflection_model == 1 || reflection_model == 2) {
             vec3 position = normalize(vertexPosition_viewFrame);
@@ -65,9 +67,13 @@ void main()
                 float a = degrees(g);
                 float a2 = a*a;
                 float L = model_coefs[0]+model_coefs[1]*a+model_coefs[2]*a2+model_coefs[3]*a2*a+model_coefs[4]*a2*a2+model_coefs[5]*a2*a2*a;
+                float scaling = relative_albedo;
+                if (!use_flux_density) {
+                    scaling *= model_coefs[6];
+                }
 
                 // model_coefs[6] is a scaling coef, reflectance can theoretically go to negative => clamp from below
-                radiance *= model_coefs[6]*clamp((2*L*cos_incidence / (cos_incidence + cos_emission) + (1-L)*cos_incidence), 0, 1e10);
+                radiance *= scaling*clamp((2*L*cos_incidence / (cos_incidence + cos_emission) + (1-L)*cos_incidence), 0, 1e99);
             }
             else if(reflection_model == 2) {
                 // Hapke params & exact variation from article:
@@ -85,7 +91,7 @@ void main()
 
                 float J = model_coefs[0]; 		// 600, brightness scaling
                 float th_p = radians(model_coefs[1]); 	// 19, average surface slope, effective roughness, theta hat sub p
-                float w  = model_coefs[2];   	// 0.052, single scattering albedo (w, omega, SSA)
+                float w  = model_coefs[2] * relative_albedo;  // 0.052, single scattering albedo (w, omega, SSA)
                 float b  = model_coefs[3];   	// -0.42, SPPF asymmetry parameter (sometimes g?)
                 float c  = model_coefs[4];      // - another parameter for a more complex SPPF
                 float B_SH0 = model_coefs[5];   // - or B0, amplitude of shadow-hiding opposition effect (shoe)
@@ -94,9 +100,13 @@ void main()
                 float hc = model_coefs[8];      // - angular half width of cboe
                 float mode = model_coefs[9];	 // - extra mode selection: first bit for usage of roughness correction term K
 
-                // calculate mu0_eff, mu_eff and large-scale roughness factor S
+                if (use_flux_density) {
+                    J = 1.0;  // incident radiance applied globally elsewhere
+                }
+
+                // calculate mu0_eff, mu_eff and large-scale roughness factor S, roughness correction factor K
                 // >>
-                float mu0_eff, mu_eff, S;
+                float mu0_eff, mu_eff, S, K=1.0;
 
                 if (th_p>0) {
                     float i = acos(cos_incidence);
@@ -146,14 +156,24 @@ void main()
                     sppf = (1.0-c)*sppf + c*(1.0 - b*b)/pow(1.0 - 2.0*b*cos_phase_angle + b*b, 1.5);
                 }
 
+                // maybe use roughness correction factor
+				if(mod(mode, 2) > 0) {
+                    // works ok only for <50deg phase angles
+                    //J *= exp(-0.32*th_p*sqrt(tan(th_p)*tan(g/2)) -0.52*th_p*tan(th_p)*tan(g/2));
+
+                    // use table 12.1 from Hapke 2012 instead
+                    ivec2 ts = textureSize(hapke_K, 0);  // target texel centres
+                    K = texture(hapke_K, vec2(th_p/radians(60.0) + .5/ts.x, g/PI + .5/ts.y)).x;
+				}
+
 				// SHOE opposition effect
 				if(B_SH0 != 0) {
                     // B_SH(g), ~b(g), shadow-hiding opposition effect (shoe), as in Hapke 2002
                     float B_SH = 1.0 + B_SH0 / (1.0 + (1.0/hs) * tan(g/2.0));
 
                     // Chandrasekhar functions for incidence and emission angles (for multiple scattering)
-                    float H_incidence = (1.0 + 2*mu0_eff) / (1.0 + 2*mu0_eff*sqrt(1.0-w));
-                    float H_emission  = (1.0 + 2*mu_eff) / (1.0 + 2*mu_eff*sqrt(1.0-w));
+                    float H_incidence = (1.0 + 2*mu0_eff/K) / (1.0 + 2*mu0_eff/K*sqrt(1.0-w));
+                    float H_emission  = (1.0 + 2*mu_eff/K) / (1.0 + 2*mu_eff/K*sqrt(1.0-w));
 
 					sppf = (sppf*B_SH + H_incidence*H_emission - 1.0);
 				}
@@ -168,22 +188,12 @@ void main()
 					J *= B_CB;
 				}
 
-                // maybe use roughness correction factor
-				if(mod(mode, 2) > 0) {
-                    // works ok only for <50deg phase angles
-                    //J *= exp(-0.32*th_p*sqrt(tan(th_p)*tan(g/2)) -0.52*th_p*tan(th_p)*tan(g/2));
-
-                    // use table 12.1 from Hapke 2012 instead
-                    ivec2 ts = textureSize(hapke_K, 0);  // target texel centres
-                    J *= texture(hapke_K, vec2(th_p/radians(60.0) + .5/ts.x, g/PI + .5/ts.y)).x;
-				}
-
                 // final value
-                radiance *= J * w/4.0/PI * mu0_eff/(mu0_eff + mu_eff) * sppf * S;
+                radiance *= J * K * w/4.0/PI * mu0_eff/(mu0_eff + mu_eff) * sppf * S;
             }
         }
     }
 
-    fragColor = vec4(radiance * vec3(1, 1, 1), 1);
+    fragColor = vec4(radiance * vec3(1.0, 1.0, 1.0), 1.0);
     //fragColor = vec4(debug * vec3(1, 1, 1), 1);
 }

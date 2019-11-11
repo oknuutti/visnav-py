@@ -139,15 +139,15 @@ class ImageProc():
         return np.random.pareto(coef, shape)
 
     @staticmethod
-    def add_ccd_noise(img, mean=7, sd=2, cache=False):
+    def add_sensor_noise(img, mean=7, sd=2, cache=False):
         if not cache:
-            ImageProc._cached_ccd_noise.cache_clear()
-        img += ImageProc._cached_ccd_noise(mean, sd, img.shape)
+            ImageProc._cached_sensor_noise.cache_clear()
+        img += ImageProc._cached_sensor_noise(mean, sd, img.shape)
         return img
 
     @staticmethod
     @lru_cache(maxsize=1)
-    def _cached_ccd_noise(mean, sd, shape):
+    def _cached_sensor_noise(mean, sd, shape):
         return np.random.normal(mean, sd, shape)
 
     @staticmethod
@@ -231,6 +231,16 @@ class ImageProc():
         mask_color = cv2.cvtColor(cv2.resize((mask > 0).astype(np.uint8)*255, None, fx=sc_mask, fy=sc_mask, interpolation=cv2.INTER_CUBIC), cv2.COLOR_GRAY2RGB)
         mask_color[:, :, 0:2] = 0
         return cv2.addWeighted(img_color, 0.5, mask_color, 0.5, 0.0)
+
+    @staticmethod
+    def merge(images):
+        summed_weights = 1
+        summed_images = images[0]
+        for i in range(1,len(images)):
+            summed_images = cv2.addWeighted(summed_images, summed_weights/(summed_weights+1),
+                                            images[i], 1/(summed_weights+1), 0.0)
+            summed_weights += 1
+        return summed_images
 
     @staticmethod
     def norm_xcorr(sce_img, res_img):

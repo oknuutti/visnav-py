@@ -187,8 +187,6 @@ def match_ll_with_hapke(img_n=20, iters=1, init_noise=0.0, verbose=True, hapke_p
             light = tools.q_times_v(tools.ypr_to_q(phase_angle, 0, 0), np.array([0, 0, -1]))
             synth1 = re.render(obj_idx, pos, np.quaternion(1,0,0,0), tools.normalize_v(light), get_depth=False, reflection=m_hapke)
             synth2 = re.render(obj_idx, pos, np.quaternion(1,0,0,0), tools.normalize_v(light), get_depth=False, reflection=m_ll)
-            synth1 = cv2.cvtColor(synth1, cv2.COLOR_RGB2GRAY)
-            synth2 = cv2.cvtColor(synth2, cv2.COLOR_RGB2GRAY)
 
             err_img = (synth1.astype('float') - synth2.astype('float'))**2
             err += np.mean(err_img)

@@ -26,7 +26,8 @@ from settings import *
 
 
 # phase angle (180-elong), ini err, distance, visibility
-EASY_LIMITS = ((20, 100), (0, 10), (3.5, 4.5), (0.8, 1))
+# EASY_LIMITS = ((20, 100), (0, 10), (3.5, 4.5), (80, 120))
+EASY_LIMITS = [(0, 112.5), (0, 10), (0, 1e6), (80, 120)]
 FIG_SIZE = (8, 6)
 FONT_SIZE = 7
 MARKER_SIZE = 2
@@ -44,6 +45,7 @@ def main():
         sys.exit()
 
     mode = sys.argv[2]
+    measure = 'std'
     if len(sys.argv) > 3:
         sc = 1
         if sys.argv[3] == 'shift':
@@ -59,6 +61,10 @@ def main():
             target = 'rot error'
         else:
             assert False, 'unknown target: %s' % sys.argv[3]
+
+        if 'prct' in sys.argv[3:]:
+            measure = 'p99.73'
+
     else:
         target = 'rel shift error (m/km)'  # 'shift error km' #if not one_d_only else 'dist error'
 
@@ -76,9 +82,11 @@ def main():
     )
 
     data = []
+    system_models = {}
     for logfile in sys.argv[1].split(" "):
         mission = logfile.split('-')[0]
         sm = get_system_model(mission)
+        system_models[mission] = sm
 
         # read data
         X, Y, yc, labels = read_data(sm, os.path.join(LOG_DIR, logfile), predictors, [target])
@@ -101,7 +109,7 @@ def main():
             fig, axs = plt.subplots(len(data), 1, figsize=FIG_SIZE, sharex=True)
             for i, (logfile, X, yc, yr, labels) in enumerate(data):
                 if mode == 'easy':
-                    q997 = np.percentile(np.abs(yr), 99.7)
+                    q997 = np.percentile(np.abs(yr), 99.73)
                     tmp = tuple((X[:, k] >= EASY_LIMITS[k][0], X[:, k] <= EASY_LIMITS[k][1]) for k in idxs if k != idx)
 
                     # concatenate above & take logical and, also remove worst 0.3%
@@ -240,9 +248,19 @@ def main():
             fig2 = plt.figure(figsize=FIG_SIZE)
 
         for j, (logfile, X, yc, yr, labels) in enumerate(data):
+            # samples belonging to operational/easy domain
+            mission = logfile.split('-')[0]
+            sm = system_models[mission]
+            EASY_LIMITS[predictors.index('distance')] = (sm.min_distance, sm.max_distance)
+            E = np.logical_and.reduce(sum(tuple(
+                (X[:, k] >= EASY_LIMITS[k][0], X[:, k] <= EASY_LIMITS[k][1]) for k in idxs
+            ), ()))
+            print('%s: overall 99.73%% perf: %.3f m/km (n=%d)' % (mission,
+                  np.percentile(yr[np.logical_and(E, np.logical_not(yc))], 99.73),
+                  np.sum(np.logical_and(E, np.logical_not(yc)))))
+
             for i, (i0, i1) in enumerate(pairs):
                 if scatter:
-                    # filter out difficult regions of axis that are not shown
                     tmp = tuple(
                         (X[:, k] >= EASY_LIMITS[k][0], X[:, k] <= EASY_LIMITS[k][1]) for k in idxs if k not in (i0, i1))
                     I = np.logical_and.reduce(sum(tmp, ()))

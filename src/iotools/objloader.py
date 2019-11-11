@@ -156,5 +156,10 @@ class ShapeModel:
                         for i, vx in enumerate(vxs)]
         return self.vertices, [(tx, ty, 0) for tx, ty in self.texcoords], self.normals, faces
 
-    def load_texture(self):
-        return cv2.imread(self.texfile, cv2.IMREAD_GRAYSCALE) if self.texfile is not None else None
+    def load_texture(self, normalize=True):
+        if self.texfile is None:
+            return None
+        tex = cv2.imread(self.texfile, cv2.IMREAD_GRAYSCALE).astype('f4')
+        if normalize:
+            tex /= np.mean(tex)  # normalize so that mean relative albedo is 1
+        return tex

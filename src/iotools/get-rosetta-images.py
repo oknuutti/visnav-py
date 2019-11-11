@@ -42,6 +42,7 @@ if __name__ == '__main__':
     # cid (class id), pid_s (starting img id), pn (image count)
     ids = {
         ## PRELANDING
+        'mtp003': (30, 2141, 146),    # done
         'mtp006': (63, 6971, 770),    # done
         'mtp007': (62, 7561, 527),    #
 
@@ -69,7 +70,7 @@ if __name__ == '__main__':
 
     print('000', end='', flush=True)
     for pid in range(pid_s, pid_s+pn):
-        page = requests.get(base+'/picture.php?/'+str(pid)+'/category/'+str(cid))
+        page = requests.get(base+'/picture.php?/'+str(pid)+'/category/'+str(cid), verify=False)
         soup = BeautifulSoup(page.content, 'html.parser')
         imgele = soup.find(id="theMainImage")
         imgurl = base+imgele['src'][7:-7]+'.png'

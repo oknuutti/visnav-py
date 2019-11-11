@@ -14,19 +14,38 @@ from algo.model import SystemModel, Asteroid, Camera
 
 
 class RosettaSystemModel(SystemModel):
-    def __init__(self, hi_res_shape_model=False, rosetta_batch='mtp006'):
+    def __init__(self, hi_res_shape_model=False, rosetta_batch='mtp006', focused_attenuated=True):
         # gives some unnecessary warning about "dubious year" even when trying to ignore it
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             min_time = Time('2015-01-01 00:00:00', scale='utc', format='iso')
 
+        fa = focused_attenuated  # else defocused not attenuated
         super(RosettaSystemModel, self).__init__(
             asteroid=ChuryumovGerasimenko(hi_res_shape_model=hi_res_shape_model, rosetta_batch=rosetta_batch),
+
+            # see https://pds-smallbodies.astro.umd.edu/holdings/ro-c-navcam-2-esc4-mtp023-v1.0/document/ro-sgs-if-0001.pdf
             camera=Camera(
                 1024,       # width in pixels
                 1024,       # height in pixels
                 5,          # x fov in degrees
                 5,          # y fov in degrees
+                focal_length=152.5,  # in mm
+                # sensor_size=(1024*0.013, 1024*0.013),
+                aperture=30 if fa else 70,    # attenuated mode (in non-attenuated mode would be 70mm)
+                # f_stop=5.1,     # attenuated mode (in non-attenuated mode would be 2.2)
+                quantum_eff=0.80,     # from https://www.e2v.com/resources/account/download-datasheet/1427
+                px_saturation_e=1e5,  # same source as above
+                # gain can be 1.0 (low) or 1.7 (high)   # from https://pds-smallbodies.astro.umd.edu/holdings/ro-c-navcam-2-esc4-mtp023-v1.0/document/ro-sgs-if-0001.pdf
+                lambda_min=500e-9, lambda_eff=650e-9, lambda_max=800e-9,   # for bandwidth calc
+                dark_noise_mu=250, dark_noise_sd=60, readout_noise_sd=2,    # noise params (e-/s, e-)
+                point_spread_fn=0.65 if fa else 0.25,       # 0.50-0.55 for defocused, 0.65-0.70 for focused
+
+                # 30mm aperture and attenuation filter result in an attenuation factor of ∼580 relative to 70mm aperture and no filter
+                #   => if aperture is 30, need extra attenuation coef: x*(30/70)**2==1/580 => x==0.009387
+                # empirical coef used to tune the synthetic images to match real brightnesses (includes attenuation filter effect)
+                #  - based on star brightnesses, note that point_spread_fn affects this a lot
+                emp_coef=(0.009387 * 2.3 if fa else 2.3),
             ),
             limits=(
                 25,  # min_distance in km
@@ -80,7 +99,7 @@ class ChuryumovGerasimenko(Asteroid):
         # extra mode selection, first bit: use K or not
         # NOTE: K generally not in use as phase angle changes so little inside one image and exposure is adjusted to
         #       increase overall brightness
-        0,
+        1,
     ]
 
     # Lunar-Lambert coefficients were fitted using iotools/approx-lunar-lambert.py
@@ -125,6 +144,7 @@ class ChuryumovGerasimenko(Asteroid):
         }
 
         sample_image = {
+            'mtp003': 'ROS_CAM1_20140531T114923',
             'mtp006': 'ROS_CAM1_20140808T140718',
             'mtp007': 'ROS_CAM1_20140902T113852',          # ROS_CAM1_20140902T113852, ROS_CAM1_20140923T060854
             'mtp017': 'ROS_CAM1_20150630T230217',          # ROS_CAM1_20150603T094509, ROS_CAM1_20150612T230217
@@ -179,6 +199,7 @@ class ChuryumovGerasimenko(Asteroid):
             # variable rotation velocity correction in degrees per day
             correction = {
                 'default': -0.4/25,   # 2014-08-01 - 2014-09-02
+                'mtp003': 0.00,    # 2014-08-01 - 2014-09-02
                 'mtp006': 0.006088,    # 2014-08-01 - 2014-09-02
                 'mtp007': 0.011987,  # 2014-09-02 - 2014-09-23
                 'mtp017': -0.652648,  # 2015-06-03 - 2015-06-30
@@ -198,6 +219,7 @@ class ChuryumovGerasimenko(Asteroid):
             # rotation phase shift in degrees for different batches
             tpm = {
                 'default': -9,      # 2014-08-01 - 2014-09-02
+                'mtp003': 0,       # 2014-08-01 - 2014-09-02
                 'mtp006': -127.05,       # 2014-08-01 - 2014-09-02
                 'mtp007': -158.68,   # 2014-09-02 - 2014-09-23
                 'mtp017': -150.09,  # 2015-06-03 - 2015-06-30

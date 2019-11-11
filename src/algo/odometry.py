@@ -939,7 +939,6 @@ if __name__ == '__main__':
         #ast_q = q**t
         ast_q = tools.rand_q(math.radians(0.1)) * ast_q
         image = re.render(obj_idx, ast_v, ast_q, np.array([1, 0, 0])/math.sqrt(1), gamma=1.8, get_depth=False)
-        image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
 
         #n_ast_q = ast_q * tools.rand_q(math.radians(.3))
         n_ast_q = ast_q

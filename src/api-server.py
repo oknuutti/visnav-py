@@ -41,7 +41,7 @@ def main():
     port = int(sys.argv[2])
 
     if len(sys.argv) > 3:
-        server = ApiServer(sys.argv[3], port=port, hires=False, cache_noise=True, result_rendering=True)
+        server = ApiServer(sys.argv[3], port=port, hires=False, cache_noise=False, result_rendering=False)
     else:
         server = SpawnMaster(port=port, max_count=5000)
 
@@ -86,6 +86,11 @@ class ApiServer:
         self._mission = mission
         self._sm = sm = get_system_model(mission, hires)
         self._target_d2 = '2' in mission
+        self._use_nac = mission[-1] == 'n'
+        self._autogain = True  # not self._use_nac
+        self._current_gain = False
+        self._gain_lambda = 0.9
+
         if not self._target_d2:
             # so that D2 always contained in frustrum
             sm.max_distance += 1.3
@@ -242,8 +247,31 @@ class ApiServer:
         light_v = tools.q_times_v(q, sun_ast_v)
 
         self._maybe_load_objects()  # lazy load objects
-        img = TestLoop.render_navcam_image_static(self._sm, self._renderer, self._obj_idxs, rel_pos_v, rel_rot_q, light_v,
-                                                  use_shadows=True, use_textures=True, cache_noise=self._cache_noise)
+
+        for i in range(2):
+            if self._autogain and self._current_gain:
+                gain = self._current_gain
+            else:
+                gain = 3 if self._use_nac else 1.8
+
+            img = TestLoop.render_navcam_image_static(self._sm, self._renderer, self._obj_idxs,
+                                                      rel_pos_v, rel_rot_q, light_v, sc_q, exposure=2.5, gain=gain,
+                                                      gamma_correction=1,
+                                                      use_shadows=True, use_textures=True, cache_noise=self._cache_noise)
+            if self._autogain:
+                v = np.percentile(img, 100 - 0.0003)
+                gain_trg = gain * 170 / v
+                print('autogain v: %.1f, current: %.1f, target: %.1f' % (v, gain, gain_trg))
+
+                self._current_gain = gain_trg if not self._current_gain else \
+                        (self._current_gain*self._gain_lambda + gain_trg*(1-self._gain_lambda))
+
+                if v < 85 or v == 255:
+                    gain = gain_trg
+                    self._current_gain = gain_trg
+                    continue
+            break
+        img = ImageProc.adjust_gamma(img, 1.8)
 
         date = datetime.fromtimestamp(time, pytz.utc)  # datetime.now()
         fname = os.path.join(self._logpath, date.isoformat()[:-6].replace(':', '')) + '.png'
@@ -436,7 +464,7 @@ class ApiServer:
         result = (overlay * alpha + img * (1 - alpha)).astype('uint8')
 
         fout = fname[:-4] + '-res.png'
-        cv2.imwrite(fout, result, [cv2.IMWRITE_PNG_COMPRESSION, 0])
+        cv2.imwrite(fout, result, [cv2.IMWRITE_PNG_COMPRESSION, 9])
 
         return fout
 

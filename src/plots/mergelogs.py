@@ -11,8 +11,35 @@ from batch1 import get_system_model
 from settings import LOG_DIR
 from testloop import TestLoop
 
+
 # distance, phase angle (180-elong), ini err, visibility
-OPZONE_LIMITS = ((0, 250), (0, 140), (0, 10), (50, 120))
+OPZONE_LIMITS = {
+#    'rose': [(0, 250), (0, 140), (0, 10), (50, 120)],        # for ARTICLE
+    'rose': [(0, 250), (0, 112.5), (0, 10), (50, 120)],       # for APEX perf margin reference
+    'didy1w': [(0, 250), (0, 112.5), (0, 10), (50, 120)],
+    'didy1n': [(0, 250), (0, 112.5), (0, 10), (50, 120)],
+    'didy2w': [(0, 250), (0, 112.5), (0, 10), (50, 120)],
+    'didy2n': [(0, 250), (0, 112.5), (0, 10), (50, 120)],
+}
+
+def read_logfile(fname, data, mission):
+    with open(os.path.join(LOG_DIR, fname)) as fh:
+        offset = 0
+        prefix = ''
+        if mission == 'rose':
+            m = re.match(r'^rose(\d{3})?-.*?$', fname)
+            batch = m[1] if m[1] else '006'
+            offsets = np.cumsum([0, 718, 517, 391, 407, 487])
+            offset = offsets[['006', '007', '017', '024', '025', '026'].index(batch)]
+            prefix = batch + '-'
+        for line in fh.readlines():
+            match = re.match(r"^(\d{3}-)?(\d+)\t", line)
+            if match:
+                i = int(match[2]) + offset
+                if i >= len(data):
+                    data.extend(['%d\t' % j for j in range(len(data), i + 1)])
+                data[i] = line if match[1] is None or len(match[1]) > 0 else (prefix + line)
+
 
 if __name__ == '__main__':
     try:
@@ -22,9 +49,10 @@ if __name__ == '__main__':
         postfix = sys.argv[4]
         opzone = 'opzone' in sys.argv[5:]
         only_least_noise = 'noiseless' in sys.argv[5:]
-        only_real = 'real' in sys.argv[5:]
+        only_real = 'real' in sys.argv[5:] and 'real_' not in sys.argv[5:]
+        only_real_ = 'real_' in sys.argv[5:]
         only_synth = 'synth' in sys.argv[5:]
-        method = next(iter(set(sys.argv[5:]) - {'opzone', 'noiseless', 'real', 'synth'}), False)
+        method = next(iter(set(sys.argv[5:]) - {'opzone', 'noiseless', 'real', 'real_', 'synth'}), False)
     except:
         print('USAGE: python %s <mission> <yyyy-mm-dd> <HH:MM:SS> <postfix> [opzone]\n\tmerges logs dated after given datetime'%(sys.argv[0],))
         quit()
@@ -96,12 +124,15 @@ if __name__ == '__main__':
         setups = [s for s in setups if 'fdb' not in s]
     if only_synth:
         setups = [s for s in setups if 'real' not in s]
-    if only_real:
+    if only_real or only_real_:
         setups = [s for s in setups if 'real' in s]
     if method:
         setups = [s for s in setups if method in s]
     if only_least_noise:
         setups = [s for s in setups if 'smn' not in s]
+
+    if only_real_:
+        setups = [s.replace('real', 'real_') for s in setups]
 
     setups = {s: ([], []) for s in setups}
 
@@ -124,29 +155,14 @@ if __name__ == '__main__':
     # read data from logfiles
     for s, (files, data) in setups.items():
         for t, fname in files:
-            with open(os.path.join(LOG_DIR, fname)) as fh:
-                offset = 0
-                prefix = ''
-                if mission == 'rose':
-                    m = re.match(r'^rose(\d{3})?-.*?$', fname)
-                    batch = m[1] if m[1] else '006'
-                    offsets = np.cumsum([0, 718, 517, 391, 407, 487])
-                    offset = offsets[['006', '007', '017', '024', '025', '026'].index(batch)]
-                    prefix = batch + '-'
-                for line in fh.readlines():
-                    match = re.match(r"^(\d+)\t", line)
-                    if match:
-                        i = int(match[1]) + offset
-                        if i >= len(data):
-                            data.extend(['%d\t' % j for j in range(len(data), i+1)])
-                        data[i] = prefix + line
+            read_logfile(fname, data, mission)
 
     # write output
     columns = TestLoop.log_columns()
     for s, (files, rdata) in setups.items():
         fname = mission+"-"+s+"-"+postfix+".log"
         data = np.array([r.split('\t') for r in rdata])
-        assert len(rdata)>0, 'No data for %s'%s
+        assert len(rdata) > 0, 'No data for %s' % s
         assert len(data.shape) == 2, '%s: missing values at %s' % (s, np.where(np.array([len(d) for d in data]) == 2),)
 
         if len(data) > 0:
@@ -163,18 +179,18 @@ if __name__ == '__main__':
                 assert np.all(inierr > 0), 'ini err out of range'
                 assert np.all(np.logical_and(visib>=0, visib<=100)), 'visibility out of range'
 
+                LIMS = OPZONE_LIMITS[mission]
+                if 'centroid' in s:
+                    LIMS[0] = (sm.min_med_distance, sm.max_distance)
+                    LIMS[3] = (100, 120)
+                else:
+                    LIMS[0] = (sm.min_distance, sm.max_med_distance)
+
                 I = np.logical_and.reduce((
-                    dist > OPZONE_LIMITS[0][0],
-                    dist < OPZONE_LIMITS[0][1],
-
-                    phase_angle > OPZONE_LIMITS[1][0],
-                    phase_angle < OPZONE_LIMITS[1][1],
-
-                    inierr > OPZONE_LIMITS[2][0],
-                    inierr < OPZONE_LIMITS[2][1],
-
-                    visib > OPZONE_LIMITS[3][0],
-                    visib < OPZONE_LIMITS[3][1],
+                    dist >= LIMS[0][0], dist <= LIMS[0][1],
+                    phase_angle >= LIMS[1][0], phase_angle <= LIMS[1][1],
+                    inierr >= LIMS[2][0], inierr <= LIMS[2][1],
+                    visib >= LIMS[3][0], visib <= LIMS[3][1],
                 ))
                 data = data[I, :]
                 rdata = np.array(rdata)[I]

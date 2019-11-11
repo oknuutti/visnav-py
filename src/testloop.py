@@ -10,12 +10,12 @@ import numpy as np
 import quaternion
 import cv2
 
-from algo.absnet import AbsoluteNavigationNN
 from algo.centroid import CentroidAlgo
 from algo.image import ImageProc
 from algo.keypoint import KeypointAlgo
 from algo.mixed import MixedAlgo
 from algo.phasecorr import PhaseCorrelationAlgo
+from missions.didymos import DidymosSystemModel
 from missions.rosetta import RosettaSystemModel
 from render.render import RenderEngine
 from iotools import objloader, lblloader
@@ -23,6 +23,7 @@ import algo.tools as tools
 from algo.tools import (ypr_to_q, q_to_ypr, q_times_v, q_to_unitbase, normalize_v,
                    wrap_rads, solar_elongation, angle_between_ypr)
 from algo.tools import PositioningException
+from render.stars import Stars
 
 from settings import *
 
@@ -65,7 +66,7 @@ class TestLoop:
         self.centroid = CentroidAlgo(self.system_model, self.render_engine, self.obj_idx)
         self.phasecorr = PhaseCorrelationAlgo(self.system_model, self.render_engine, self.obj_idx)
         self.mixedalgo = MixedAlgo(self.centroid, self.keypoint)
-        self.absnet = AbsoluteNavigationNN(self.system_model, self.render_engine, self.obj_idx, verbose=True)
+        self.absnet = None  # lazy load
 
         # init later if needed
         self._synth_navcam = None
@@ -124,9 +125,10 @@ class TestLoop:
 
     # main method
     def run(self, times, log_prefix='test-', smn_type='', constant_sm_noise=True, state_db_path=None,
-            rotation_noise=True, **kwargs):
+            rotation_noise=True, resynth_cam_image=False, **kwargs):
         self._smn_cache_id = smn_type
         self._state_db_path = state_db_path
+        self._resynth_cam_image = resynth_cam_image
         self._rotation_noise = rotation_noise
         self._constant_sm_noise = constant_sm_noise
 
@@ -338,7 +340,8 @@ class TestLoop:
 
 
     @staticmethod
-    def render_navcam_image_static(sm, renderer, obj_idxs, rel_pos_v=None, rel_rot_q=None, light_v=None,
+    def render_navcam_image_static(sm, renderer, obj_idxs, rel_pos_v=None, rel_rot_q=None, light_v=None, sc_q=None,
+                                   exposure=None, gain=None, gamma=1.8, auto_gain=True,
                                    use_shadows=True, use_textures=False, cache_noise=False):
 
         if rel_pos_v is None:
@@ -347,25 +350,43 @@ class TestLoop:
             rel_rot_q, _ = sm.gl_sc_asteroid_rel_q()
         if light_v is None:
             light_v, _ = sm.gl_light_rel_dir()
+        if sc_q is None:
+            sc_q = sm.spacecraft_q  # for correct stars
 
         model = RenderEngine.REFLMOD_HAPKE
         RenderEngine.REFLMOD_PARAMS[model] = sm.asteroid.reflmod_params[model]
-        img, depth = renderer.render(obj_idxs, rel_pos_v, rel_rot_q, light_v, get_depth=True,
-                                     shadows=use_shadows, textures=use_textures, reflection=model)
-        img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+
+        if not auto_gain:
+            sun_sc_distance = np.linalg.norm(sm.asteroid.position(sm.time.value)) * 1e3
+            au = 1.496e+11  # in meters
+            solar_flux_density = (au/sun_sc_distance)**2 * 1360.8  # Stars.magnitude_to_flux_density(-26.74)
+        else:
+            # don't use K correction factor if use automatically scaled image
+            RenderEngine.REFLMOD_PARAMS[model][9] = 0
+            solar_flux_density = False
+
+        flux_density1, depth = renderer.render(obj_idxs, rel_pos_v, rel_rot_q, light_v, get_depth=True,
+                                              shadows=use_shadows, textures=use_textures, reflection=model,
+                                              gamma=1.0, flux_density=solar_flux_density)
+
+        exposure = exposure or sm.cam.def_exposure
+        gain = gain or sm.cam.def_gain
+
+        if not auto_gain:
+            # radiance given in W/(m2*sr) => needed in W/m2
+            flux_density1 *= sm.cam.px_sr
+        else:
+            flux_density1 = flux_density1.astype('f4')/255/sm.cam.sensitivity/exposure/gain
+
+        # add flux density of stars from Tycho-2 catalog
+        flux_density2 = Stars.flux_density(sc_q, sm.cam, mask=depth >= sm.max_distance - 0.1)
+
+        # do the sensing
+        img = sm.cam.sense(flux_density1 + flux_density2, exposure=exposure, gain=gain)
 
         # do same gamma correction as the available rosetta navcam images have
-        img = ImageProc.adjust_gamma(img, 1.8)
-
-        # coef=2 gives reasonably many stars, star brightness was tuned without gamma correction
-        img = ImageProc.add_stars(img.astype('float'), mask=depth>=sm.max_distance-0.1, coef=2.5, cache=cache_noise)
-
-        # ratio seems too low but blurring in images match actual Rosetta navcam images
-        img = ImageProc.apply_point_spread_fn(img, ratio=0.2)
-
-        # add background noise
-        img = ImageProc.add_ccd_noise(img, mean=7, sd=2, cache=cache_noise)
-        img = np.clip(img, 0, 255).astype('uint8')
+        img = np.clip(img*255, 0, 255)
+        img = ImageProc.adjust_gamma(img, gamma).astype('uint8')
 
         if False:
             cv2.imshow('test', img)
@@ -390,7 +411,7 @@ class TestLoop:
         return cache_file
 
     def load_navcam_image(self, i):
-        if self._state_list is None:
+        if self._state_list is None or self._resynth_cam_image:
             fname = self._cache_file(i)+'.png'
         else:
             fname = os.path.join(self._state_db_path, self._state_list[i]+'_P.png')
@@ -660,6 +681,9 @@ class TestLoop:
             except PositioningException as e:
                 print(str(e))
         elif method == 'absnet':
+            if self.absnet is None:
+                from algo.absnet import AbsoluteNavigationNN
+                self.absnet = AbsoluteNavigationNN(self.system_model, self.render_engine, self.obj_idx, verbose=True)
             try:
                 self.absnet.process(imgfile, outfile, **kwargs)
                 ok = True
@@ -690,18 +714,129 @@ class TestLoop:
             quit()
 
 
-if __name__ == '__main__':
-    sm = RosettaSystemModel(rosetta_batch='mtp006')
-    img = 'ROS_CAM1_20140822T020718'
+def test_rosetta_navcam():
+    ast = True
+    if ast:
+        gain = 1.7
+        fa = True
+        if 0:
+            batch = 'mtp006'
+            imgf = 'ROS_CAM1_20140822T020718'  # ok
+            exp = 2.0
+        elif 0:
+            batch = 'mtp006'
+            imgf = 'ROS_CAM1_20140801T150717'  # too dark
+            exp = 1.0
+        elif 0:
+            batch = 'mtp006'
+            imgf = 'ROS_CAM1_20140902T062253'  # ok
+            exp = 2.8
+        elif 0:
+            batch = 'mtp007'
+            imgf = 'ROS_CAM1_20140916T064502'  # ok
+            exp = 0.9
+        elif 0:
+            batch = 'mtp017'
+            imgf = 'ROS_CAM1_20150603T060217'  # ok
+            exp = 1.16
+        elif 0:
+            batch = 'mtp017'
+            imgf = 'ROS_CAM1_20150603T192546'  # ok
+            exp = 0.01
+            gain = 1.0
+            fa = False
+        elif 0:
+            batch = 'mtp026'
+            imgf = 'ROS_CAM1_20160303T182855'  # too bright
+            exp = 3.27
+        elif 1:
+            batch = 'mtp026'
+            imgf = 'ROS_CAM1_20160305T233002'  # ok
+            exp = 0.01
+            gain = 1.0
+            fa = False
 
-    lblloader.load_image_meta(os.path.join(sm.asteroid.image_db_path, img + '.LBL'), sm)
+        # TODO: check if should take distance into account as currently near objects too bright and far ones too dim
+    else:
+        batch = 'mtp003'
+        imgf = 'ROS_CAM1_20140531T114923'  # mtp003
+        exp = 2.5
+        gain = 1.0
+        fa = False
+
+    sm = RosettaSystemModel(rosetta_batch=batch, focused_attenuated=fa)
+    lblloader.load_image_meta(os.path.join(sm.asteroid.image_db_path, imgf + '.LBL'), sm)
     sm.swap_values_with_real_vals()
 
-    renderer = RenderEngine(sm.cam.width, sm.cam.height, antialias_samples=16)
+    if False:
+        s = 16
+        mf = sm.asteroid.hires_target_model_file
+    else:
+        s = 0
+        mf = sm.asteroid.target_model_file
+
+    renderer = RenderEngine(sm.cam.width, sm.cam.height, antialias_samples=s)
     renderer.set_frustum(sm.cam.x_fov, sm.cam.y_fov, sm.min_altitude * .1, sm.max_distance)
-    obj_idx = renderer.load_object(sm.asteroid.hires_target_model_file, smooth=sm.asteroid.render_smooth_faces)
+    obj_idx = renderer.load_object(mf, smooth=sm.asteroid.render_smooth_faces)
     use_textures = sm.asteroid.hires_target_model_file_textures
 
-    img = TestLoop.render_navcam_image_static(sm, renderer, obj_idx, use_textures=use_textures)
-    cv2.imshow('synthetic navcam image', img)
+    img = TestLoop.render_navcam_image_static(sm, renderer, obj_idx, use_textures=use_textures,
+                                              exposure=exp, gain=gain, gamma=1.0, auto_gain=False)
+
+    real = cv2.imread(os.path.join(sm.asteroid.image_db_path, imgf + '_P.png'), cv2.IMREAD_GRAYSCALE)
+    real = ImageProc.adjust_gamma(real, (1 / 1.8))
+    sc = 768 / img.shape[0]
+    img2 = np.hstack((real, img))
+    cv2.imwrite('D:/temp/test.png', img2)
+    cv2.imshow('synthetic navcam image', cv2.resize(img2, None, fx=sc, fy=sc))
     cv2.waitKey()
+
+
+def test_apex_navcam():
+    if 0:
+        nac = False
+        exp = 0.02
+        gain = 1
+        dist = 1.5
+    elif 1:
+        nac = True
+        exp = 0.03
+        gain = 1
+        dist = 7
+
+    #    sm = RosettaSystemModel(rosetta_batch='mtp007', focused_attenuated=True)
+    sm = DidymosSystemModel(target_primary=True, use_narrow_cam=nac)
+
+    if False:
+        s = 16
+        mf = sm.asteroid.hires_target_model_file
+    else:
+        s = 0
+        mf = sm.asteroid.target_model_file
+
+    renderer = RenderEngine(sm.cam.width, sm.cam.height, antialias_samples=s)
+    renderer.set_frustum(sm.cam.x_fov, sm.cam.y_fov, sm.min_altitude * .1, sm.max_distance)
+    obj_idx = renderer.load_object(mf, smooth=sm.asteroid.render_smooth_faces)
+    use_textures = sm.asteroid.hires_target_model_file_textures
+
+    sm.random_state(uniform_distance=True, opzone_only=True)
+    #lblloader.load_image_meta(os.path.join(DATA_DIR, 'rosetta-mtp007', 'ROS_CAM1_20140916T064502' + '.LBL'), sm)
+    au = 1.496e+8  # in km
+    sm.asteroid.real_position = np.array([ 0.42024187, -0.78206733, -0.46018199]) * au * 2.7
+    sm.swap_values_with_real_vals()
+    sm.spacecraft_pos = [0, 0, -dist]
+    sm.spacecraft_rot = [52.5, -64, 2]
+    img = TestLoop.render_navcam_image_static(sm, renderer, obj_idx, use_textures=use_textures,
+                                              exposure=exp, gain=gain, gamma=1.0, auto_gain=False)
+
+    cv2.imwrite('D:/temp/test2.png', img)
+    sc = 768 / img.shape[0]
+    cv2.imshow('synthetic navcam image', cv2.resize(img, None, fx=sc, fy=sc))
+    cv2.waitKey()
+
+
+if __name__ == '__main__':
+    if False:
+        test_rosetta_navcam()
+    else:
+        test_apex_navcam()

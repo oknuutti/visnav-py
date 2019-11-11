@@ -378,6 +378,7 @@ def bf_lat_lon(tol, lat_range=(-math.pi/2, math.pi/2)):
     lon_steps = np.linspace(-math.pi, math.pi, num=math.ceil(2*math.pi/step), endpoint=False)
     return lat_steps, lon_steps
 
+
 def bf2_lat_lon(tol, lat_range=(-math.pi/2, math.pi/2)):
     # tol**2 == (step/2)**2 + (step/2)**2   -- 7deg is quite nice in terms of len(lon)*len(lat) == 1260
     step = math.sqrt(2)*tol
@@ -392,14 +393,26 @@ def bf2_lat_lon(tol, lat_range=(-math.pi/2, math.pi/2)):
 
     return points
 
+
 def robust_mean(arr, discard_percentile=0.2, ret_n=False, axis=None):
-    low = np.nanpercentile(arr, discard_percentile, axis=axis)
-    high = np.nanpercentile(arr, 100 - discard_percentile, axis=axis)
+    J = np.logical_not(np.isnan(arr))
+    if axis is not None:
+        J = np.all(np.isnan(arr), axis=1 if axis == 0 else 0)
+    if axis == 0:
+        arr = arr[J, :]
+    elif axis == 1:
+        arr = arr[:, J]
+    else:
+        arr = arr[J]
+
+    low = np.percentile(arr, discard_percentile, axis=axis)
+    high = np.percentile(arr, 100 - discard_percentile, axis=axis)
     I = np.logical_and(low < arr, arr < high)
     if axis is not None:
-        I = np.all(I, axis=1 if axis==0 else 0)
-    m = np.mean(arr[I], axis=axis)
+        I = np.all(I, axis=1 if axis == 0 else 0)
+    m = np.mean(arr[:, I] if axis == 1 else arr[I], axis=axis)
     return (m, np.sum(I, axis=axis)) if ret_n else m
+
 
 def robust_std(arr, discard_percentile=0.2, mean=None, axis=None):
     corr = 1
@@ -407,6 +420,7 @@ def robust_std(arr, discard_percentile=0.2, mean=None, axis=None):
         mean, n = robust_mean(arr, discard_percentile=discard_percentile, ret_n=True, axis=axis)
         corr = n/(n-1)
     return np.sqrt(robust_mean((arr-mean)**2, discard_percentile=discard_percentile, axis=axis) * corr)
+
 
 def mv_normal(mean, cov=None, L=None, size=None):
     if size is None:
@@ -912,6 +926,14 @@ def plot_vectors(pts3d, scatter=True, conseq=True, neg_z=True):
     else:
         ax.view_init(-90, -90)
     plt.show()
+
+
+def numeric(s):
+    try:
+        float(s)
+    except ValueError:
+        return False
+    return True
 
 
 def plot_quats(quats, conseq=True, wait=True):

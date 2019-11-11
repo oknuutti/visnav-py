@@ -202,7 +202,6 @@ class FeatureDatabaseGenerator(AlgorithmBase):
                 qfin = tools.ypr_to_q(sc_ast_lat, 0, sc_ast_lon)
                 light_v = tools.spherical2cartesian(light_lat, light_lon, 1)
                 reimg = self.render_engine.render(self.obj_idx, pos, qfin, light_v)
-                reimg = cv2.cvtColor(reimg, cv2.COLOR_RGB2GRAY)
                 img = np.concatenate((cv2.resize(ref_img, (self.system_model.view_width, self.system_model.view_height)), reimg), axis=1)
             else:
                 ref_kp = [cv2.KeyPoint(*self._cam.calc_img_xy(x, -y, -z-mm_dist), 1) for x, y, z in ref_kp_3d]

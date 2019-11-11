@@ -6,12 +6,11 @@ import numpy as np
 import cv2
 
 from algo.image import ImageProc
-from algo.model import SystemModel
+from algo import tools
 from iotools import lblloader, objloader
 from missions.rosetta import RosettaSystemModel
 from settings import *
 from render.render import RenderEngine
-from algo import tools
 
 
 class AlgorithmBase:
@@ -85,7 +84,6 @@ class AlgorithmBase:
         else:
             img = res
 
-        img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
         return (img, dth) if depth else img
 
 

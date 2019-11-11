@@ -22,17 +22,34 @@ class DidymosSystemModel(SystemModel):
             warnings.simplefilter("ignore")
             min_time = Time('2023-01-01 00:00:00', scale='utc', format='iso')
 
+        electrical_kwargs = {
+            'sensor_size': (2048 * 0.0022, 1944 * 0.0022),
+            'quantum_eff': 0.3,  # just a guess
+            'px_saturation_e': 1e5,  # just a guess
+            'lambda_min': 350e-9, 'lambda_eff': 580e-9, 'lambda_max': 800e-9,  # just a guess
+            'dark_noise_mu': 200, 'dark_noise_sd': 50, 'readout_noise_sd': 5,   # just a guess
+            'emp_coef': 1,
+        }
+
         narrow_cam = Camera(
             2048,   # width in pixels
             1944,   # height in pixels
             7.7,    # x fov in degrees  (could be 6 & 5.695, 5.15 & 4.89, 7.7 & 7.309)
             7.309,  # y fov in degrees
+            f_stop=2,       # TODO: put better value here, currently same as for the 5 deg fov lens (!)
+                            # => aperture: 16.75 mm
+            point_spread_fn=0.50,   # ratio of brightness in center pixel
+            **electrical_kwargs
         )
         wide_cam = Camera(
             2048,   # width in pixels
             1944,   # height in pixels
             61.5,     # x fov in degrees
             58.38,  # y fov in degrees
+            f_stop=1.2,     # TODO: put better value here, currently same as for the 15 deg fov lens (!)
+                            # => aperture: 3.16 mm
+            point_spread_fn=0.35,   # ratio of brightness in center pixel
+            **electrical_kwargs
         )
 
         if target_primary:
@@ -127,7 +144,7 @@ class DidymosPrimary(Asteroid):
         # extra mode selection, first bit: use K or not
         # NOTE: K generally not in use as phase angle changes so little inside one image and exposure is adjusted to
         #       increase overall brightness
-        0,
+        1,
     ]
 
     # fitted to above hapke params using approx-lunar-lambert.py: match_ll_with_hapke

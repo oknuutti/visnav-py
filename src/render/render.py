@@ -80,14 +80,13 @@ class RenderEngine:
         self._wireframe_prog = self._load_prog('wireframe.vert', 'wireframe.frag', 'wireframe2.geom')
         self._shadow_prog = self._load_prog('shadow.vert', 'shadow.frag')
         self._prog = self._load_prog('shader_v400.vert', 'shader_v400.frag')
-        self._prog['brightness_coef'].value = 0.65
 
-        self._cbo = self._ctx.renderbuffer((view_width, view_height), samples=antialias_samples)
+        self._cbo = self._ctx.renderbuffer((view_width, view_height), samples=antialias_samples, dtype='f4')
         self._dbo = self._ctx.depth_texture((view_width, view_height), samples=antialias_samples, alignment=1)
         self._fbo = self._ctx.framebuffer(self._cbo, self._dbo)
 
-        if self._samples>0:
-            self._cbo2 = self._ctx.renderbuffer((view_width, view_height))
+        if self._samples > 0:
+            self._cbo2 = self._ctx.renderbuffer((view_width, view_height), dtype='f4')
             self._dbo2 = self._ctx.depth_texture((view_width, view_height), alignment=1)
             self._fbo2 = self._ctx.framebuffer(self._cbo2, self._dbo2)
 
@@ -220,7 +219,7 @@ class RenderEngine:
     def load_cached_object(self, vertex_data, obj_bytes, s_obj_bytes, texture_data, obj_idx=None):
         texture = None
         if texture_data is not None:
-            texture = self._ctx.texture(texture_data.T.shape, 1, np.flipud(texture_data).tobytes())
+            texture = self._ctx.texture(texture_data.T.shape, 1, np.flipud(texture_data).tobytes(), dtype='f4')
             texture.build_mipmaps()
 
         vbo = self._ctx.buffer(obj_bytes)
@@ -307,7 +306,7 @@ class RenderEngine:
 
     # @profile(stream=open('memory_profiler.log', 'w+'))
     def render(self, obj_idxs, rel_pos_v, rel_rot_q, light_v, get_depth=False, shadows=True, textures=True,
-               gamma=1.0, reflection=REFLMOD_LUNAR_LAMBERT):
+               gamma=1.0, reflection=REFLMOD_LUNAR_LAMBERT, flux_density=False):
 
         obj_idxs = [obj_idxs] if isinstance(obj_idxs, int) else obj_idxs
         rel_pos_v = np.array(rel_pos_v).reshape((-1, 3))
@@ -329,7 +328,8 @@ class RenderEngine:
             self._prog['shadow_map'].value = RenderEngine._LOC_SHADOW_MAP
 
         for i, obj_idx in enumerate(obj_idxs):
-            self._set_params(obj_idx, rel_pos_v[i], rel_rot_q[i], light_v, shadow_mvps, textures, reflection)
+            self._set_params(obj_idx, rel_pos_v[i], rel_rot_q[i], light_v, shadow_mvps,
+                             textures, reflection, False, flux_density)
             self._objs[obj_idx].render()
 
         if self._samples > 0:
@@ -340,7 +340,7 @@ class RenderEngine:
             fbo = self._fbo
             dbo = self._dbo
 
-        data = np.frombuffer(fbo.read(components=3, alignment=1), dtype='u1').reshape((self._height, self._width, 3))
+        data = np.frombuffer(fbo.read(components=1, alignment=1, dtype='f4'), dtype='f4').reshape((self._height, self._width))
         data = np.flipud(data)
 
         if get_depth:
@@ -362,13 +362,17 @@ class RenderEngine:
         if shadows:
             self._shadow_map.release()
 
-        if gamma != 1.0:
-            data = ImageProc.adjust_gamma(data, gamma)
+        if flux_density:
+            data = data.astype('f4') * flux_density
+        else:
+            data = np.clip(data*255, 0, 255).astype('uint8')
+            if gamma != 1.0:
+                data = ImageProc.adjust_gamma(data, gamma)
 
         return (data, depth) if get_depth else data
 
     def _set_params(self, obj_idx, rel_pos_v, rel_rot_q, light_v=None, shadow_mvps=None, use_textures=True,
-                    reflection=REFLMOD_LUNAR_LAMBERT, for_wireframe=False):
+                    reflection=REFLMOD_LUNAR_LAMBERT, for_wireframe=False, flux_density=False):
 
         self._model_mx = np.identity(4)
         self._model_mx[:3, :3] = quaternion.as_rotation_matrix(rel_rot_q)
@@ -387,6 +391,8 @@ class RenderEngine:
                 self._textures[obj_idx].use(RenderEngine._LOC_TEXTURE)
                 prog['texture_map'].value = RenderEngine._LOC_TEXTURE
 
+            prog['use_flux_density'].value = flux_density is not False
+            prog['brightness_coef'].value = 1 if flux_density else 0.65
             prog['lightDirection_viewFrame'].value = tuple(-light_v)  # already in view frame
             prog['reflection_model'].value = reflection
             prog['model_coefs'].value = RenderEngine.REFLMOD_PARAMS[reflection]
@@ -505,7 +511,7 @@ class RenderEngine:
 if __name__ == '__main__':
     from settings import *
     import cv2
-    sm = DidymosSystemModel(use_narrow_cam=False, target_primary=False, hi_res_shape_model=True)
+    sm = DidymosSystemModel(use_narrow_cam=False, target_primary=False, hi_res_shape_model=False)
 #    sm = RosettaSystemModel()
     re = RenderEngine(sm.cam.width, sm.cam.height, antialias_samples=16)
     re.set_frustum(sm.cam.x_fov, sm.cam.y_fov, 0.05, 2)

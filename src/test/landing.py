@@ -57,7 +57,6 @@ if __name__ == '__main__':
             current_sc = 1/np.linalg.norm(ast_v)
 
         image = re.render(obj_idx, ast_v, ast_q, np.array([1, 0, -1])/math.sqrt(2), gamma=1.8, get_depth=False)
-        image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
 
         # estimate pose
         res, bias_sds, scale_sd = odo.process(image, datetime.fromtimestamp(t0 + t), prior, quaternion.one)

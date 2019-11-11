@@ -1,9 +1,12 @@
 import re
 import sys
+import datetime
 
+import numpy as np
 import cv2
 
 from algo import tools
+from algo.image import ImageProc
 from settings import *
 
 if __name__ == '__main__':
@@ -15,6 +18,7 @@ if __name__ == '__main__':
         dw, dh = [int(s) for s in sys.argv[4].split('x')]
         framerate = int(sys.argv[5])
         skip_mult = int(sys.argv[6]) if len(sys.argv) >= 7 else 1
+        exposure = False  # 2.5
     except Exception as e:
         print(str(e))
         print('\nUSAGE: %s <log-dir relative input-dir> <img_regex> <target_file> <WxH> <framerate> [skip mult]'%(sys.argv[0],))
@@ -33,6 +37,8 @@ if __name__ == '__main__':
     sh, sw, sc = img0.shape
     codecs = ['DIVX', 'H264', 'MPEG', 'MJPG']
     writer = cv2.VideoWriter(target_file, cv2.VideoWriter_fourcc(*codecs[0]), framerate, (dw, dh))
+    imgs = []
+    times = []
     try:
         for i, f in enumerate(img_files):
             if i % skip_mult == 0:
@@ -40,6 +46,17 @@ if __name__ == '__main__':
                 img = cv2.imread(os.path.join(folder, f), cv2.IMREAD_COLOR)
                 if sw != dw or sh != dh:
                     img = cv2.resize(img, (dw, dh))
+                if exposure:
+                    # blend images to simulate blur due to long exposure times
+                    timestr = f[0:17]
+                    time = datetime.datetime.strptime(timestr, '%Y-%m-%dT%H%M%S')
+                    imgs.append(img)
+                    times.append(time)
+                    idxs = np.where(np.array(times) > time - datetime.timedelta(seconds=exposure))
+                    if len(idxs) < np.ceil(exposure):
+                        continue
+                    img = ImageProc.merge(np.array(imgs)[idxs])
+
                 writer.write(img)
     finally:
         writer.release()

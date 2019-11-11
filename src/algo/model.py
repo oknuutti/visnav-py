@@ -11,8 +11,10 @@ from astropy.time import Time
 from astropy import constants as const
 from astropy import units
 from astropy.coordinates import SkyCoord, spherical_to_cartesian
+import scipy.integrate as integrate
 import configparser
 
+from algo.image import ImageProc
 from iotools import objloader
 from settings import *
 from algo import tools
@@ -746,11 +748,133 @@ class SystemModel(ABC):
         
 
 class Camera:
-    def __init__(self, width, height, x_fov, y_fov):
+    def __init__(self, width, height, x_fov, y_fov,
+                 sensor_size=None, focal_length=None, f_stop=None, aperture=None,
+                 quantum_eff=None, px_saturation_e=None, emp_coef=1,
+                 lambda_min=None, lambda_eff=None, lambda_max=None,
+                 dark_noise_mu=None, dark_noise_sd=None, readout_noise_sd=None,
+                 point_spread_fn=None):
         self.width = width      # in pixels
         self.height = height    # in pixels
         self.x_fov = x_fov      # in deg
         self.y_fov = y_fov      # in deg
+
+        self.focal_length = None
+        self.sensor_width = None
+        self.sensor_height = None
+        self.f_stop = None
+        self.aperture = None
+
+        self.emp_coef = emp_coef
+        self.quantum_eff = quantum_eff      # average in range 400-800nm => 375e12-750e12 Hz
+        self.px_saturation_e = px_saturation_e
+        self.lambda_min = lambda_min
+        self.lambda_eff = lambda_eff
+        self.lambda_max = lambda_max
+        self.dark_noise_mu = dark_noise_mu or 250/1e5 * self.px_saturation_e
+        self.dark_noise_sd = dark_noise_sd or 60/1e5 * self.px_saturation_e
+        self.readout_noise_sd = readout_noise_sd or 2/1e5 * self.px_saturation_e
+        self.gain = None
+        self.point_spread_fn = point_spread_fn
+
+        if px_saturation_e is not None:
+            self.gain = 1 / self.px_saturation_e
+
+        if sensor_size is not None:
+            sw, sh = sensor_size    # in mm
+            self.focal_length = min(sw / math.tan(math.radians(x_fov) / 2) / 2,
+                                    sh / math.tan(math.radians(y_fov) / 2) / 2)
+            self.sensor_width = sw
+            self.sensor_height = sh
+        if focal_length is not None:
+            assert sensor_size is None, 'either give sensor_size or focal_length, not both'
+            self.focal_length = focal_length
+            self.sensor_width = math.tan(math.radians(x_fov) / 2) * 2 * focal_length
+            self.sensor_height = math.tan(math.radians(y_fov) / 2) * 2 * focal_length
+
+        if self.focal_length is not None:
+            self.pixel_size = 1e3*min(self.sensor_width/self.width, self.sensor_height/self.width)  # in um
+            if f_stop is not None:
+                self.f_stop = f_stop
+                self.aperture = self.focal_length / f_stop
+            if aperture is not None:
+                assert f_stop is None, 'either give fstop or aperture, not both'
+                self.f_stop = self.focal_length / aperture
+                self.aperture = aperture
+
+    @property
+    def aperture_area(self):
+        return np.pi * (self.aperture*1e-3/2)**2
+
+    @property
+    def sensitivity(self):
+        return self.gain * self.aperture_area * self.electrons_per_solar_irradiance * self.emp_coef
+
+    @property
+    def px_sr(self):
+        return math.radians(self.x_fov) / self.width * math.radians(self.y_fov) / self.height
+
+    @property
+    def def_exposure(self):
+        return min(5e-9/self.sensitivity, 5)
+
+    @property
+    def def_gain(self):
+        return 5e-9/(self.def_exposure * self.sensitivity)
+
+    @property
+    def electrons_per_solar_irradiance(self):
+        return Camera.electrons_per_solar_irradiance_s(self.quantum_eff, self.lambda_min, self.lambda_max)
+
+    @staticmethod
+    @lru_cache(maxsize=1)
+    def electrons_per_solar_irradiance_s(quantum_eff, lambda_min, lambda_max):
+        """
+        Returns electrons per total solar irradiance [W/m2] assuming spectrum of the sun & sensor
+        """
+
+        h = 6.626e-34  # planck constant (m2kg/s)
+        c = 3e8  # speed of light
+        T = 5778  # temperature of sun
+        k = 1.380649e-23  # Boltzmann constant
+        # sun_sr = 6.807e-5  # sun steradians from earth
+
+        def qeff(f):
+            # sensor quantum efficiency
+            return quantum_eff
+
+        def phi(f):
+            # planck's law of black body radiation [W/s/m2/Hz/sr]
+            r = 2*h*f**3/c**2/(math.exp(h*f/k/T) - 1)
+            return r
+
+        def spectral_electrons(f):
+            E = f * h             # energy per photon
+            return qeff(f) * phi(f) / E
+
+        tphi = integrate.quad(phi, c/1e-2, c/1e-8)
+        telec = integrate.quad(spectral_electrons, c/lambda_max, c/lambda_min)
+        return telec[0]/tphi[0]
+
+    def electrons(self, flux_density, exposure=1):
+        # electrons from total solar irradiance [J/(s*m2)]
+        electrons = flux_density * self.aperture_area * exposure * self.electrons_per_solar_irradiance * self.emp_coef
+        return electrons
+
+    def sense(self, flux_density, exposure=1, gain=1, add_noise=True):
+        flux_density = ImageProc.apply_point_spread_fn(flux_density, ratio=self.point_spread_fn)
+        electrons = self.electrons(flux_density, exposure=exposure)
+
+        if add_noise:
+            # shot noise (should be based on electrons, but figured that electrons should be fine)
+            electrons += np.random.poisson(np.sqrt(electrons))
+
+            # dark current plus readout noise
+            electrons += np.random.normal(self.dark_noise_mu * exposure,
+                                          np.sqrt((self.dark_noise_sd*exposure)**2 + self.readout_noise_sd**2),
+                                          size=electrons.shape)
+
+        return np.clip(gain * self.gain * np.floor(electrons), 0, 1)
 
     def intrinsic_camera_mx(self, legacy=True):
         return Camera._intrinsic_camera_mx(self.width, self.height, self.x_fov, self.y_fov, legacy=legacy)
@@ -804,6 +928,14 @@ class Camera:
         ix, iy, iw = K.dot(np.array([x, y, z]))
         return ix / iw, iy / iw
 
+    def calc_img_R(self, R):
+        """
+        R is a matrix where each row is a point in camera frame (z typically negative),
+        returns a matrix where each row corresponds to points in image space """
+        K = self.intrinsic_camera_mx(legacy=False)
+        iRh = R.dot(K.T)
+        return iRh[:, 0:2]/iRh[:, 2].reshape((-1, 1))
+
 
 class Asteroid(ABC):
     ast2sc_q = None  # depends on the shape model coordinate frame
@@ -830,7 +962,7 @@ class Asteroid(ABC):
         self.real_sc_ast_vertices = None
         self.reflmod_params = None
 
-        self.real_position = None       # transient, loaded from image metadata at iotools.lblloader
+        self.real_position = None       # in km, transient, loaded from image metadata at iotools.lblloader
         
         self.max_radius = None          # in meters, maximum extent of object from asteroid frame coordinate origin
         self.mean_radius = None         # in meters
