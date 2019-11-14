@@ -1,27 +1,28 @@
-__author__ = "Olli"
+import re
+
+__author__ = "Olli Knuuttila"
 __date__ = "$Nov 25, 2016 8:05:11 PM$"
 
 from setuptools import setup, find_packages
 
+
+# with open('../README.md') as f:
+# 	long_description = f.read()
+# 	long_description = re.sub(r'</?div[^>]*>|\r', '', long_description, flags=re.M)
+
+
 setup(
-	   name='visnav',
-	   version='0.1',
-	   packages=find_packages(),
+	name='visnav',
+	version='0.1',
+	packages=find_packages(),
 
-	   # Declare your packages' dependencies here, for eg:
-	   install_requires=['foo>=3'],
+	# Declare your packages' dependencies here, for eg:
+	install_requires=['moderngl>=5.5.0', 'moderngl.ext.obj>=1.0.0'],
 
-	   # Fill in these to make your Egg ready for upload to
-	   # PyPI
-	   author='Olli',
-	   author_email='',
+	author=__author__,
+	author_email='olli.knuuttila@gmail.com',
 
-	   summary='Just another Python package for the cheese shop',
-	   url='',
-	   license='',
-	   long_description='Long description of the package',
-
-	   # could also include long_description, download_url, classifiers, etc.
-
-  
-	   )
+	summary='Visual navigation around solar-system small bodies',
+	url='https://github.com/oknuutti/visnav-py',
+	license='MIT',
+)
