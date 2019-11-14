@@ -753,7 +753,8 @@ class Camera:
                  quantum_eff=None, px_saturation_e=None, emp_coef=1,
                  lambda_min=None, lambda_eff=None, lambda_max=None,
                  dark_noise_mu=None, dark_noise_sd=None, readout_noise_sd=None,
-                 point_spread_fn=None):
+                 point_spread_fn=None, scattering_coef=None,
+                 exclusion_angle_x=90, exclusion_angle_y=90):
         self.width = width      # in pixels
         self.height = height    # in pixels
         self.x_fov = x_fov      # in deg
@@ -776,6 +777,9 @@ class Camera:
         self.readout_noise_sd = readout_noise_sd or 2/1e5 * self.px_saturation_e
         self.gain = None
         self.point_spread_fn = point_spread_fn
+        self.scattering_coef = scattering_coef
+        self.exclusion_angle_x = exclusion_angle_x
+        self.exclusion_angle_y = exclusion_angle_y
 
         if px_saturation_e is not None:
             self.gain = 1 / self.px_saturation_e
@@ -827,6 +831,12 @@ class Camera:
         return Camera.electrons_per_solar_irradiance_s(self.quantum_eff, self.lambda_min, self.lambda_max)
 
     @staticmethod
+    def level_to_exp_gain(level, exp_range):
+        exp = 0.001 * np.floor(np.clip(level, *exp_range) * 1000)
+        gain = 0.001 * np.floor(max(1, level/exp) * 1000)
+        return exp, gain
+
+    @staticmethod
     @lru_cache(maxsize=1)
     def electrons_per_solar_irradiance_s(quantum_eff, lambda_min, lambda_max):
         """
@@ -867,12 +877,13 @@ class Camera:
 
         if add_noise:
             # shot noise (should be based on electrons, but figured that electrons should be fine)
-            electrons += np.random.poisson(np.sqrt(electrons))
+            # - also, poisson distributed with lambda=sqrt(electrons)
+            #   here approximated using normal distribution with mu=electrons, sd=sqrt(electrons)
+            mu = exposure*self.dark_noise_mu + electrons
+            sigma2 = exposure*self.dark_noise_sd**2 + electrons + self.readout_noise_sd**2
 
-            # dark current plus readout noise
-            electrons += np.random.normal(self.dark_noise_mu * exposure,
-                                          np.sqrt((self.dark_noise_sd*exposure)**2 + self.readout_noise_sd**2),
-                                          size=electrons.shape)
+            # shot noise, dark current and readout noise
+            electrons = np.random.normal(mu, np.sqrt(sigma2))
 
         return np.clip(gain * self.gain * np.floor(electrons), 0, 1)
 

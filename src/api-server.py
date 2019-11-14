@@ -87,9 +87,9 @@ class ApiServer:
         self._sm = sm = get_system_model(mission, hires)
         self._target_d2 = '2' in mission
         self._use_nac = mission[-1] == 'n'
-        self._autogain = True  # not self._use_nac
-        self._current_gain = False
-        self._gain_lambda = 0.9
+        self._autolevel = True  # not self._use_nac
+        self._current_level = False
+        self._level_lambda = 0.9
 
         if not self._target_d2:
             # so that D2 always contained in frustrum
@@ -236,6 +236,7 @@ class ApiServer:
 
     def _render(self, params):
         time = params[0]
+        sun_distance = np.linalg.norm(np.array(params[1][:3]))  # in meters
         sun_ast_v = tools.normalize_v(np.array(params[1][:3]))
         d1_v, d1_q, d2_v, d2_q, sc_v, sc_q = self._parse_poses(params, offset=2)
 
@@ -248,30 +249,35 @@ class ApiServer:
 
         self._maybe_load_objects()  # lazy load objects
 
-        for i in range(2):
-            if self._autogain and self._current_gain:
-                gain = self._current_gain
+        exp_range = (0.001, 3.5)
+        for i in range(20):
+            if self._autolevel and self._current_level:
+                level = self._current_level
             else:
-                gain = 3 if self._use_nac else 1.8
+                level = 3*2.5 if self._use_nac else 1.8*2.5
+
+            exp, gain = self._sm.cam.level_to_exp_gain(level, exp_range)
 
             img = TestLoop.render_navcam_image_static(self._sm, self._renderer, self._obj_idxs,
-                                                      rel_pos_v, rel_rot_q, light_v, sc_q, exposure=2.5, gain=gain,
-                                                      gamma_correction=1,
-                                                      use_shadows=True, use_textures=True, cache_noise=self._cache_noise)
-            if self._autogain:
+                                                      rel_pos_v, rel_rot_q, light_v, sc_q, sun_distance,
+                                                      exposure=exp, gain=gain, auto_gain=False,
+                                                      gamma=1.0, use_shadows=True, use_textures=True)
+            if self._autolevel:
                 v = np.percentile(img, 100 - 0.0003)
-                gain_trg = gain * 170 / v
-                print('autogain v: %.1f, current: %.1f, target: %.1f' % (v, gain, gain_trg))
+                level_trg = level * 170 / v
+                print('autolevel (max_v=%.1f, e=%.3f, g=%.1f) current: %.3f, target: %.3f' % (v, exp, gain, level, level_trg))
 
-                self._current_gain = gain_trg if not self._current_gain else \
-                        (self._current_gain*self._gain_lambda + gain_trg*(1-self._gain_lambda))
+                self._current_level = level_trg if not self._current_level else \
+                        (self._current_level*self._level_lambda + level_trg*(1-self._level_lambda))
 
-                if v < 85 or v == 255:
-                    gain = gain_trg
-                    self._current_gain = gain_trg
+                if v < 85 or (v == 255 and level > exp_range[0]):
+                    level = level_trg if v < 85 else level * 70 / v
+                    self._current_level = level
                     continue
             break
-        img = ImageProc.adjust_gamma(img, 1.8)
+
+        if False:
+            img = ImageProc.default_preprocess(img)
 
         date = datetime.fromtimestamp(time, pytz.utc)  # datetime.now()
         fname = os.path.join(self._logpath, date.isoformat()[:-6].replace(':', '')) + '.png'

@@ -22,34 +22,43 @@ class DidymosSystemModel(SystemModel):
             warnings.simplefilter("ignore")
             min_time = Time('2023-01-01 00:00:00', scale='utc', format='iso')
 
-        electrical_kwargs = {
+        common_kwargs_worst = {
             'sensor_size': (2048 * 0.0022, 1944 * 0.0022),
-            'quantum_eff': 0.3,  # just a guess
-            'px_saturation_e': 1e5,  # just a guess
-            'lambda_min': 350e-9, 'lambda_eff': 580e-9, 'lambda_max': 800e-9,  # just a guess
-            'dark_noise_mu': 200, 'dark_noise_sd': 50, 'readout_noise_sd': 5,   # just a guess
-            'emp_coef': 1,
+            'quantum_eff': 0.30,
+            'px_saturation_e': 2200,                                             # snr_max = 20*log10(sqrt(sat_e)) dB
+            'lambda_min': 350e-9, 'lambda_eff': 580e-9, 'lambda_max': 800e-9,
+            'dark_noise_mu': 40, 'dark_noise_sd': 6.32, 'readout_noise_sd': 15,  # dark_noise_sd should be sqrt(dark_noise_mu)
+            'emp_coef': 1,                                                       # dynamic range = 20*log10(sat_e/readout_noise))
+            'exclusion_angle_x': 55,
+            'exclusion_angle_y': 90,
         }
+        common_kwargs_best = dict(common_kwargs_worst)
+        common_kwargs_best.update({
+            'quantum_eff': 0.4,
+            'px_saturation_e': 3500,
+            'dark_noise_mu': 25, 'dark_noise_sd': 5, 'readout_noise_sd': 5,
+        })
+        common_kwargs = common_kwargs_best
 
         narrow_cam = Camera(
             2048,   # width in pixels
             1944,   # height in pixels
             7.7,    # x fov in degrees  (could be 6 & 5.695, 5.15 & 4.89, 7.7 & 7.309)
             7.309,  # y fov in degrees
-            f_stop=2,       # TODO: put better value here, currently same as for the 5 deg fov lens (!)
-                            # => aperture: 16.75 mm
+            f_stop=5,       # TODO: put better value here
             point_spread_fn=0.50,   # ratio of brightness in center pixel
-            **electrical_kwargs
+            scattering_coef=5e-9,  # affects strength of haze/veil when sun shines on the lens
+            **common_kwargs
         )
         wide_cam = Camera(
             2048,   # width in pixels
             1944,   # height in pixels
             61.5,     # x fov in degrees
             58.38,  # y fov in degrees
-            f_stop=1.2,     # TODO: put better value here, currently same as for the 15 deg fov lens (!)
-                            # => aperture: 3.16 mm
+            f_stop=5,   # TODO: put better value here
             point_spread_fn=0.35,   # ratio of brightness in center pixel
-            **electrical_kwargs
+            scattering_coef=5e-9,  # affects strength of haze/veil when sun shines on the lens
+            **common_kwargs
         )
 
         if target_primary:

@@ -77,6 +77,11 @@ class ImageProc():
         return ImageProc.adjust_gamma(image, image_gamma)
     
     @staticmethod
+    def default_preprocess(image, max=255):
+        bg = np.percentile(image, 250/1024*100)
+        return ImageProc.adjust_gamma(np.clip((image - bg)*max/(max-bg), 0, max), 1.8)
+
+    @staticmethod
     def adjust_gamma(image, gamma):
         if gamma == 1:
             return image

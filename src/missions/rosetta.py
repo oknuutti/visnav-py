@@ -40,6 +40,9 @@ class RosettaSystemModel(SystemModel):
                 lambda_min=500e-9, lambda_eff=650e-9, lambda_max=800e-9,   # for bandwidth calc
                 dark_noise_mu=250, dark_noise_sd=60, readout_noise_sd=2,    # noise params (e-/s, e-)
                 point_spread_fn=0.65 if fa else 0.25,       # 0.50-0.55 for defocused, 0.65-0.70 for focused
+                scattering_coef=5e-9,  # affects strength of haze/veil when sun shines on the lens (TODO: just a guess now)
+                exclusion_angle_x=15,
+                exclusion_angle_y=15,
 
                 # 30mm aperture and attenuation filter result in an attenuation factor of ∼580 relative to 70mm aperture and no filter
                 #   => if aperture is 30, need extra attenuation coef: x*(30/70)**2==1/580 => x==0.009387

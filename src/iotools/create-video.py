@@ -45,7 +45,7 @@ if __name__ == '__main__':
                 tools.show_progress(len(img_files)//skip_mult, i//skip_mult)
                 img = cv2.imread(os.path.join(folder, f), cv2.IMREAD_COLOR)
                 if sw != dw or sh != dh:
-                    img = cv2.resize(img, (dw, dh))
+                    img = cv2.resize(img, (dw, dh), interpolation=cv2.INTER_AREA)
                 if exposure:
                     # blend images to simulate blur due to long exposure times
                     timestr = f[0:17]

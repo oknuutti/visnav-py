@@ -14,7 +14,7 @@ from missions.rosetta import RosettaSystemModel
 from settings import *
 
 
-class Stars():
+class Stars:
     STARDB = os.path.join(DATA_DIR, 'deep_space_objects.sqlite')
     MAG_CUTOFF = 10
     SUN_MAG_V = -26.74
@@ -183,7 +183,7 @@ if __name__ == '__main__':
     for i in range(100):
         cam_q = tools.ypr_to_q(0, np.radians(1), 0) * cam_q
         flux_density = Stars.flux_density(cam_q, cam)
-        img = cam.sense(flux_density, exposure=5, gain=3)
+        img = cam.sense(flux_density, exposure=2, gain=2)
 
         img = np.clip(img*255, 0, 255).astype('uint8')
         img = ImageProc.adjust_gamma(img, 1.8)

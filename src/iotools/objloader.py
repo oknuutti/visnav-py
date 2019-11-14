@@ -161,5 +161,5 @@ class ShapeModel:
             return None
         tex = cv2.imread(self.texfile, cv2.IMREAD_GRAYSCALE).astype('f4')
         if normalize:
-            tex /= np.mean(tex)  # normalize so that mean relative albedo is 1
+            tex /= np.max(tex)  # normalize so that max relative albedo is 1
         return tex

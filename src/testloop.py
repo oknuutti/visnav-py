@@ -14,6 +14,7 @@ from algo.centroid import CentroidAlgo
 from algo.image import ImageProc
 from algo.keypoint import KeypointAlgo
 from algo.mixed import MixedAlgo
+from algo.model import SystemModel
 from algo.phasecorr import PhaseCorrelationAlgo
 from missions.didymos import DidymosSystemModel
 from missions.rosetta import RosettaSystemModel
@@ -24,6 +25,7 @@ from algo.tools import (ypr_to_q, q_to_ypr, q_times_v, q_to_unitbase, normalize_
                    wrap_rads, solar_elongation, angle_between_ypr)
 from algo.tools import PositioningException
 from render.stars import Stars
+from render.sun import Sun
 
 from settings import *
 
@@ -341,7 +343,7 @@ class TestLoop:
 
     @staticmethod
     def render_navcam_image_static(sm, renderer, obj_idxs, rel_pos_v=None, rel_rot_q=None, light_v=None, sc_q=None,
-                                   exposure=None, gain=None, gamma=1.8, auto_gain=True,
+                                   sun_distance=None, exposure=None, gain=None, gamma=1.8, auto_gain=True,
                                    use_shadows=True, use_textures=False, cache_noise=False):
 
         if rel_pos_v is None:
@@ -352,37 +354,46 @@ class TestLoop:
             light_v, _ = sm.gl_light_rel_dir()
         if sc_q is None:
             sc_q = sm.spacecraft_q  # for correct stars
+        sun_sc_distance = sun_distance or (np.linalg.norm(sm.asteroid.position(sm.time.value)) * 1e3)  # in meters
 
         model = RenderEngine.REFLMOD_HAPKE
         RenderEngine.REFLMOD_PARAMS[model] = sm.asteroid.reflmod_params[model]
 
         if not auto_gain:
-            sun_sc_distance = np.linalg.norm(sm.asteroid.position(sm.time.value)) * 1e3
-            au = 1.496e+11  # in meters
-            solar_flux_density = (au/sun_sc_distance)**2 * 1360.8  # Stars.magnitude_to_flux_density(-26.74)
+            dist_au = sun_sc_distance / 1.496e+11  # in au
+            solar_flux_density = 1360.8 / dist_au**2
         else:
             # don't use K correction factor if use automatically scaled image
             RenderEngine.REFLMOD_PARAMS[model][9] = 0
             solar_flux_density = False
 
-        flux_density1, depth = renderer.render(obj_idxs, rel_pos_v, rel_rot_q, light_v, get_depth=True,
-                                              shadows=use_shadows, textures=use_textures, reflection=model,
-                                              gamma=1.0, flux_density=solar_flux_density)
+        object_flux, depth = renderer.render(obj_idxs, rel_pos_v, rel_rot_q, light_v, get_depth=True,
+                                             shadows=use_shadows, textures=use_textures, reflection=model,
+                                             gamma=1.0, flux_density=solar_flux_density)
+
+        if np.any(np.isnan(object_flux)):
+            print('NaN(s) encountered in rendered image!')
+            object_flux[np.isnan(object_flux)] = 0
 
         exposure = exposure or sm.cam.def_exposure
         gain = gain or sm.cam.def_gain
+        mask = depth >= sm.max_distance - 0.1
 
         if not auto_gain:
+            sun_lf = - tools.q_times_v(SystemModel.sc2gl_q, sun_sc_distance * light_v)
+            lens_effect = Sun.flux_density(sm.cam, sun_lf, mask)  # TODO: investigate if need *sm.cam.px_sr or something else!!
+
             # radiance given in W/(m2*sr) => needed in W/m2
-            flux_density1 *= sm.cam.px_sr
+            object_flux *= sm.cam.px_sr
         else:
-            flux_density1 = flux_density1.astype('f4')/255/sm.cam.sensitivity/exposure/gain
+            object_flux = object_flux.astype('f4')/255/sm.cam.sensitivity/exposure/gain
+            lens_effect = 0
 
         # add flux density of stars from Tycho-2 catalog
-        flux_density2 = Stars.flux_density(sc_q, sm.cam, mask=depth >= sm.max_distance - 0.1)
+        star_flux = Stars.flux_density(sc_q, sm.cam, mask=mask)
 
         # do the sensing
-        img = sm.cam.sense(flux_density1 + flux_density2, exposure=exposure, gain=gain)
+        img = sm.cam.sense(object_flux + lens_effect + star_flux, exposure=exposure, gain=gain)
 
         # do same gamma correction as the available rosetta navcam images have
         img = np.clip(img*255, 0, 255)
@@ -719,7 +730,7 @@ def test_rosetta_navcam():
     if ast:
         gain = 1.7
         fa = True
-        if 0:
+        if 1:
             batch = 'mtp006'
             imgf = 'ROS_CAM1_20140822T020718'  # ok
             exp = 2.0
@@ -793,15 +804,16 @@ def test_rosetta_navcam():
 
 
 def test_apex_navcam():
-    if 0:
+    stars = 1
+    if 1:
         nac = False
-        exp = 0.02
-        gain = 1
+        exp = 3.5 if stars else 0.001
+        gain = 6.0 if stars else 1
         dist = 1.5
     elif 1:
         nac = True
-        exp = 0.03
-        gain = 1
+        exp = 3.5 if stars else 0.010
+        gain = 3.0 if stars else 1
         dist = 7
 
     #    sm = RosettaSystemModel(rosetta_batch='mtp007', focused_attenuated=True)
@@ -822,17 +834,20 @@ def test_apex_navcam():
     sm.random_state(uniform_distance=True, opzone_only=True)
     #lblloader.load_image_meta(os.path.join(DATA_DIR, 'rosetta-mtp007', 'ROS_CAM1_20140916T064502' + '.LBL'), sm)
     au = 1.496e+8  # in km
-    sm.asteroid.real_position = np.array([ 0.42024187, -0.78206733, -0.46018199]) * au * 2.7
+    sm.asteroid.real_position = 1.2 * au * np.array([-1, 0, 0])  #np.array([0.42024187, -0.78206733, -0.46018199])
     sm.swap_values_with_real_vals()
-    sm.spacecraft_pos = [0, 0, -dist]
-    sm.spacecraft_rot = [52.5, -64, 2]
-    img = TestLoop.render_navcam_image_static(sm, renderer, obj_idx, use_textures=use_textures,
-                                              exposure=exp, gain=gain, gamma=1.0, auto_gain=False)
+    sm.spacecraft_pos = [0, 0, dist]
+    sm.asteroid_q = quaternion.one
 
-    cv2.imwrite('D:/temp/test2.png', img)
-    sc = 768 / img.shape[0]
-    cv2.imshow('synthetic navcam image', cv2.resize(img, None, fx=sc, fy=sc))
-    cv2.waitKey()
+    for i in range(-10, 10):
+        sm.spacecraft_q = tools.ypr_to_q(math.radians(2*i), 0, 0) * tools.ypr_to_q(0, math.radians(180), 0)  # tools.ypr_to_q(math.radians(-89), 0, 0)  # [52.5, -64, 2]
+        img = TestLoop.render_navcam_image_static(sm, renderer, obj_idx, use_textures=use_textures,
+                                                  exposure=exp, gain=gain, gamma=1.0, auto_gain=False)
+
+        cv2.imwrite('D:/temp/test2.png', img)
+        sc = 768 / img.shape[0]
+        cv2.imshow('synthetic navcam image', cv2.resize(img, None, fx=sc, fy=sc, interpolation=cv2.INTER_AREA))
+        cv2.waitKey()
 
 
 if __name__ == '__main__':

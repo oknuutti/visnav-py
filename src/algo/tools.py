@@ -103,8 +103,8 @@ def angle_between_v(v1, v2):
     # Notice: only returns angles between 0 and 180 deg
     
     try:
-        v1 = np.reshape(v1, (1,-1))
-        v2 = np.reshape(v2, (-1,1))
+        v1 = np.reshape(v1, (1, -1))
+        v2 = np.reshape(v2, (-1, 1))
         
         n1 = v1/np.linalg.norm(v1)
         n2 = v2/np.linalg.norm(v2)
@@ -116,17 +116,31 @@ def angle_between_v(v1, v2):
     return math.acos(np.clip(cos_angle, -1, 1))
 
 
+def angle_between_v_mx(a, B):
+    cos_angles = (B/np.linalg.norm(B, axis=1).reshape((-1, 1))).dot(normalize_v(a).reshape((-1, 1)))
+    return np.arccos(np.clip(cos_angles, -1.0, 1.0))
+
+
 def angle_between_mx(A, B):
     return angle_between_rows(A, B)
 
 
-def angle_between_rows(A, B):
-    # from https://stackoverflow.com/questions/50772176/calculate-the-angle-between-the-rows-of-two-matrices-in-numpy/50772253
-    p1 = np.einsum('ij,ij->i', A, B)
-    p2 = np.einsum('ij,ij->i', A, A)
-    p3 = np.einsum('ij,ij->i', B, B)
-    p4 = p1 / np.sqrt(p2 * p3)
-    return np.arccos(np.clip(p4, -1.0, 1.0))
+def angle_between_rows(A, B, normalize=True):
+    assert A.shape[1] == 3 and B.shape[1] == 3, 'matrices need to be of shape (n, 3) and (m, 3)'
+    if A.shape[0] == B.shape[0]:
+        # from https://stackoverflow.com/questions/50772176/calculate-the-angle-between-the-rows-of-two-matrices-in-numpy/50772253
+        cos_angles = np.einsum('ij,ij->i', A, B)
+        if normalize:
+            p2 = np.einsum('ij,ij->i', A, A)
+            p3 = np.einsum('ij,ij->i', B, B)
+            cos_angles /= np.sqrt(p2 * p3)
+    else:
+        if normalize:
+            A = A / np.linalg.norm(A, axis=1).reshape((-1, 1))
+            B = B / np.linalg.norm(B, axis=1).reshape((-1, 1))
+        cos_angles = B.dot(A.T)
+
+    return np.arccos(np.clip(cos_angles, -1.0, 1.0))
 
 
 def rand_q(angle):
@@ -324,6 +338,15 @@ def spherical2cartesian(lat, lon, r):
     y = r * math.sin(theta) * math.sin(phi)
     z = r * math.cos(theta)
     return np.array([x, y, z])
+
+
+def spherical2cartesian_arr(A):
+    theta = math.pi/2 - A[:, 0]
+    phi = A[:, 1]
+    x = A[:, 2] * np.sin(theta) * np.cos(phi)
+    y = A[:, 2] * np.sin(theta) * np.sin(phi)
+    z = A[:, 2] * np.cos(theta)
+    return np.vstack([x, y, z]).T
 
 
 def discretize_v(v, tol=None, lat_range=(-math.pi/2, math.pi/2), points=None):
