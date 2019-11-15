@@ -73,7 +73,7 @@ if __name__ == '__main__':
         page = requests.get(base+'/picture.php?/'+str(pid)+'/category/'+str(cid), verify=False)
         soup = BeautifulSoup(page.content, 'html.parser')
         imgele = soup.find(id="theMainImage")
-        imgurl = base+imgele['src'][7:-7]+'.png'
+        imgurl = base+imgele['visnav'][7:-7]+'.png'
         imgname = imgele['alt'].replace('F._P.', '_P.')
         get_file(imgurl, os.path.join(save_dir, imgname))
 

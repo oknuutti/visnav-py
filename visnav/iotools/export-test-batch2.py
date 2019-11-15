@@ -17,7 +17,7 @@ from settings import *
 
 if __name__ == '__main__':
     if len(sys.argv) < 4:
-        print('USAGE: python %s <mission> <src-folder> <dst-folder>' % (sys.argv[0],))
+        print('USAGE: python %s <mission> <visnav-folder> <dst-folder>' % (sys.argv[0],))
         quit()
 
     mission = sys.argv[1]

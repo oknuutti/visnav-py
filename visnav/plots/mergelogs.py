@@ -204,7 +204,7 @@ if __name__ == '__main__':
             summary = TestLoop.calc_err_summary(0, len(data), np.sum(np.isnan(roterrs)), runtimes,
                                                 laterrs, disterrs, shifterrs, roterrs)
 
-            head = summary + ' '.join(('src\\batch1.py', mission, s, str(len(data)))) + '\n' + '\t'.join(columns) + '\n'
+            head = summary + ' '.join(('visnav\\batch1.py', mission, s, str(len(data)))) + '\n' + '\t'.join(columns) + '\n'
             with open(os.path.join(LOG_DIR, fname), 'w') as fh:
                 fh.write(head)
                 fh.write("".join(rdata))

@@ -25,7 +25,7 @@ SHAPE_MODEL_NOISE_LV = {
 }
 
 ## profile algorithm by setting PROFILE to True
-##  - profile testing setup by "D:\Program Files\Anaconda3\python" -m cProfile -o profile.out src\batch1.py keypoint 10
+##  - profile testing setup by "D:\Program Files\Anaconda3\python" -m cProfile -o profile.out visnav\batch1.py keypoint 10
 ## then snakeviz profile.out
 PROFILE = False
 PROFILE_OUT_FILE = os.path.join(BASE_DIR, 'profile.out')

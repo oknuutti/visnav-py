@@ -7,7 +7,7 @@ import _thread
 import numpy as np
 import cv2
 
-from OpenGL.GL.images import glReadPixels
+#from OpenGL.GL.images import glReadPixels
 from PyQt5.QtGui import QColor, QSurfaceFormat, QOpenGLVersionProfile
 from PyQt5.QtCore import (pyqtSignal, QPoint, QSize, Qt, QBuffer, QIODevice,
         QCoreApplication)

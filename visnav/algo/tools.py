@@ -189,6 +189,7 @@ def q_to_angleaxis(q, compact=False):
 
 
 def angleaxis_to_q(rv):
+    """ first angle, then axis """
     if len(rv)==4:
         theta = rv[0]
         v = normalize_v(np.array(rv[1:]))
