@@ -83,18 +83,18 @@ class RenderEngine:
 
         self._cbo = self._ctx.renderbuffer((view_width, view_height), samples=antialias_samples, dtype='f4')
         self._dbo = self._ctx.depth_texture((view_width, view_height), samples=antialias_samples, alignment=1)
-        self._fbo = self._ctx.framebuffer(self._cbo, self._dbo)
+        self._fbo = self._ctx.framebuffer([self._cbo], self._dbo)
 
         if self._samples > 0:
             self._cbo2 = self._ctx.renderbuffer((view_width, view_height), dtype='f4')
             self._dbo2 = self._ctx.depth_texture((view_width, view_height), alignment=1)
-            self._fbo2 = self._ctx.framebuffer(self._cbo2, self._dbo2)
+            self._fbo2 = self._ctx.framebuffer([self._cbo2], self._dbo2)
 
         # for shadows
         n = int(math.sqrt(self._samples or 1))
         self._scbo = self._ctx.renderbuffer((view_width*n, view_height*n))
         self._sdbo = self._ctx.depth_texture((view_width*n, view_height*n), alignment=1)
-        self._sfbo = self._ctx.framebuffer(self._scbo, self._sdbo)
+        self._sfbo = self._ctx.framebuffer([self._scbo], self._sdbo)
 
         self._objs = []
         self._s_objs = []
@@ -360,7 +360,11 @@ class RenderEngine:
                 # for perspective projection
                 a = -(self._frustum_far - self._frustum_near) / (2.0 * self._frustum_far * self._frustum_near)
                 b = (self._frustum_far + self._frustum_near) / (2.0 * self._frustum_far * self._frustum_near)
-                depth = np.divide(1.0, (2.0 * a) * depth - (a - b))  # 1/((2*X-1)*a+b)
+                if self._frustum_far/self._frustum_near < 1e7:
+                    depth = np.divide(1.0, (2.0 * a) * depth - (a - b))  # 1/((2*X-1)*a+b)
+                else:
+                    # up to difference of 1e14
+                    depth = np.divide(1.0, (2.0 * a) * depth.astype(np.float64) - (a - b)).astype(np.float32)
             else:
                 # for orthographic projection
                 #  - depth is between 0 and 1

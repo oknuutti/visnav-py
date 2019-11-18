@@ -5,8 +5,6 @@ from scipy import optimize
 import numpy as np
 import cv2
 
-from PyQt5.QtCore import QCoreApplication
-
 from visnav.algo.base import AlgorithmBase
 from visnav.settings import *
 from visnav.algo import tools
@@ -51,7 +49,6 @@ class PhaseCorrelationAlgo(AlgorithmBase):
         
         # enable events again
         #self.system_model.param_change_events(True)
-        #QCoreApplication.processEvents()
         return err
 
     def errfun(self, render_result=None):
@@ -77,8 +74,6 @@ class PhaseCorrelationAlgo(AlgorithmBase):
             #imgfile = self.debug_filebase+('i%.0f'%(self.iter_count))+'.png'
             #cv2.imwrite(imgfile, render_result)
             self._count+=1
-            if self._count%5 == 0:
-                QCoreApplication.processEvents()
 
         self._render_result = render_result
 #        cv2.imshow('render_result', render_result)
@@ -279,8 +274,7 @@ class PhaseCorrelationAlgo(AlgorithmBase):
             self.optfun(*x) # set sc params to result values
             ## <<
             ## PHASE I
-            
-            QCoreApplication.processEvents()
+
             img = self.render()
             cv2.imwrite(self.debug_filebase+'.png', img)
 

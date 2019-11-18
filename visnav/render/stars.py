@@ -90,6 +90,10 @@ class Stars:
         stars = np.array(results.fetchall())
         conn.close()
 
+        flux_density = np.zeros((cam.height, cam.width), dtype=np.float32)
+        if len(stars) == 0:
+            return flux_density
+
         stars[:, 0:3] = tools.q_times_mx(SystemModel.sc2gl_q.conj() * cam_q.conj(), stars[:, 0:3])
         stars_ixy = np.round(cam.calc_img_R(stars[:, 0:3])).astype(np.int)
         I = np.logical_and.reduce((np.all(stars_ixy >= 0, axis=1),
@@ -98,7 +102,6 @@ class Stars:
         stars_ixy = stars_ixy[I, :]
 
         flux_density_per_star = Stars.magnitude_to_flux_density(stars[I, 3])
-        flux_density = np.zeros((cam.height, cam.width), dtype=np.float32)
         for i, f in enumerate(flux_density_per_star):
             flux_density[stars_ixy[i, 1], stars_ixy[i, 0]] += f
 

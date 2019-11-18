@@ -812,7 +812,7 @@ def test_rosetta_navcam():
 
 
 def test_apex_navcam():
-    stars = 1
+    stars = 0
     if 1:
         nac = False
         exp = 3.5 if stars else 0.001
@@ -835,7 +835,8 @@ def test_apex_navcam():
         mf = sm.asteroid.target_model_file
 
     renderer = RenderEngine(sm.cam.width, sm.cam.height, antialias_samples=s)
-    renderer.set_frustum(sm.cam.x_fov, sm.cam.y_fov, sm.min_altitude * .1, sm.max_distance)
+#    renderer.set_frustum(sm.cam.x_fov, sm.cam.y_fov, sm.min_altitude * .1, sm.max_distance)
+    renderer.set_frustum(sm.cam.x_fov, sm.cam.y_fov, 1e-2, 1e6)
     obj_idx = renderer.load_object(mf, smooth=sm.asteroid.render_smooth_faces)
     use_textures = sm.asteroid.hires_target_model_file_textures
 
@@ -844,7 +845,7 @@ def test_apex_navcam():
     au = 1.496e+8  # in km
     sm.asteroid.real_position = 1.2 * au * np.array([-1, 0, 0])  #np.array([0.42024187, -0.78206733, -0.46018199])
     sm.swap_values_with_real_vals()
-    sm.spacecraft_pos = [0, 0, dist]
+    sm.spacecraft_pos = [0, 0, -dist]
     sm.asteroid_q = quaternion.one
 
     for i in range(-10, 10):
