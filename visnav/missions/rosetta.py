@@ -7,10 +7,10 @@ from astropy.time import Time
 from astropy import constants as const
 from astropy import units
 
-from iotools import objloader
-from settings import *
-from algo import tools
-from algo.model import SystemModel, Asteroid, Camera
+from visnav.iotools import objloader
+from visnav.settings import *
+from visnav.algo import tools
+from visnav.algo.model import SystemModel, Asteroid, Camera
 
 
 class RosettaSystemModel(SystemModel):

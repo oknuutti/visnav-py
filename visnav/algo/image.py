@@ -6,7 +6,7 @@ from scipy import optimize, stats
 import numpy as np
 import cv2
 
-from settings import *
+from visnav.settings import *
 
 class ImageProc():
     latest_opt = None

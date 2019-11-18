@@ -14,10 +14,10 @@ from astropy.coordinates import SkyCoord, spherical_to_cartesian
 import scipy.integrate as integrate
 import configparser
 
-from algo.image import ImageProc
-from iotools import objloader
-from settings import *
-from algo import tools
+from visnav.algo.image import ImageProc
+from visnav.iotools import objloader
+from visnav.settings import *
+from visnav.algo import tools
 
 
 class Parameter():

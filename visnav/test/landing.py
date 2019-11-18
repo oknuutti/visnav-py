@@ -7,12 +7,12 @@ import cv2
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401 unused import
 
-from algo import tools
-from algo.model import Camera, SystemModel
-from algo.odometry import VisualOdometry, Pose
-from missions.didymos import DidymosSystemModel
-from render.render import RenderEngine
-from settings import *
+from visnav.algo import tools
+from visnav.algo.model import Camera, SystemModel
+from visnav.algo.odometry import VisualOdometry, Pose
+from visnav.missions.didymos import DidymosSystemModel
+from visnav.render.render import RenderEngine
+from visnav.settings import *
 
 
 if __name__ == '__main__':

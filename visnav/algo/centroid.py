@@ -3,15 +3,15 @@ import math
 import numpy as np
 import cv2
 
-from algo.base import AlgorithmBase
-from algo.model import SystemModel
-from iotools import lblloader
-from missions.rosetta import RosettaSystemModel
-from render.render import RenderEngine
-from settings import *
-from algo import tools
-from algo.image import ImageProc
-from algo.tools import PositioningException
+from visnav.algo.base import AlgorithmBase
+from visnav.algo.model import SystemModel
+from visnav.iotools import lblloader
+from visnav.missions.rosetta import RosettaSystemModel
+from visnav.render.render import RenderEngine
+from visnav.settings import *
+from visnav.algo import tools
+from visnav.algo.image import ImageProc
+from visnav.algo.tools import PositioningException
 
 
 class CentroidAlgo(AlgorithmBase):

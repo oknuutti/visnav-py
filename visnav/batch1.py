@@ -4,10 +4,10 @@ sys.tracebacklimit = 10
 
 from scipy import optimize
 
-from settings import *
-from missions.didymos import DidymosSystemModel
-from missions.rosetta import RosettaSystemModel
-from testloop import TestLoop
+from visnav.settings import *
+from visnav.missions.didymos import DidymosSystemModel
+from visnav.missions.rosetta import RosettaSystemModel
+from visnav.testloop import TestLoop
 
 
 def get_system_model(mission, hi_res_shape_model=False):

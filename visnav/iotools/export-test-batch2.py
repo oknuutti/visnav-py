@@ -6,13 +6,13 @@ import cv2
 import numpy as np
 import quaternion
 
-from algo import tools
-from algo.base import AlgorithmBase
-from algo.image import ImageProc
-from algo.model import SystemModel
-from batch1 import get_system_model
-from render.render import RenderEngine
-from settings import *
+from visnav.algo import tools
+from visnav.algo.base import AlgorithmBase
+from visnav.algo.image import ImageProc
+from visnav.algo.model import SystemModel
+from visnav.batch1 import get_system_model
+from visnav.render.render import RenderEngine
+from visnav.settings import *
 
 
 if __name__ == '__main__':

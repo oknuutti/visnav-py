@@ -6,11 +6,11 @@ from zipfile import ZipFile, ZIP_BZIP2, ZIP_DEFLATED, ZIP_LZMA
 import cv2
 import numpy as np
 
-from algo.base import AlgorithmBase
-from batch1 import get_system_model
-from iotools import objloader
-from render.render import RenderEngine
-from settings import *
+from visnav.algo.base import AlgorithmBase
+from visnav.batch1 import get_system_model
+from visnav.iotools import objloader
+from visnav.render.render import RenderEngine
+from visnav.settings import *
 
 
 if __name__ == '__main__':

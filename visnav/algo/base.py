@@ -5,12 +5,12 @@ import math
 import numpy as np
 import cv2
 
-from algo.image import ImageProc
-from algo import tools
-from iotools import lblloader, objloader
-from missions.rosetta import RosettaSystemModel
-from settings import *
-from render.render import RenderEngine
+from visnav.algo.image import ImageProc
+from visnav.algo import tools
+from visnav.iotools import lblloader, objloader
+from visnav.missions.rosetta import RosettaSystemModel
+from visnav.settings import *
+from visnav.render.render import RenderEngine
 
 
 class AlgorithmBase:

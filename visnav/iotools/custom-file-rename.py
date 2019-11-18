@@ -2,7 +2,7 @@
 import os
 import re
 
-from settings import *
+from visnav.settings import *
 
 if False:
     for fn in os.listdir(CACHE_DIR):

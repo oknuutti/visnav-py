@@ -11,13 +11,13 @@ from matplotlib.ticker import MultipleLocator
 from scipy.stats import norm
 from scipy.interpolate import interp1d
 
-from algo import tools
-from iotools.readlog import read_data, FAIL_ERRS
-from batch1 import get_system_model
-from missions.didymos import DidymosSystemModel
-from missions.rosetta import RosettaSystemModel
+from visnav.algo import tools
+from visnav.iotools.readlog import read_data, FAIL_ERRS
+from visnav.batch1 import get_system_model
+from visnav.missions.didymos import DidymosSystemModel
+from visnav.missions.rosetta import RosettaSystemModel
 
-from settings import *
+from visnav.settings import *
 
 
 # distance, phase angle (180-elong), ini err, visibility

@@ -14,24 +14,24 @@ from PyQt5.QtCore import (pyqtSignal, QPoint, QSize, Qt, QBuffer, QIODevice,
 from PyQt5.QtWidgets import (QApplication, QHBoxLayout, QVBoxLayout,
         QOpenGLWidget, QSlider, QPushButton, QWidget)
 
-from algo.base import AlgorithmBase
-from missions.rosetta import RosettaSystemModel
-from render.render import RenderEngine
-import settings
-settings.BATCH_MODE = False
+from visnav.algo.base import AlgorithmBase
+from visnav.missions.rosetta import RosettaSystemModel
+from visnav.render.render import RenderEngine
+import visnav.settings
+visnav.settings.BATCH_MODE = False
 
-from settings import *
-from algo import tools
-from algo.model import SystemModel
-from algo.image import ImageProc
-from algo.phasecorr import PhaseCorrelationAlgo
-from algo.centroid import CentroidAlgo
-from algo.keypoint import KeypointAlgo
-from algo.mixed import MixedAlgo
-from algo.tools import PositioningException
+from visnav.settings import *
+from visnav.algo import tools
+from visnav.algo.model import SystemModel
+from visnav.algo.image import ImageProc
+from visnav.algo.phasecorr import PhaseCorrelationAlgo
+from visnav.algo.centroid import CentroidAlgo
+from visnav.algo.keypoint import KeypointAlgo
+from visnav.algo.mixed import MixedAlgo
+from visnav.algo.tools import PositioningException
 
-from iotools import objloader
-from iotools import lblloader
+from visnav.iotools import objloader
+from visnav.iotools import lblloader
 
 
 class MainThread(threading.Thread):

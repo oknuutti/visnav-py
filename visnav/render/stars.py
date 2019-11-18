@@ -6,12 +6,12 @@ import sqlite3
 import numpy as np
 import quaternion
 
-from algo import tools
-from algo.image import ImageProc
-from algo.model import Camera, SystemModel
-from missions.didymos import DidymosSystemModel
-from missions.rosetta import RosettaSystemModel
-from settings import *
+from visnav.algo import tools
+from visnav.algo.image import ImageProc
+from visnav.algo.model import Camera, SystemModel
+from visnav.missions.didymos import DidymosSystemModel
+from visnav.missions.rosetta import RosettaSystemModel
+from visnav.settings import *
 
 
 class Stars:

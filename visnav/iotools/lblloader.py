@@ -12,8 +12,8 @@ from astropy.coordinates import SkyCoord
 from astropy.time import Time
 from astropy import units
 
-from settings import *
-from algo import tools
+from visnav.settings import *
+from visnav.algo import tools
 
 # Doc for SkyCoord:
 #  http://docs.astropy.org/en/stable/coordinates/skycoord.html

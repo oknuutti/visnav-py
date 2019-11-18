@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 from cv2 import cv2
 from scipy import optimize
 
-from algo import tools
+from visnav.algo import tools
 
 
 FONT_SIZE = 8

@@ -16,11 +16,11 @@ import numpy as np
 import quaternion
 import cv2
 
-from algo import tools
-from algo.bundleadj import bundle_adj
-from algo.image import ImageProc
-from algo.model import SystemModel, Asteroid
-from iotools.objloader import ShapeModel
+from visnav.algo import tools
+from visnav.algo.bundleadj import bundle_adj
+from visnav.algo.image import ImageProc
+from visnav.algo.model import SystemModel, Asteroid
+from visnav.iotools.objloader import ShapeModel
 
 
 class Pose:
@@ -915,9 +915,9 @@ if __name__ == '__main__':
     import matplotlib.pyplot as plt
     from mpl_toolkits.mplot3d import Axes3D  # noqa: F401 unused import
 
-    from missions.didymos import DidymosSystemModel
-    from render.render import RenderEngine
-    from settings import *
+    from visnav.missions.didymos import DidymosSystemModel
+    from visnav.render.render import RenderEngine
+    from visnav.settings import *
 
     sm = DidymosSystemModel(use_narrow_cam=False, target_primary=False, hi_res_shape_model=False)
     re = RenderEngine(sm.cam.width, sm.cam.height, antialias_samples=0)

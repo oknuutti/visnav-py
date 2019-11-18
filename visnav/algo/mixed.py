@@ -4,12 +4,12 @@ import numpy as np
 import quaternion
 import cv2
 
-from algo.base import AlgorithmBase
-from settings import *
-from algo import tools
-#from algo.centroid import CentroidAlgo
-#from algo.keypoint import KeypointAlgo
-from algo.tools import PositioningException
+from visnav.algo.base import AlgorithmBase
+from visnav.settings import *
+from visnav.algo import tools
+#from visnav.algo.centroid import CentroidAlgo
+#from visnav.algo.keypoint import KeypointAlgo
+from visnav.algo.tools import PositioningException
 
 
 class MixedAlgo(AlgorithmBase):

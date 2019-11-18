@@ -3,12 +3,12 @@ import numpy as np
 import torch
 from torchvision import transforms
 
-from algo import tools
-from algo.base import AlgorithmBase
-from algo.image import ImageProc
-from algo.tools import Stopwatch, PositioningException
+from visnav.algo import tools
+from visnav.algo.base import AlgorithmBase
+from visnav.algo.image import ImageProc
+from visnav.algo.tools import Stopwatch, PositioningException
 from poseilluminet import PoseIllumiNet, PoseIllumiDataset
-from settings import *
+from visnav.settings import *
 
 
 class AbsoluteNavigationNN(AlgorithmBase):

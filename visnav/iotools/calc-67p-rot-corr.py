@@ -9,10 +9,10 @@ from astropy.time import Time
 from matplotlib import pyplot as plt
 from scipy.optimize import minimize
 
-from algo import tools
-from missions.rosetta import RosettaSystemModel
+from visnav.algo import tools
+from visnav.missions.rosetta import RosettaSystemModel
 
-from settings import *
+from visnav.settings import *
 
 def manual_approach():
     ## earlier, manual approach:

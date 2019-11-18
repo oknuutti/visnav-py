@@ -5,16 +5,16 @@ from pympler import tracker
 import numpy as np
 import cv2
 
-from algo import tools
-from algo.base import AlgorithmBase
-from algo.keypoint import KeypointAlgo
-from algo.tools import PositioningException, Stopwatch
-from iotools import lblloader
-from missions.didymos import DidymosSystemModel
-from missions.rosetta import RosettaSystemModel
+from visnav.algo import tools
+from visnav.algo.base import AlgorithmBase
+from visnav.algo.keypoint import KeypointAlgo
+from visnav.algo.tools import PositioningException, Stopwatch
+from visnav.iotools import lblloader
+from visnav.missions.didymos import DidymosSystemModel
+from visnav.missions.rosetta import RosettaSystemModel
 
-from settings import *
-from render.render import RenderEngine
+from visnav.settings import *
+from visnav.render.render import RenderEngine
 
 
 class InvalidSceneException(Exception):

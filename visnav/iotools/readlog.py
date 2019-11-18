@@ -3,7 +3,7 @@ import math
 
 import numpy as np
 
-from algo import tools
+from visnav.algo import tools
 
 
 MAX_ROTATION_ERR = 7

@@ -8,9 +8,9 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 from numpy.linalg import inv
 
-from batch1 import get_system_model
-from missions.didymos import DidymosSystemModel
-from missions.rosetta import RosettaSystemModel
+from visnav.batch1 import get_system_model
+from visnav.missions.didymos import DidymosSystemModel
+from visnav.missions.rosetta import RosettaSystemModel
 
 try:
     from sklearn.gaussian_process import GaussianProcessRegressor
@@ -20,9 +20,9 @@ except:
     print('Requires scikit-learn, install using "conda install scikit-learn"')
     sys.exit()
 
-from algo import tools
-from iotools.readlog import read_data
-from settings import *
+from visnav.algo import tools
+from visnav.iotools.readlog import read_data
+from visnav.settings import *
 
 
 # phase angle (180-elong), ini err, distance, visibility

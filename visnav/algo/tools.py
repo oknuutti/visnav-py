@@ -9,7 +9,7 @@ import sys
 from astropy.coordinates import SkyCoord
 from numba.cgutils import printf
 
-from settings import *
+from visnav.settings import *
 
 
 class PositioningException(Exception):
@@ -637,7 +637,7 @@ def augment_model(model, multiplier=3, length_scales=(0, 0.1, 1), sds=(1e-5, 1.6
     data['faces'] = aug_faces
     data['vertices'] = aug_points
     data['texcoords'] = aug_texcoords
-    from iotools import objloader
+    from visnav.iotools import objloader
     aug_model = objloader.ShapeModel(data=data)
     aug_model.recalc_norms()
 
@@ -652,7 +652,7 @@ def apply_noise(model, support=None, L=None, len_sc=SHAPE_MODEL_NOISE_LEN_SC,
 
     data = model.as_dict()
     data['vertices'] = noisy_points
-    from iotools import objloader
+    from visnav.iotools import objloader
     noisy_model = objloader.ShapeModel(data=data)
     noisy_model.recalc_norms()
     

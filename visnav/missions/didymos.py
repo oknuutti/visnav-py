@@ -8,11 +8,11 @@ from astropy.time import Time
 from astropy import constants as const
 from astropy import units
 
-from algo import tools
-from algo.model import SystemModel, Camera, Asteroid
-from iotools import objloader
+from visnav.algo import tools
+from visnav.algo.model import SystemModel, Camera, Asteroid
+from visnav.iotools import objloader
 
-from settings import *
+from visnav.settings import *
 
 
 class DidymosSystemModel(SystemModel):

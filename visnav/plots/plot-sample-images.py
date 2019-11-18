@@ -4,12 +4,12 @@ import pickle
 import numpy as np
 import cv2
 
-from algo.base import AlgorithmBase
-from iotools import lblloader, objloader
-from missions.rosetta import RosettaSystemModel
-from render.render import RenderEngine
+from visnav.algo.base import AlgorithmBase
+from visnav.iotools import lblloader, objloader
+from visnav.missions.rosetta import RosettaSystemModel
+from visnav.render.render import RenderEngine
 
-from settings import *
+from visnav.settings import *
 
 if __name__ == '__main__':
     size = (1024, 1024)  # (256, 256)

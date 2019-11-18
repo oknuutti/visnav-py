@@ -10,24 +10,24 @@ import numpy as np
 import quaternion
 import cv2
 
-from algo.centroid import CentroidAlgo
-from algo.image import ImageProc
-from algo.keypoint import KeypointAlgo
-from algo.mixed import MixedAlgo
-from algo.model import SystemModel
-from algo.phasecorr import PhaseCorrelationAlgo
-from missions.didymos import DidymosSystemModel
-from missions.rosetta import RosettaSystemModel
-from render.render import RenderEngine
-from iotools import objloader, lblloader
-import algo.tools as tools
-from algo.tools import (ypr_to_q, q_to_ypr, q_times_v, q_to_unitbase, normalize_v,
+from visnav.algo.centroid import CentroidAlgo
+from visnav.algo.image import ImageProc
+from visnav.algo.keypoint import KeypointAlgo
+from visnav.algo.mixed import MixedAlgo
+from visnav.algo.model import SystemModel
+from visnav.algo.phasecorr import PhaseCorrelationAlgo
+from visnav.missions.didymos import DidymosSystemModel
+from visnav.missions.rosetta import RosettaSystemModel
+from visnav.render.render import RenderEngine
+from visnav.iotools import objloader, lblloader
+import visnav.algo.tools as tools
+from visnav.algo.tools import (ypr_to_q, q_to_ypr, q_times_v, q_to_unitbase, normalize_v,
                    wrap_rads, solar_elongation, angle_between_ypr)
-from algo.tools import PositioningException
-from render.stars import Stars
-from render.sun import Sun
+from visnav.algo.tools import PositioningException
+from visnav.render.stars import Stars
+from visnav.render.sun import Sun
 
-from settings import *
+from visnav.settings import *
 
 #from memory_profiler import profile
 #import tracemalloc
@@ -344,7 +344,8 @@ class TestLoop:
     @staticmethod
     def render_navcam_image_static(sm, renderer, obj_idxs, rel_pos_v=None, rel_rot_q=None, light_v=None, sc_q=None,
                                    sun_distance=None, exposure=None, gain=None, gamma=1.8, auto_gain=True,
-                                   use_shadows=True, use_textures=False, cache_noise=False):
+                                   use_shadows=True, use_textures=False, reflmod_params=None, cam=None, fluxes_only=False,
+                                   stars=True, lens_effects=True, star_db=None):
 
         if rel_pos_v is None:
             rel_pos_v = sm.spacecraft_pos
@@ -354,10 +355,12 @@ class TestLoop:
             light_v, _ = sm.gl_light_rel_dir()
         if sc_q is None:
             sc_q = sm.spacecraft_q  # for correct stars
+        if star_db:
+            Stars.STARDB = star_db
         sun_sc_distance = sun_distance or (np.linalg.norm(sm.asteroid.position(sm.time.value)) * 1e3)  # in meters
 
         model = RenderEngine.REFLMOD_HAPKE
-        RenderEngine.REFLMOD_PARAMS[model] = sm.asteroid.reflmod_params[model]
+        RenderEngine.REFLMOD_PARAMS[model] = sm.asteroid.reflmod_params[model] if reflmod_params is None else reflmod_params
 
         if not auto_gain:
             dist_au = sun_sc_distance / 1.496e+11  # in au
@@ -375,25 +378,30 @@ class TestLoop:
             print('NaN(s) encountered in rendered image!')
             object_flux[np.isnan(object_flux)] = 0
 
-        exposure = exposure or sm.cam.def_exposure
-        gain = gain or sm.cam.def_gain
-        mask = depth >= sm.max_distance - 0.1
+        cam = cam or sm.cam
+        exposure = exposure or cam.def_exposure
+        gain = gain or cam.def_gain
+        mask = depth >= renderer.frustum_far - 0.1
 
         if not auto_gain:
             sun_lf = - tools.q_times_v(SystemModel.sc2gl_q, sun_sc_distance * light_v)
-            lens_effect = Sun.flux_density(sm.cam, sun_lf, mask)  # TODO: investigate if need *sm.cam.px_sr or something else!!
+            # TODO: investigate if need *cam.px_sr or something else!!
+            lens_effect = Sun.flux_density(cam, sun_lf, mask) if lens_effects else 0
 
             # radiance given in W/(m2*sr) => needed in W/m2
-            object_flux *= sm.cam.px_sr
+            object_flux *= cam.px_sr
         else:
-            object_flux = object_flux.astype('f4')/255/sm.cam.sensitivity/exposure/gain
+            object_flux = object_flux.astype('f4')/255/cam.sensitivity/exposure/gain
             lens_effect = 0
 
         # add flux density of stars from Tycho-2 catalog
-        star_flux = Stars.flux_density(sc_q, sm.cam, mask=mask)
+        star_flux = Stars.flux_density(sc_q, cam, mask=mask) if stars else 0
+
+        if fluxes_only:
+            return object_flux + lens_effect + star_flux
 
         # do the sensing
-        img = sm.cam.sense(object_flux + lens_effect + star_flux, exposure=exposure, gain=gain)
+        img = cam.sense(object_flux + lens_effect + star_flux, exposure=exposure, gain=gain)
 
         # do same gamma correction as the available rosetta navcam images have
         img = np.clip(img*255, 0, 255)
@@ -693,7 +701,7 @@ class TestLoop:
                 print(str(e))
         elif method == 'absnet':
             if self.absnet is None:
-                from algo.absnet import AbsoluteNavigationNN
+                from visnav.algo.absnet import AbsoluteNavigationNN
                 self.absnet = AbsoluteNavigationNN(self.system_model, self.render_engine, self.obj_idx, verbose=True)
             try:
                 self.absnet.process(imgfile, outfile, **kwargs)

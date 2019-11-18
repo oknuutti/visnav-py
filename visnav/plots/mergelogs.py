@@ -6,10 +6,10 @@ import re
 import numpy as np
 
 import settings
-from algo import tools
-from batch1 import get_system_model
+from visnav.algo import tools
+from visnav.batch1 import get_system_model
 from settings import LOG_DIR
-from testloop import TestLoop
+from visnav.testloop import TestLoop
 
 
 # distance, phase angle (180-elong), ini err, visibility

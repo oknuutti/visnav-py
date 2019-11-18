@@ -7,9 +7,9 @@ import numpy as np
 import scipy
 import scipy.integrate as integrate
 
-from algo import tools
-from algo.image import ImageProc
-from missions.didymos import DidymosSystemModel
+from visnav.algo import tools
+from visnav.algo.image import ImageProc
+from visnav.missions.didymos import DidymosSystemModel
 
 
 class Sun:

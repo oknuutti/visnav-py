@@ -5,9 +5,9 @@ import sys
 import numpy as np
 import numba as nb
 
-from algo import tools
-from iotools import objloader
-from settings import *
+from visnav.algo import tools
+from visnav.iotools import objloader
+from visnav.settings import *
 
 # data/CSHP_DV_130_01_XLRES_00200.obj data/CSHP_DV_130_01_XXLRES_00200.obj data/67P_test.nsm
 # data/bennu-hi-res.obj data/bennu-lo-res.obj data/bennu_baseline.nsm

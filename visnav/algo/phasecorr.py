@@ -7,11 +7,11 @@ import cv2
 
 from PyQt5.QtCore import QCoreApplication
 
-from algo.base import AlgorithmBase
-from settings import *
-from algo import tools
-from algo.tools import PositioningException
-from algo.centroid import CentroidAlgo
+from visnav.algo.base import AlgorithmBase
+from visnav.settings import *
+from visnav.algo import tools
+from visnav.algo.tools import PositioningException
+from visnav.algo.centroid import CentroidAlgo
 
 
 class PhaseCorrelationAlgo(AlgorithmBase):

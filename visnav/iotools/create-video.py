@@ -5,9 +5,9 @@ import datetime
 import numpy as np
 import cv2
 
-from algo import tools
-from algo.image import ImageProc
-from settings import *
+from visnav.algo import tools
+from visnav.algo.image import ImageProc
+from visnav.settings import *
 
 if __name__ == '__main__':
     try:

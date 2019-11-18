@@ -5,10 +5,10 @@ import re
 
 import numpy as np
 
-from algo import tools
-from plots.mergelogs import read_logfile
+from visnav.algo import tools
+from visnav.plots.mergelogs import read_logfile
 from settings import LOG_DIR
-from testloop import TestLoop
+from visnav.testloop import TestLoop
 
 
 def main():

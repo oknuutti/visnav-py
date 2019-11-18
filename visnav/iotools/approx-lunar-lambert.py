@@ -8,16 +8,16 @@ from scipy.interpolate import interp1d, interp2d
 from scipy.optimize import minimize
 import matplotlib.pyplot as plt
 
-from algo import tools
-from algo.base import AlgorithmBase
-from algo.image import ImageProc
-from iotools import lblloader
-from iotools.objloader import ShapeModel
-from missions.didymos import DidymosPrimary
-from missions.rosetta import RosettaSystemModel
-from render.render import RenderEngine
+from visnav.algo import tools
+from visnav.algo.base import AlgorithmBase
+from visnav.algo.image import ImageProc
+from visnav.iotools import lblloader
+from visnav.iotools.objloader import ShapeModel
+from visnav.missions.didymos import DidymosPrimary
+from visnav.missions.rosetta import RosettaSystemModel
+from visnav.render.render import RenderEngine
 
-from settings import *
+from visnav.settings import *
 
 def Lfun(x, p):
     L = x[0]

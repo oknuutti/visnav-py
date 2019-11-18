@@ -2,11 +2,11 @@ import sys
 
 import cv2
 
-from algo.keypoint import KeypointAlgo
-from missions.rosetta import RosettaSystemModel
-from render.render import RenderEngine
+from visnav.algo.keypoint import KeypointAlgo
+from visnav.missions.rosetta import RosettaSystemModel
+from visnav.render.render import RenderEngine
 
-from settings import *
+from visnav.settings import *
 
 if __name__ == '__main__':
     if len(sys.argv) <= 2:

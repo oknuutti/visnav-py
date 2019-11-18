@@ -6,14 +6,14 @@ import numpy as np
 import quaternion
 import cv2
 
-from algo.base import AlgorithmBase
-from algo.image import ImageProc
-from iotools import lblloader
-from missions.rosetta import RosettaSystemModel
-from render.render import RenderEngine
-from settings import *
-from algo import tools
-from algo.tools import PositioningException, Stopwatch
+from visnav.algo.base import AlgorithmBase
+from visnav.algo.image import ImageProc
+from visnav.iotools import lblloader
+from visnav.missions.rosetta import RosettaSystemModel
+from visnav.render.render import RenderEngine
+from visnav.settings import *
+from visnav.algo import tools
+from visnav.algo.tools import PositioningException, Stopwatch
 
 
 class KeypointAlgo(AlgorithmBase):
@@ -108,7 +108,7 @@ class KeypointAlgo(AlgorithmBase):
             sm.reset_to_real_vals()
 
         if use_feature_db and self._fdb_helper is None:
-            from algo.fdbgen import FeatureDatabaseGenerator
+            from visnav.algo.fdbgen import FeatureDatabaseGenerator
             self._fdb_helper = FeatureDatabaseGenerator(self.system_model, self.render_engine, self.obj_idx)
 
         # maybe load scene image

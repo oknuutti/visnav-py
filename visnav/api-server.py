@@ -18,30 +18,30 @@ import sys
 import pytz
 
 import settings
-from algo.centroid import CentroidAlgo
-from algo.image import ImageProc
-from algo.odometry import VisualOdometry, Pose
+from visnav.algo.centroid import CentroidAlgo
+from visnav.algo.image import ImageProc
+from visnav.algo.odometry import VisualOdometry, Pose
 
 settings.LOG_DIR = sys.argv[1]
 settings.CACHE_DIR = settings.LOG_DIR
-from settings import *
+from visnav.settings import *
 
-from algo import tools
-from algo.base import AlgorithmBase
-from algo.keypoint import KeypointAlgo
-from algo.model import SystemModel
-from algo.tools import PositioningException
-from batch1 import get_system_model
-from missions.didymos import DidymosPrimary, DidymosSystemModel, DidymosSecondary
-from render.render import RenderEngine
-from testloop import TestLoop
+from visnav.algo import tools
+from visnav.algo.base import AlgorithmBase
+from visnav.algo.keypoint import KeypointAlgo
+from visnav.algo.model import SystemModel
+from visnav.algo.tools import PositioningException
+from visnav.batch1 import get_system_model
+from visnav.missions.didymos import DidymosPrimary, DidymosSystemModel, DidymosSecondary
+from visnav.render.render import RenderEngine
+from visnav.testloop import TestLoop
 
 
 def main():
     port = int(sys.argv[2])
 
     if len(sys.argv) > 3:
-        server = ApiServer(sys.argv[3], port=port, hires=False, cache_noise=False, result_rendering=False)
+        server = ApiServer(sys.argv[3], port=port, hires=False, result_rendering=False)
     else:
         server = SpawnMaster(port=port, max_count=5000)
 
@@ -67,7 +67,7 @@ class ApiServer:
         FRAME_LOCAL,
     ) = range(2)
 
-    def __init__(self, mission, hires=False, addr='127.0.0.1', port=50007, cache_noise=False, result_rendering=True,
+    def __init__(self, mission, hires=False, addr='127.0.0.1', port=50007, result_rendering=True,
                  result_frame=FRAME_LOCAL):
         self._pid = os.getpid()
 
@@ -78,7 +78,6 @@ class ApiServer:
         self._sock.listen(1)
         self._sock.settimeout(5)
 
-        self._cache_noise = cache_noise
         self._result_rendering = result_rendering
         self._result_frame = result_frame
         self._hires = hires

@@ -5,12 +5,12 @@ import cv2
 import sys
 
 try:
-    from render.render import RenderEngine
+    from visnav.render.render import RenderEngine
 except:
-    from render import RenderEngine
-from algo import tools
-from missions.didymos import DidymosSystemModel
-from settings import *
+    from visnav.render import RenderEngine
+from visnav.algo import tools
+from visnav.missions.didymos import DidymosSystemModel
+from visnav.settings import *
 
 
 if __name__ == '__main__':

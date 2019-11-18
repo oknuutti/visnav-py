@@ -12,11 +12,11 @@ try:
 except:
     from ModernGL.ext.obj import Obj
 
-from algo import tools
-from algo.image import ImageProc
-from iotools.objloader import ShapeModel
-from missions.didymos import DidymosSystemModel, DidymosPrimary
-from missions.rosetta import RosettaSystemModel, ChuryumovGerasimenko
+from visnav.algo import tools
+from visnav.algo.image import ImageProc
+from visnav.iotools.objloader import ShapeModel
+from visnav.missions.didymos import DidymosSystemModel, DidymosPrimary
+from visnav.missions.rosetta import RosettaSystemModel, ChuryumovGerasimenko
 
 #from memory_profiler import profile
 
@@ -169,6 +169,14 @@ class RenderEngine:
         self._proj_mx[2, 2] = -(f+n)/(f-n)
         self._proj_mx[3, 2] = -1
         self._proj_mx[2, 3] = -2*f*n/(f-n)
+
+    @property
+    def frustum_near(self):
+        return self._frustum_near
+
+    @property
+    def frustum_far(self):
+        return self._frustum_far
 
     def set_orth_frustum(self, width, height, frustum_near, frustum_far):
         self._frustum_near = n = frustum_near
@@ -509,7 +517,7 @@ class RenderEngine:
 
 
 if __name__ == '__main__':
-    from settings import *
+    from visnav.settings import *
     import cv2
     sm = DidymosSystemModel(use_narrow_cam=False, target_primary=False, hi_res_shape_model=False)
 #    sm = RosettaSystemModel()
