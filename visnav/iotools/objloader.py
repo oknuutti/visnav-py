@@ -3,6 +3,7 @@ import os
 
 import cv2
 import numpy as np
+
 from visnav.algo import tools
 
 
@@ -48,7 +49,7 @@ class ShapeModel:
             self.from_file(fname)
         elif data is not None:
             self.from_dict(data)
-    
+
     def from_file(self, fname, swapyz=False):
         """Loads a Wavefront OBJ file. """
         self.vertices = []
@@ -75,7 +76,7 @@ class ShapeModel:
                 self.normals.append(v)
             elif values[0] == 'vt':
                 txc = list(map(float, values[1:3]))
-                assert len(txc) == 2, 'wrong length texture coordinates at idx=%d'%len(self.texcoords)
+                assert len(txc) == 2, 'wrong length texture coordinates'
                 self.texcoords.append(txc)
             elif values[0] in ('usemtl', 'usemat'):
                 pass
@@ -99,12 +100,12 @@ class ShapeModel:
 #                    else:
 #                        norm.append(0)
                     #self.faces.append((face, norms, texcoords, material))
-                if len(vertices)==3:
+                if len(vertices) == 3:
                     assert len(texcoords) == 0 or len(vertices) == len(texcoords), 'Some tex coords missing!'
                     self.faces.append((vertices, self._calc_norm(vertices), texcoords))
 #                    self.triangles.append(tuple(face))
                 else:
-                    raise Exception('Not a triangle!')
+                    assert False, 'Not a triangle!'
 
     def from_dict(self, data):
         self.faces = data['faces']

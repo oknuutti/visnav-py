@@ -357,6 +357,8 @@ class TestLoop:
             sc_q = sm.spacecraft_q  # for correct stars
         if star_db:
             Stars.STARDB = star_db
+
+        light_v = tools.normalize_v(light_v)
         sun_sc_distance = sun_distance or (np.linalg.norm(sm.asteroid.position(sm.time.value)) * 1e3)  # in meters
 
         model = RenderEngine.REFLMOD_HAPKE
@@ -648,7 +650,7 @@ class TestLoop:
               + 'Le m/km: (%s), '
               + 'De m/km: (%s), '
               + 'Se m/km: (%s), '
-              + 'Re m/km: (%s), '
+              + 'Re deg: (%s), '
               + 'fail: %.2f%% \n'
         ) % (
               dt.now().strftime("%Y-%m-%d %H:%M:%S"),

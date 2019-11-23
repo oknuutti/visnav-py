@@ -14,6 +14,9 @@ from visnav.missions.rosetta import RosettaSystemModel
 from visnav.settings import *
 
 
+# TODO: investigate the usage of UCAC4 catalog (113M stars up to mag 16) through astropy
+
+
 class Stars:
     STARDB = os.path.join(DATA_DIR, 'deep_space_objects.sqlite')
     MAG_CUTOFF = 10

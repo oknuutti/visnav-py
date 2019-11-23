@@ -92,11 +92,26 @@ def sc_asteroid_max_shift_error(A, B):
     
     # max length of diff vectors
     return np.max(normD)
-    
+
+
+@nb.njit(nb.f8[:](nb.f8[:], nb.f8[:]))
+def cross3d(left, right):
+    # for short vectors cross product is faster in pure python than with numpy.cross
+    x = ((left[1] * right[2]) - (left[2] * right[1]))
+    y = ((left[2] * right[0]) - (left[0] * right[2]))
+    z = ((left[0] * right[1]) - (left[1] * right[0]))
+    return np.array((x, y, z))
+
+
+@nb.njit(nb.types.f8[:](nb.types.f8[:]))
+def normalize_v(v):
+    norm = np.linalg.norm(v)
+    return v/norm if norm != 0 else v
+
 
 def surf_normal(x1, x2, x3):
-    a, b, c = tuple(map(np.array, (x1, x2, x3)))
-    return normalize_v(np.cross(b-a, c-a))
+    a, b, c = np.array(x1), np.array(x2), np.array(x3)
+    return normalize_v(cross3d(b-a, c-a))
 
 
 def angle_between_v(v1, v2):
@@ -254,10 +269,6 @@ def mx2qmx(mx):
     qmx[:,1:] = mx
     return quaternion.as_quat_array(qmx)
 
-def normalize_v(v):
-    norm = np.linalg.norm(v)
-    return v/norm if norm != 0 else v
-
 def wrap_rads(a):
     return (a+math.pi)%(2*math.pi)-math.pi
 
@@ -299,14 +310,6 @@ def solar_elongation(ast_v, sc_q):
         direc = -direc
 
     return elong, direc
-
-@nb.njit(nb.f8[:](nb.f8[:], nb.f8[:]))
-def cross3d(left, right):
-    # for short vectors cross product is faster in pure python than with numpy.cross
-    x = ((left[1] * right[2]) - (left[2] * right[1]))
-    y = ((left[2] * right[0]) - (left[0] * right[2]))
-    z = ((left[0] * right[1]) - (left[1] * right[0]))
-    return np.array((x, y, z))
 
 def find_nearest(array, value):
     idx = (np.abs(array-value)).argmin()

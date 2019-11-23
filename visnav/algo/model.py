@@ -540,9 +540,9 @@ class SystemModel(ABC):
 
         # adjust and set rotation
         if rotate_sc:
-            self.spacecraft_q = self.asteroid_q * sc_ast_lf_q.conj()     # TODO: check that valid
+            self.spacecraft_q = self.asteroid_q * dq * sc_ast_lf_q.conj()     # TODO: check that valid
         else:
-            self.asteroid_q = self.spacecraft_q * sc_ast_lf_q
+            self.asteroid_q = self.spacecraft_q * dq * sc_ast_lf_q
 
     def cropped_system_tf(self, x, y, w, h):
         # for rotation adjustment

@@ -51,7 +51,7 @@ if __name__ == '__main__':
 
             # detect target, get bounds
             x, y, w, h = ImageProc.single_object_bounds(img, threshold=AbsoluteNavigationNN.DEF_LUMINOSITY_THRESHOLD,
-                                                        crop_margin=AbsoluteNavigationNN.DEF_CROP_MARGIN,
+                                                        crop_marg=AbsoluteNavigationNN.DEF_CROP_MARGIN,
                                                         min_px=AbsoluteNavigationNN.DEF_MIN_PIXELS, debug=DEBUG)
             if x is None:
                 continue

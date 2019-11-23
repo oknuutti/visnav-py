@@ -148,6 +148,7 @@ if __name__ == '__main__':
         re = RenderEngine(sm.cam.width, sm.cam.height, antialias_samples=16)
         #obj_idx = re.load_object(sm.asteroid.target_model_file, smooth=False)
         obj_idx = re.load_object(sm.asteroid.hires_target_model_file, smooth=False)
+        quit()
         #obj_idx = re.load_object(os.path.join(DATA_DIR, 'original-shapemodels/CSHP_DV_130_01_HIRES_00200.obj'), smooth=False)
         #obj_idx = re.load_object(os.path.join(DATA_DIR, 'original-shapemodels/dissolved_5deg_1.obj'), smooth=False)
         #obj_idx = re.load_object(os.path.join(DATA_DIR, 'original-shapemodels/67P_C-G_shape_model_MALMER_2015_11_20-in-km.obj'), smooth=False)

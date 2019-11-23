@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 import torch
 from torchvision import transforms
+from PIL import Image
 
 from visnav.algo import tools
 from visnav.algo.base import AlgorithmBase
@@ -12,8 +13,7 @@ from visnav.settings import *
 
 
 class AbsoluteNavigationNN(AlgorithmBase):
-#    DEF_MODEL_NAME = 'model_best_67p-mobi.pth.tar'
-    DEF_MODEL_NAME = 'model_best_rose-mob-adv-v1.pth.tar'
+    DEF_MODEL_NAME = 'model_best_rose-mob-v2.pth.tar'
     DEF_LUMINOSITY_THRESHOLD = 65
     DEF_CROP_MARGIN = 10
     DEF_MIN_PIXELS = int(np.pi * 50 ** 2 * 0.3)
@@ -48,6 +48,7 @@ class AbsoluteNavigationNN(AlgorithmBase):
 
         # referred from densepose-project
         self.model = PoseIllumiNet(arch=data['arch'],
+                                   width_mult=data.get('width_mult', 1.0),
                                    num_features=data.get('features', 2048),
                                    dropout=data.get('dropout', 0.5))
 
@@ -81,6 +82,7 @@ class AbsoluteNavigationNN(AlgorithmBase):
 
         # detect target, get bounds
         x, y, w, h = ImageProc.single_object_bounds(orig_sce_img, threshold=threshold,
+                                                    crop_marg=self.DEF_CROP_MARGIN,
                                                     min_px=self.DEF_MIN_PIXELS, debug=DEBUG)
         if x is None:
             raise PositioningException('asteroid not detected in image')
@@ -96,6 +98,7 @@ class AbsoluteNavigationNN(AlgorithmBase):
 
         # massage input
         input = cv2.cvtColor(img_bw, cv2.COLOR_GRAY2BGR)
+        input = Image.fromarray(input)
         input = PoseIllumiDataset.eval_transform(input)[None, :, :, :].to(self.device, non_blocking=True)
 
         # run model
@@ -107,17 +110,24 @@ class AbsoluteNavigationNN(AlgorithmBase):
         output = output.detach().cpu().numpy()
 
         # check if estimated illumination direction is close or not
-        ill = output[0, 7:10]
+        ill_est = self.model.illumination(output)[0]
         r_ini, q_ini, ill_ini = self.system_model.get_cropped_system_scf(x, y, w, h)
-        if tools.angle_between_v(ill, ill_ini) > 10:    # max 10 degree discrepancy accepted
-            print('bad illumination direction estimated, initial=%s, estimated=%s' % (ill_ini, ill))
+        if tools.angle_between_v(ill_est, ill_ini) > 10:    # max 10 degree discrepancy accepted
+            print('bad illumination direction estimated, initial=%s, estimated=%s' % (ill_ini, ill_est))
 
         # apply result
-        sc_ast_lf_r = output[0, 0:3]
-        sc_ast_lf_q = np.quaternion(*output[0, 3:7])
-        self.system_model.set_cropped_system_scf(x, y, w, h, sc_ast_lf_r, sc_ast_lf_q, rotate_sc=rotate_sc)
+        r_est = self.model.position(output)[0]
+        q_est = np.quaternion(*self.model.rotation(output)[0])
+        self.system_model.set_cropped_system_scf(x, y, w, h, r_est, q_est, rotate_sc=rotate_sc)
         self.timer.stop()
-        
+
+        if False:
+            r_est2, q_est2, ill_est2 = self.system_model.get_cropped_system_scf(x, y, w, h)
+            self.system_model.swap_values_with_real_vals()
+            r_real, q_real, ill_real = self.system_model.get_cropped_system_scf(x, y, w, h)
+            self.system_model.swap_values_with_real_vals()
+            print('compare q_est vs q_est2, q_real vs q_est, q_real vs q_est2')
+
         # save result image
         if BATCH_MODE and self.debug_filebase:
             # save result in log archive
