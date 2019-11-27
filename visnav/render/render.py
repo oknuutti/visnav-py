@@ -375,7 +375,7 @@ class RenderEngine:
             self._shadow_map.release()
 
         if flux_density:
-            data = data.astype('f4') * flux_density
+            data = data * flux_density
         else:
             data = np.clip(data*255, 0, 255).astype('uint8')
             if gamma != 1.0:

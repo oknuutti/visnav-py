@@ -103,15 +103,20 @@ def cross3d(left, right):
     return np.array((x, y, z))
 
 
-@nb.njit(nb.types.f8[:](nb.types.f8[:]))
 def normalize_v(v):
     norm = np.linalg.norm(v)
     return v/norm if norm != 0 else v
 
 
+@nb.njit(nb.types.f8[:](nb.types.f8[:]))
+def normalize_v_f8(v):
+    norm = np.linalg.norm(v)
+    return v/norm if norm != 0 else v
+
+
 def surf_normal(x1, x2, x3):
-    a, b, c = np.array(x1), np.array(x2), np.array(x3)
-    return normalize_v(cross3d(b-a, c-a))
+    a, b, c = np.array(x1, dtype=np.float64), np.array(x2, dtype=np.float64), np.array(x3, dtype=np.float64)
+    return normalize_v_f8(cross3d(b-a, c-a))
 
 
 def angle_between_v(v1, v2):

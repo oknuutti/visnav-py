@@ -399,11 +399,12 @@ class TestLoop:
         # add flux density of stars from Tycho-2 catalog
         star_flux = Stars.flux_density(sc_q, cam, mask=mask) if stars else 0
 
+        total_flux = object_flux.astype(np.float64) + lens_effect.astype(np.float64) + star_flux.astype(np.float64)
         if fluxes_only:
-            return object_flux + lens_effect + star_flux
+            return total_flux
 
         # do the sensing
-        img = cam.sense(object_flux + lens_effect + star_flux, exposure=exposure, gain=gain)
+        img = cam.sense(total_flux, exposure=exposure, gain=gain)
 
         # do same gamma correction as the available rosetta navcam images have
         img = np.clip(img*255, 0, 255)

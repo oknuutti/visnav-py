@@ -14,6 +14,9 @@ from visnav.settings import *
 
 class AbsoluteNavigationNN(AlgorithmBase):
     DEF_MODEL_NAME = 'model_best_rose-mob-v2.pth.tar'
+    # DEF_MODEL_NAME = 'rose-mob-adv-v2.pth.tar'
+    # DEF_MODEL_NAME = 'rose-mob-gradloss-v3.pth.tar'
+
     DEF_LUMINOSITY_THRESHOLD = 65
     DEF_CROP_MARGIN = 10
     DEF_MIN_PIXELS = int(np.pi * 50 ** 2 * 0.3)
