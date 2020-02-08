@@ -41,7 +41,7 @@ def main():
     port = int(sys.argv[2])
 
     if len(sys.argv) > 3:
-        server = ApiServer(sys.argv[3], port=port, hires=False, result_rendering=False)
+        server = ApiServer(sys.argv[3], port=port, hires=True, result_rendering=True)
     else:
         server = SpawnMaster(port=port, max_count=5000)
 
@@ -253,7 +253,7 @@ class ApiServer:
             if self._autolevel and self._current_level:
                 level = self._current_level
             else:
-                level = 3*2.5 if self._use_nac else 1.8*2.5
+                level = 3*2.5*1.3e-3 if self._use_nac else 1.8*2.5*1.3e-3
 
             exp, gain = self._sm.cam.level_to_exp_gain(level, exp_range)
 

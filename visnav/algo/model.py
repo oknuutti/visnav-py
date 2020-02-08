@@ -749,8 +749,8 @@ class SystemModel(ABC):
 
 class Camera:
     def __init__(self, width, height, x_fov, y_fov,
-                 sensor_size=None, focal_length=None, f_stop=None, aperture=None,
-                 quantum_eff=None, px_saturation_e=None, emp_coef=1,
+                 sensor_size=None, focal_length=None, f_stop=None, aperture=None, dist_coefs=None,
+                 quantum_eff=None, qeff_coefs=None, px_saturation_e=None, emp_coef=1,
                  lambda_min=None, lambda_eff=None, lambda_max=None,
                  dark_noise_mu=None, dark_noise_sd=None, readout_noise_sd=None,
                  point_spread_fn=None, scattering_coef=None,
@@ -765,13 +765,18 @@ class Camera:
         self.sensor_height = None
         self.f_stop = None
         self.aperture = None
+        self.dist_coefs = np.zeros(12) if dist_coefs is None else dist_coefs
 
         self.emp_coef = emp_coef
-        self.quantum_eff = quantum_eff      # average in range 400-800nm => 375e12-750e12 Hz
         self.px_saturation_e = px_saturation_e
         self.lambda_min = lambda_min
         self.lambda_eff = lambda_eff
         self.lambda_max = lambda_max
+        if quantum_eff is not None:
+            assert qeff_coefs is None, 'quantum_eff only for backward support, remove it if you give qeff_coefs'
+            self.qeff_coefs = [quantum_eff]    # use a GP with N equally spaced points for spectral response curve
+        else:
+            self.qeff_coefs = qeff_coefs
         self.dark_noise_mu = dark_noise_mu or 250/1e5 * self.px_saturation_e
         self.dark_noise_sd = dark_noise_sd or 60/1e5 * self.px_saturation_e
         self.readout_noise_sd = readout_noise_sd or 2/1e5 * self.px_saturation_e
@@ -784,17 +789,24 @@ class Camera:
         if px_saturation_e is not None:
             self.gain = 1 / self.px_saturation_e
 
+        assert sensor_size is None or x_fov is None or focal_length is None, 'give only two of sensor_size, focal_length and fov'
+
         if sensor_size is not None:
             sw, sh = sensor_size    # in mm
-            self.focal_length = min(sw / math.tan(math.radians(x_fov) / 2) / 2,
-                                    sh / math.tan(math.radians(y_fov) / 2) / 2)
             self.sensor_width = sw
             self.sensor_height = sh
+            if x_fov is not None:
+                self.focal_length = min(sw / math.tan(math.radians(x_fov) / 2) / 2,
+                                        sh / math.tan(math.radians(y_fov) / 2) / 2)
+
         if focal_length is not None:
-            assert sensor_size is None, 'either give sensor_size or focal_length, not both'
             self.focal_length = focal_length
-            self.sensor_width = math.tan(math.radians(x_fov) / 2) * 2 * focal_length
-            self.sensor_height = math.tan(math.radians(y_fov) / 2) * 2 * focal_length
+            if sensor_size is not None:
+                self.x_fov = math.degrees(math.atan(sensor_size[0] / focal_length / 2) * 2)
+                self.y_fov = math.degrees(math.atan(sensor_size[1] / focal_length / 2) * 2)
+            else:
+                self.sensor_width = math.tan(math.radians(x_fov) / 2) * 2 * focal_length
+                self.sensor_height = math.tan(math.radians(y_fov) / 2) * 2 * focal_length
 
         if self.focal_length is not None:
             self.pixel_size = 1e3*min(self.sensor_width/self.width, self.sensor_height/self.width)  # in um
@@ -828,7 +840,7 @@ class Camera:
 
     @property
     def electrons_per_solar_irradiance(self):
-        return Camera.electrons_per_solar_irradiance_s(self.quantum_eff, self.lambda_min, self.lambda_max)
+        return Camera.electrons_per_solar_irradiance_s(tuple(self.qeff_coefs), self.lambda_min, self.lambda_max)
 
     @staticmethod
     def level_to_exp_gain(level, exp_range):
@@ -836,35 +848,133 @@ class Camera:
         gain = 0.001 * np.floor(max(1, level/exp) * 1000)
         return exp, gain
 
+    # @staticmethod
+    # def qeff_fn_freqs(f_min, f_max, n, endpoints=True):
+    #     return 1/np.linspace(1/f_min, 1/f_max, n+(0 if endpoints else 1), endpoint=endpoints)[(0 if endpoints else 1):]
+
     @staticmethod
-    @lru_cache(maxsize=1)
-    def electrons_per_solar_irradiance_s(quantum_eff, lambda_min, lambda_max):
+    def qeff_fn_lams(lambda_min, lambda_max, n, endpoints=True):
+        return np.linspace(lambda_min, lambda_max, n+(0 if endpoints else 1), endpoint=endpoints)[(0 if endpoints else 1):]
+
+    @staticmethod
+    @lru_cache(maxsize=100)
+    def qeff_fn(qeff_coefs, lambda_min, lambda_max, method='gp', debug=False):
+        assert lambda_min < lambda_max, 'f_min is greater than f_max'
+
+        n = len(qeff_coefs)
+        y_tr = np.array(qeff_coefs)
+        x_tr = Camera.qeff_fn_lams(lambda_min, lambda_max, n)
+
+        if len(qeff_coefs) == 1:
+            return lambda x: qeff_coefs[0], 0
+
+        if method == 'gp':
+            try:
+                from sklearn import gaussian_process as gp
+            except:
+                assert False, 'Requires scikit-learn, install using "conda install scikit-learn"'
+
+            s0 = 1e3
+#            s1 = 1e1
+            s2 = 1e0
+            len_sc0 = (lambda_max - lambda_min) / (n - 1) * 0.55
+ #           len_sc1 = (c/f_min - c/f_max) / (n - 1) * 0.1
+            kernel = gp.kernels.ConstantKernel(s0, (s0, s0)) * gp.kernels.RBF(len_sc0, (len_sc0, len_sc0)) \
+                     + gp.kernels.WhiteKernel(s2, (s2, s2))
+#            + gp.kernels.ConstantKernel(s1, (s1, s1)) * gp.kernels.RBF(len_sc1, (len_sc1, len_sc1)) \
+            model = gp.GaussianProcessRegressor(kernel=kernel, optimizer=None)
+            model.log_marginal_likelihood = lambda *args: 0
+            model.fit(x_tr.reshape((-1, 1)), y_tr.reshape((-1, 1)))
+
+            def qeff_fn(lam):
+                X = np.array(lam).reshape((-1, 1))
+                # y = model.predict(X)  # validation too slow, below only the necessery parts of predict
+                K_trans = model.kernel_(X, model.X_train_)
+                y = K_trans.dot(model.alpha_)
+                # y += model._y_train_mean  # commented out as y is not normalized
+                return np.clip(y.flatten(), 0, np.inf)
+
+            # likelihood (~smoothness) of qeff_coefs, used for qeff_coefs estimation from data
+            lml = model.log_marginal_likelihood()
+        elif method == 'sinc':
+            len_sc = (lambda_max - lambda_min) / (n - 1)
+            qeff_fn = lambda lam: np.sinc((np.repeat(lam.reshape((-1, 1)), len(x_tr), axis=1) - np.repeat(x_tr.reshape((1, -1)), len(lam), axis=0)) / len_sc).dot(y_tr)
+            lml = -(np.mean(y_tr) + np.mean(np.abs(np.diff(y_tr)))) * 10
+        else:
+            from scipy.interpolate import interp1d
+            # method can be 'linear', 'nearest', 'zero', 'slinear', 'quadratic', 'cubic',
+            #               'previous', 'next', where 'zero', 'slinear', 'quadratic' or 'cubic'
+            tmp_fn = interp1d(np.flip(x_tr), np.flip(y_tr), kind=method, bounds_error=False, fill_value='extrapolate', assume_sorted=True)
+            qeff_fn = lambda lam: np.clip(tmp_fn(lam), 0, np.inf)
+            lml = -(np.mean(y_tr) + np.mean(np.abs(np.diff(y_tr))))*10
+
+        if debug:
+            import matplotlib.pyplot as plt
+            x = np.linspace(lambda_min, lambda_max, (n-1)*10)
+            y = qeff_fn(x)
+            plt.plot(x, y)
+            plt.plot(x_tr, y_tr, 'x')
+            plt.show()
+
+        return qeff_fn, lml
+
+    def plot_qeff_fn(self, ax=None, color=None, marker="x", label=None):
+        import matplotlib.pyplot as plt
+        qeff_fn, _ = Camera.qeff_fn(tuple(self.qeff_coefs), self.lambda_min, self.lambda_max)
+
+        y_tr = np.array(self.qeff_coefs)
+        x_tr = Camera.qeff_fn_lams(self.lambda_min, self.lambda_max, len(self.qeff_coefs))
+        x = np.linspace(self.lambda_min, self.lambda_max, len(self.qeff_coefs)*10)
+        y = qeff_fn(x)
+
+        ax = ax or plt
+        ax.plot(x*1e9, y*100, color=color, label=label)
+        if marker:
+            ax.plot(x_tr*1e9, y_tr*100, linestyle='none', fillstyle='none', marker=marker, color=color)
+
+    @staticmethod
+    @lru_cache(maxsize=10)
+    def electrons_per_solar_irradiance_s(qeff_coefs, lambda_min, lambda_max):
         """
         Returns electrons per total solar irradiance [W/m2] assuming spectrum of the sun & sensor
         """
 
-        h = 6.626e-34  # planck constant (m2kg/s)
-        c = 3e8  # speed of light
-        T = 5778  # temperature of sun
-        k = 1.380649e-23  # Boltzmann constant
-        # sun_sr = 6.807e-5  # sun steradians from earth
+        from visnav.render.stars import Stars
+        from visnav.render.sun import Sun
+        spectrum_fn = Stars.black_body_radiation_fn(Sun.TEMPERATURE)  # temperature of sun
 
-        def qeff(f):
-            # sensor quantum efficiency
-            return quantum_eff
+        # need to divide result with value integrated over whole spectrum as units are in W/m3/sr
+        tphi = integrate.quad(spectrum_fn, 1e-8, 1e-2)
+        telec, _ = Camera.electron_flux_in_sensed_spectrum_fn(qeff_coefs, spectrum_fn, lambda_min, lambda_max)
+        return telec/tphi[0]
 
-        def phi(f):
-            # planck's law of black body radiation [W/s/m2/Hz/sr]
-            r = 2*h*f**3/c**2/(math.exp(h*f/k/T) - 1)
-            return r
+    @staticmethod
+    @lru_cache(maxsize=1000)
+    def electron_flux_in_sensed_spectrum(qeff_coefs, T, mag_v, lambda_min, lambda_max):
+        from visnav.render.stars import Stars
+        coef = Stars.magnitude_to_spectral_flux_density(mag_v) / Stars.black_body_radiation(T, Stars.MAG_V_LAM0)
+        spectrum_fn = lambda lam: coef * Stars.black_body_radiation(T, lam)
+        return Camera.electron_flux_in_sensed_spectrum_fn(qeff_coefs, spectrum_fn, lambda_min, lambda_max)
 
-        def spectral_electrons(f):
-            E = f * h             # energy per photon
-            return qeff(f) * phi(f) / E
+    @staticmethod
+    def electron_flux_in_sensed_spectrum_fn(qeff_coefs, spectrum_fn, lambda_min, lambda_max, fast=True, points=None):
+        qeff_fn, lml = Camera.qeff_fn(tuple(qeff_coefs), lambda_min, lambda_max)
 
-        tphi = integrate.quad(phi, c/1e-2, c/1e-8)
-        telec = integrate.quad(spectral_electrons, c/lambda_max, c/lambda_min)
-        return telec[0]/tphi[0]
+        def spectral_electrons(lam):
+            h = 6.626e-34    # planck constant (m2kg/s)
+            c = 3e8          # speed of light
+            E = h * c / lam  # energy per photon
+            return qeff_fn(lam) * spectrum_fn(lam) / E
+
+        if fast and points is None:
+            n = 100     # n=100 err~=0.02%; n=1000 err~=0.002%, n=1e4 err~=2e-4%
+            x_tr = np.linspace(lambda_min, lambda_max, n)
+            y_tr = spectral_electrons(x_tr)
+            telec = [np.sum(y_tr) * (lambda_max - lambda_min) / (n-1)]
+        else:
+            telec = integrate.quad(spectral_electrons, lambda_min, lambda_max, points=points)
+
+        return telec[0], lml
 
     def electrons(self, flux_density, exposure=1):
         # electrons from total solar irradiance [J/(s*m2)]
@@ -916,6 +1026,8 @@ class Camera:
         yh = yi + 0.5
         # zh = -z_off
 
+        # TODO: (2) undistort if self.dist_coefs given (use cv2.undistortPoints?)
+
         if True:
             iK = self.inv_intrinsic_camera_mx(legacy=False)
             x_off, y_off, _ = iK.dot(np.array([xh, yh, 1])) * z_off
@@ -933,19 +1045,72 @@ class Camera:
         # print('%.3f~%.3f, %.3f~%.3f, %.3f~%.3f'%(ax, x_off, ay, y_off, az, z_off))
         return x_off, y_off
 
-    def calc_img_xy(self, x, y, z):
+    def calc_img_xy(self, x, y, z, undistorted=False):
         """ x, y, z are in camera frame (z typically negative),  return image coordinates  """
-        K = self.intrinsic_camera_mx(legacy=False)
-        ix, iy, iw = K.dot(np.array([x, y, z]))
-        return ix / iw, iy / iw
+        K = self.intrinsic_camera_mx(legacy=False)[:2, :]
+        xd, yd = x/z, y/z
 
-    def calc_img_R(self, R):
+        # DISTORT
+        if self.dist_coefs is not None:
+            R = Camera.distort(np.array([[xd, yd]]), self.dist_coefs)
+
+        ix, iy = K.dot(np.array([xd, yd]))
+        return ix, iy
+
+    def calc_img_R(self, R, undistorted=False):
         """
         R is a matrix where each row is a point in camera frame (z typically negative),
         returns a matrix where each row corresponds to points in image space """
-        K = self.intrinsic_camera_mx(legacy=False)
-        iRh = R.dot(K.T)
-        return iRh[:, 0:2]/iRh[:, 2].reshape((-1, 1))
+        R = R / R[:, 2].reshape((-1, 1))
+
+        # DISTORT
+        if self.dist_coefs is not None:
+            R = Camera.distort(R, self.dist_coefs)
+
+        K = self.intrinsic_camera_mx(legacy=False)[:2, :].T
+        iR = R.dot(K)
+        return iR
+
+    @staticmethod
+    def distort(P, dist_coefs, cam_mx=None, inv_cam_mx=None):
+        """
+        return distorted coords from undistorted ones based on dist_coefs
+        if inv_cam_mx given, assume P are image coordinates instead of coordinates in camera frame
+        """
+        # from https://docs.opencv.org/3.0-beta/modules/calib3d/doc/camera_calibration_and_3d_reconstruction.html?highlight=projectpoints
+        # TODO: investigate if and how s3 and s4 are used, above page formulas dont include them
+        #       - also this documentation includes parameters tau_x and tau_y:
+        #         https://docs.opencv.org/master/d9/d0c/group__calib3d.html#ga27865b1d26bac9ce91efaee83e94d4dd
+
+        if inv_cam_mx is not None:
+            P = np.hstack((P, np.ones((len(P), 1)))).dot(inv_cam_mx[:2, :].T)
+
+        k1, k2, p1, p2, k3, k4, k5, k6, s1, s2, s3, s4 = np.pad(dist_coefs, (0, 12-len(dist_coefs)), 'constant')
+
+        R2 = np.sum(P[:, 0:2]**2, axis=1).reshape((-1, 1))
+        R4 = R2**2
+        R6 = R4**2 if k3 or k6 else 0
+        XY = np.prod(P, axis=1).reshape((-1, 1))
+        KR = (1 + k1*R2 + k2*R4 + k3*R6) / (1 + k4*R2 + k5*R4 + k6*R6)
+
+        Xdd = P[:, 0:1] * KR \
+              + (2 * p1 * XY if p1 else 0) \
+              + (p2 * (R2 + 2 * P[:, 0:1]**2) if p2 else 0) \
+              + (s1 * R2 if s1 else 0) \
+              + (s2 * R4 if s2 else 0)
+
+        Ydd = P[:, 1:2] * KR \
+              + (p1 * (R2 + 2 * P[:, 1:2]**2) if p1 else 0) \
+              + (2 * p2 * XY if p2 else 0) \
+              + (s1 * R2 if s1 else 0) \
+              + (s2 * R4 if s2 else 0)
+
+        img_P = np.hstack((Xdd, Ydd, np.ones((len(Xdd), 1))))
+        if cam_mx is not None:
+            img_P = img_P.dot(cam_mx[:2, :].T)
+        return img_P
+
+
 
 
 class Asteroid(ABC):

@@ -316,6 +316,16 @@ def solar_elongation(ast_v, sc_q):
 
     return elong, direc
 
+def find_nearest_lesser(array, value):
+    I = np.where(array < value)
+    idx = (np.abs(array-value)).argmin()
+    return array[I[idx]], I[idx]
+
+def find_nearest_greater(array, value):
+    I = np.where(array > value)
+    idx = (np.abs(array-value)).argmin()
+    return array[I[idx]], I[idx]
+
 def find_nearest(array, value):
     idx = (np.abs(array-value)).argmin()
     return array[idx], idx
@@ -429,7 +439,7 @@ def bf2_lat_lon(tol, lat_range=(-math.pi/2, math.pi/2)):
 def robust_mean(arr, discard_percentile=0.2, ret_n=False, axis=None):
     J = np.logical_not(np.isnan(arr))
     if axis is not None:
-        J = np.all(np.isnan(arr), axis=1 if axis == 0 else 0)
+        J = np.all(J, axis=1 if axis == 0 else 0)
     if axis == 0:
         arr = arr[J, :]
     elif axis == 1:
@@ -966,6 +976,12 @@ def numeric(s):
     except ValueError:
         return False
     return True
+
+
+def pseudo_huber_loss(a, delta):
+    # from https://en.wikipedia.org/wiki/Huber_loss
+    # first +1e-15 is to avoid divide by zero, second to avoid loss becoming zero if delta > 1e7 due to float precision
+    return delta**2 * (np.sqrt(1 + a**2/(delta**2 + 1e-15)) - 1 + 1e-15)
 
 
 def plot_quats(quats, conseq=True, wait=True):

@@ -143,7 +143,7 @@ def main(mission_sc=False, simple=False):
 
     has_spl = not np.all(np.isnan(spl_loc))
     has_lsr = not np.all(np.isnan(lsr_loc))
-    has_vo = not np.all(np.isnan(vo_loc)) and False
+    has_vo = not np.all(np.isnan(vo_loc))  # and False
     has_cnt = not np.all(np.isnan(cnt_loc))
     has_flt = False
 
@@ -224,8 +224,9 @@ def main(mission_sc=False, simple=False):
         #vo_loc_sf, _, vo_loc_bias_sf, _, _ = vo_data_prep(vo_loc_sf, vo_scale, vo_bias_sds, sc_loc_sf, trg_loc_sf)
         #vo_loc_stf, vo_scale, vo_loc_bias_stf, nkf_idxs, is_mm = vo_data_prep(vo_loc_stf, vo_scale, vo_bias_sds, sc_loc_stf, trg_loc_stf)
 
-    flt_err_mean = tools.robust_mean(flt_loc_stf - sc_loc_stf, axis=0)
-    flt_err_std = tools.robust_std(flt_loc_stf - sc_loc_stf, axis=0)
+    if has_flt:
+        flt_err_mean = tools.robust_mean(flt_loc_stf - sc_loc_stf, axis=0)
+        flt_err_std = tools.robust_std(flt_loc_stf - sc_loc_stf, axis=0)
     if has_lsr:
         lsr_err_mean = tools.robust_mean((lsr_loc_stf - sc_loc_stf), axis=0)
         lsr_err_std = tools.robust_std((lsr_loc_stf - sc_loc_stf), axis=0)
@@ -498,13 +499,13 @@ def vo_data_prep(vo_loc, vo_scale, vo_bias_sds, sc_loc, trg_loc):
     ks = (i for i, sd in enumerate(vo_bias_sds[:, 0]) if sd > 0)
     while j is not None:
         k = next(ks, None)
-        if vo_bias_sds[j, 0] is np.inf:
+        if vo_bias_sds[j, 0] == np.inf:
             nkf_idxs.append(0)
             is_mm.append(False)
 
         sc = np.nanmean(1/vo_scale[j:k])
 
-        if np.sum(np.any(np.logical_not(np.isnan(vo_raw_loc[j:k, :])), axis=1)) >= 3:
+        if np.sum(np.any(np.logical_not(np.isnan(vo_raw_loc[j:k, :])), axis=1)):
             # need to skip keyframes with too few measurements
             #   => leads to bad scale and bias diffs
             #   => better way would be some kind of likelihood maximization thing
