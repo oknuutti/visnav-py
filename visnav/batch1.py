@@ -122,19 +122,22 @@ def run_batch(mission, full_method, count, est_real_ast_orient=False):
     kwargs = kwargs0
     
     # shape model noise
+    smn_cache_id = ''
+    sm_noise = 0
     if 'smn_' in m:
-        kwargs['smn_type'] = 'hi'
+        smn_cache_id = 'hi'
+        sm_noise = SHAPE_MODEL_NOISE_LV[smn_cache_id]
     elif 'smn' in m:
-        kwargs['smn_type'] = 'lo'
+        smn_cache_id = 'lo'
+        sm_noise = SHAPE_MODEL_NOISE_LV[smn_cache_id]
 
     # feature db
     hi_res_shape_model = False
     if 'fdb' in m:
         kwargs['use_feature_db'] = True
         hi_res_shape_model = True
-        noise = kwargs.pop('smn_type', False)
-        if noise:
-            kwargs['add_noise'] = noise
+        if smn_cache_id:
+            kwargs['add_noise'] = smn_cache_id
 
     sm = get_system_model(mission, hi_res_shape_model=hi_res_shape_model)
 
@@ -168,6 +171,7 @@ def run_batch(mission, full_method, count, est_real_ast_orient=False):
 
     tl = TestLoop(sm, file_prefix_mod=file_prefix_mod,
                   est_real_ast_orient=est_real_ast_orient, operation_zone_only=('didy' in mission),
+                  sm_noise=sm_noise, sm_noise_len_sc=SHAPE_MODEL_NOISE_LEN_SC,
                   state_generator=sg)
 
     if sm.mission_id == 'rose':
@@ -181,7 +185,7 @@ def run_batch(mission, full_method, count, est_real_ast_orient=False):
             ka.DEF_RANSAC_ERROR = 10
             #ka.LOWE_METHOD_COEF = 0.825
 
-    tl.run(count, log_prefix=mission+'-'+full_method+'-', **kwargs)
+    tl.run(count, log_prefix=mission+'-'+full_method+'-', smn_cache_id=smn_cache_id, **kwargs)
 
 
 if __name__ == '__main__':

@@ -144,7 +144,7 @@ if __name__ == '__main__':
 
     compare = True
     textures = True
-    if True:
+    if False:
         re = RenderEngine(sm.cam.width, sm.cam.height, antialias_samples=16)
         #obj_idx = re.load_object(sm.asteroid.target_model_file, smooth=False)
         obj_idx = re.load_object(sm.asteroid.hires_target_model_file, smooth=False)
@@ -170,7 +170,28 @@ if __name__ == '__main__':
 
     real = cv2.imread(os.path.join(sm.asteroid.image_db_path, img + '_P.png'), cv2.IMREAD_GRAYSCALE)
 
-    if True:
+    if 1:
+        img, dist = ab.render(shadows=True, textures=textures, reflection=model, depth=True)
+        base_loc = np.array(sm.spacecraft_pos) + np.array([-0.1, 1.1, 0])
+
+        if 1:
+            img = ImageProc.add_jet(sm.cam, img, dist < 1000, base_loc, 0.6,
+                                    phase_angle=math.radians(120), direction=math.radians(120),
+                                    intensity=0.35, angular_radius=np.pi/30, down_scaling=6)
+        if 1:
+            img = ImageProc.add_haze(img, dist < 1000, 0.15)
+
+        if 1:
+            sc = min(1536 / img.shape[1], 1024 / img.shape[0])
+            cv2.imshow('jets', cv2.resize(img, None, fx=sc, fy=sc))
+            cv2.waitKey()
+        else:
+            import matplotlib.pyplot as plt
+            plt.imshow(img)
+            plt.show()
+        quit()
+
+    elif 1:
         synth = []
     #    for i, p in enumerate(np.linspace(0, 30, 11)):
     #        if hapke:

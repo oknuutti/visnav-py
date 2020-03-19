@@ -765,7 +765,7 @@ class Camera:
         self.sensor_height = None
         self.f_stop = None
         self.aperture = None
-        self.dist_coefs = np.zeros(12) if dist_coefs is None else dist_coefs
+        self.dist_coefs = dist_coefs   # np.zeros(12) if dist_coefs is None else dist_coefs
 
         self.emp_coef = emp_coef
         self.px_saturation_e = px_saturation_e
@@ -866,7 +866,7 @@ class Camera:
         x_tr = Camera.qeff_fn_lams(lambda_min, lambda_max, n)
 
         if len(qeff_coefs) == 1:
-            return lambda x: qeff_coefs[0], 0
+            return (lambda x: qeff_coefs[0]), 0
 
         if method == 'gp':
             try:
@@ -1052,9 +1052,9 @@ class Camera:
 
         # DISTORT
         if self.dist_coefs is not None:
-            R = Camera.distort(np.array([[xd, yd]]), self.dist_coefs)
+            xd, yd, _ = Camera.distort(np.array([[xd, yd]]), self.dist_coefs)[0]
 
-        ix, iy = K.dot(np.array([xd, yd]))
+        ix, iy = K.dot(np.array([xd, yd, 1]))
         return ix, iy
 
     def calc_img_R(self, R, undistorted=False):

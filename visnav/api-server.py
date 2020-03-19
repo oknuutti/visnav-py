@@ -41,7 +41,7 @@ def main():
     port = int(sys.argv[2])
 
     if len(sys.argv) > 3:
-        server = ApiServer(sys.argv[3], port=port, hires=True, result_rendering=True)
+        server = ApiServer(sys.argv[3], port=port, hires=False, result_rendering=True)
     else:
         server = SpawnMaster(port=port, max_count=5000)
 
@@ -227,8 +227,10 @@ class ApiServer:
         dx, dy, dz = xx[0, i], yy[j, 0], zz[j, i] - dist_meas
 
         if self._result_frame == ApiServer.FRAME_GLOBAL:
+            # return global ast-sc vector
             est_sc_ast_v = ast_v * 1000 - tools.q_times_v(q.conj(), rel_pos_v + np.array([dx, dy, dz]))
         else:
+            # return local sc-ast vector
             est_sc_ast_v = tools.q_times_v(SystemModel.sc2gl_q, rel_pos_v + np.array([dx, dy, dz]))
         dist_expected = float(dist_expected) if not np.isnan(dist_expected) else -1.0
         return json.dumps([list(est_sc_ast_v), dist_expected])

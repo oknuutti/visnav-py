@@ -12,6 +12,7 @@ from visnav.algo import tools
 from visnav.algo.image import ImageProc
 from visnav.algo.model import Camera
 from visnav.missions.didymos import DidymosSystemModel
+from visnav.render.stars import Stars
 
 
 class Sun:
@@ -24,6 +25,7 @@ class Sun:
     _DIFFRACTION_INTERPOLATION_N = 400
     _diffraction_relative_intensity_fun = {}
     _ssi_interp = None
+    _tot_ssr_simple = None
 
     @staticmethod
     def sun_radius_rad(dist):
@@ -142,11 +144,11 @@ class Sun:
     @staticmethod
     def diffraction_relative_intensity(cam, sun_angular_radius, theta):
         shape = theta.shape
-        key = hash((cam.x_fov, cam.y_fov, cam.aperture, cam.quantum_eff, cam.lambda_min, cam.lambda_max, sun_angular_radius))
+        key = hash((cam.x_fov, cam.y_fov, cam.aperture, cam.lambda_min, cam.lambda_max, sun_angular_radius) + tuple(cam.qeff_coefs))
         if key not in Sun._diffraction_relative_intensity_fun:
             lim = math.radians(np.linalg.norm((cam.x_fov, cam.y_fov))) + sun_angular_radius*2
             examples = np.linspace(-lim, lim, Sun._DIFFRACTION_INTERPOLATION_N)
-            values = np.array([Sun.diffraction_relative_intensity_single(cam.aperture, cam.quantum_eff,
+            values = np.array([Sun.diffraction_relative_intensity_single(cam.aperture, tuple(cam.qeff_coefs),
                                                                          cam.lambda_min, cam.lambda_max, th)
                                for th in examples])
             Sun._diffraction_relative_intensity_fun[key] = scipy.interpolate.interp1d(examples, values)
@@ -171,23 +173,29 @@ class Sun:
         #     r = 2*h*c**2/lam**5/(math.exp(h*c/lam/k/Sun.TEMPERATURE) - 1)
         #     return r
 
-        qeff = Camera.qeff_fn(qeff_coefs, lambda_min, lambda_max)
+        qeff, _ = Camera.qeff_fn(qeff_coefs, lambda_min, lambda_max)
 
         def total(lam):
-            return qeff(lam) * Sun.ssr(lam) * Sun._diffraction(lam, aperture, theta)
+            return qeff(lam) * Sun.ssr_simple(lam) * Sun._diffraction(lam, aperture, theta)
 
-        tphi = integrate.quad(Sun.ssr, 1e-8, 1e-2)
+        if Sun._tot_ssr_simple is None:
+            tphi = integrate.quad(Sun.ssr_simple, 1.2e-7, 1e-3, limit=200)
+            Sun._tot_ssr_simple = tphi[0]
+
         tint = integrate.quad(total, lambda_min, lambda_max, limit=50)
-        return tint[0]/tphi[0]
+        return tint[0]/Sun._tot_ssr_simple
 
     @staticmethod
     def ssr(lam):
         """ solar spectral radiance in W/m3/sr """
         if Sun._ssi_interp is None:
-            Sun._ssi_interp = interp1d(SOLAR_SPECTRAL_IRRADIANCE[:, 0], SOLAR_SPECTRAL_IRRADIANCE[:, 1],
-                                       kind='linear')
+            Sun._ssi_interp = interp1d(SOLAR_SPECTRAL_IRRADIANCE[:, 0], SOLAR_SPECTRAL_IRRADIANCE[:, 1], kind='linear')
         return Sun._ssi_interp(lam) / Sun.SOLID_ANGLE_AT_1AU
 
+    @staticmethod
+    def ssr_simple(lam):
+        """ Approximation of solar spectral radiance [W/m3/sr] using planck's law of black body radiation """
+        return Stars.black_body_radiation(Sun.TEMPERATURE, lam)
 
 # 2000 ASTM Standard Extraterrestrial Spectrum Reference E-490-00
 # E490_00a_AM0.xls, https://rredc.nrel.gov/solar//spectra/am0/ASTM2000.html,

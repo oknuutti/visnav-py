@@ -9,13 +9,6 @@ from visnav.algo import tools
 from visnav.iotools import objloader
 from visnav.settings import *
 
-# data/CSHP_DV_130_01_XLRES_00200.obj data/CSHP_DV_130_01_XXLRES_00200.obj data/67P_test.nsm
-# data/bennu-hi-res.obj data/bennu-lo-res.obj data/bennu_baseline.nsm
-
-# data/CSHP_DV_130_01_LORES_00200.obj data/CSHP_DV_130_01_XLRESb_00200.obj data/67P_baseline.nsm
-# data/CSHP_DV_130_01_LORES_00200.obj data/CSHP_DV_130_01_XXLRES_00200.obj data/67P_xl.nsm
-# data/CSHP_DV_130_01_LORES_00200.obj data/CSHP_DV_130_01_X3RES_00200.obj data/67P_xxl.nsm
-
 # data/ryugu+tex-d1-80k.obj data/ryugu+tex-d1-16k.obj data/ryugu+tex-d1-16k.nsm
 # data/ryugu+tex-d1-80k.obj data/ryugu+tex-d1-4k.obj data/ryugu+tex-d1-4k.nsm
 # data/ryugu+tex-d1-80k.obj data/ryugu+tex-d1-1k.obj data/ryugu+tex-d1-1k.nsm
@@ -23,6 +16,9 @@ from visnav.settings import *
 # data/ryugu+tex-d2-80k.obj data/ryugu+tex-d2-4k.obj data/ryugu+tex-d2-4k.nsm
 # data/ryugu+tex-d2-80k.obj data/ryugu+tex-d2-1k.obj data/ryugu+tex-d2-1k.nsm
 
+# data/67p+tex-80k.obj data/67p+tex-1k.obj data/67p+tex-1k.nsm
+# data/67p+tex-80k.obj data/67p+tex-4k.obj data/67p+tex-4k.nsm
+# data/67p+tex-80k.obj data/67p+tex-16k.obj data/67p+tex-16k.nsm
 
 if __name__ == '__main__':
     if False:

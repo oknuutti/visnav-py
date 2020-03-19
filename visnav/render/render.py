@@ -1,9 +1,11 @@
 import math
 import os
 import pickle
+import struct
 
 import numpy as np
 import quaternion
+import numba as nb
 
 import moderngl
 
@@ -191,43 +193,36 @@ class RenderEngine:
 
     def load_object(self, object, obj_idx=None, smooth=False, wireframe=False, cache_file=None):
         if cache_file is None or not os.path.isfile(cache_file):
-            vertex_data = None
             if isinstance(object, str):
                 object = ShapeModel(fname=object)
             elif isinstance(object, Obj):
-                vertex_data = object
-                assert not smooth, 'not supported'
+                object = ShapeModel(data={
+                    'faces': np.array(object.face, dtype=np.uint32)[:, ],
+                    'vertices': np.array(object.vert, dtype=np.float32),
+                    'normals': np.array(object.norm, dtype=np.float32),
+                    'texcoords': np.array(object.text, dtype=np.float32)[:, :2],
+                })
+            object.load_texture()
+            obj_bytes = None if wireframe else object.pack_all()
+            s_obj_bytes = object.pack_simple()
+            object = None if wireframe else object
 
-            if isinstance(object, ShapeModel):
-                if smooth:
-                    verts, tex, norms, faces = object.export_smooth_faces()
-                else:
-                    verts, tex, norms, faces = object.export_angular_faces()
-
-                vertex_data = Obj(verts, tex, norms, faces)
-                texture_data = object.load_texture()
-
-            assert vertex_data is not None, 'wrong object type'
-
-            if not wireframe:
-                if cache_file is not None:
-                    with open(cache_file, 'wb') as fh:
-                        pickle.dump((texture_data, vertex_data), fh)
+            if cache_file is not None:
+                with open(cache_file, 'wb') as fh:
+                    pickle.dump((object, obj_bytes, s_obj_bytes), fh)
         else:
             with open(cache_file, 'rb') as fh:
-                texture_data, vertex_data = pickle.load(fh)
+                object, obj_bytes, s_obj_bytes = pickle.load(fh)
 
         if wireframe:
-            return self.load_cached_wf_object(vertex_data.pack('vx vy vz'), obj_idx=obj_idx)
+            return self.load_cached_wf_object(s_obj_bytes, obj_idx=obj_idx)
         else:
-            obj_bytes = vertex_data.pack('vx vy vz nx ny nz tx ty')
-            s_obj_bytes = vertex_data.pack('vx vy vz')
-            return self.load_cached_object(vertex_data, obj_bytes, s_obj_bytes, texture_data, obj_idx=obj_idx)
+            return self.load_cached_object(object, obj_bytes, s_obj_bytes, obj_idx=obj_idx)
 
-    def load_cached_object(self, vertex_data, obj_bytes, s_obj_bytes, texture_data, obj_idx=None):
+    def load_cached_object(self, object, obj_bytes, s_obj_bytes, obj_idx=None):
         texture = None
-        if texture_data is not None:
-            texture = self._ctx.texture(texture_data.T.shape, 1, np.flipud(texture_data).tobytes(), dtype='f4')
+        if object.tex is not None:
+            texture = self._ctx.texture(object.tex.T.shape, 1, np.flipud(object.tex).tobytes(), dtype='f4')
             texture.build_mipmaps()
 
         vbo = self._ctx.buffer(obj_bytes)
@@ -239,12 +234,12 @@ class RenderEngine:
         if obj_idx is None:
             self._objs.append(obj)
             self._s_objs.append(s_obj)
-            self._raw_objs.append(vertex_data)
+            self._raw_objs.append(object)
             self._textures.append(texture)
         else:
             self._objs[obj_idx] = obj
             self._s_objs[obj_idx] = s_obj
-            self._raw_objs[obj_idx] = vertex_data
+            self._raw_objs[obj_idx] = object
             self._textures[obj_idx] = texture
 
         return len(self._objs) - 1
@@ -268,8 +263,8 @@ class RenderEngine:
             candidates = []
             ray = np.array([0, 0, -1.0]).reshape((3, 1))
             for i, obj_idx in enumerate(obj_idxs):
-                verts = tools.q_times_mx(rel_rot_q[i], np.array(self._raw_objs[obj_idx].vert)) + rel_pos_v[i]
-                x = tools.intersections(np.array(self._raw_objs[obj_idx].face, dtype='u4'), verts, ray)
+                verts = tools.q_times_mx(rel_rot_q[i], self._raw_objs[obj_idx].vertices) + rel_pos_v[i]
+                x = tools.intersections(self._raw_objs[obj_idx].faces, verts, ray)
                 candidates.extend(np.abs(x))
             dist = np.min(candidates) if len(candidates)>0 else None
         else:
@@ -495,7 +490,7 @@ class RenderEngine:
         n = float('inf') # min z
         f = -float('inf') # max z
         for i, obj_idx in enumerate(obj_idxs):
-            v3d = np.array(self._raw_objs[obj_idx].vert)
+            v3d = self._raw_objs[obj_idx].vertices
             vert = mvs[obj_idx].dot(np.concatenate((v3d, np.ones((len(v3d),1))), axis=1).T).T
             vert = vert[:, :3] / vert[:, 3:]
             x0, y0, z0 = np.min(vert, axis=0)

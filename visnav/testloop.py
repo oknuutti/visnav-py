@@ -41,8 +41,19 @@ from visnav.settings import *
 class TestLoop:
     UNIFORM_DISTANCE_GENERATION = True
 
-    def __init__(self, system_model, file_prefix_mod, est_real_ast_orient=False, operation_zone_only=False,
-                 state_generator=None):
+    def __init__(self, system_model, file_prefix_mod, est_real_ast_orient=False,
+                 uniform_distance_gen=UNIFORM_DISTANCE_GENERATION,
+                 operation_zone_only=False, state_generator=None, cache_path=None,
+                 sm_noise=0, sm_noise_len_sc=SHAPE_MODEL_NOISE_LEN_SC,
+                 navcam_cache_id='',
+                 real_sm_noise=0, real_sm_noise_len_sc=SHAPE_MODEL_NOISE_LEN_SC,
+                 real_tx_noise=0, real_tx_noise_len_sc=SHAPE_MODEL_NOISE_LEN_SC,
+                 haze=0, haze_len_sc=SHAPE_MODEL_NOISE_LEN_SC,
+                 hapke_noise=0,
+                 hapke_th_sd=None, hapke_w_sd=None,
+                 hapke_b_sd=None, hapke_c_sd=None,
+                 hapke_shoe=None, hapke_shoe_w=None,
+                 hapke_cboe=None, hapke_cboe_w=None):
 
         self.system_model = system_model
         self.est_real_ast_orient = est_real_ast_orient
@@ -53,20 +64,41 @@ class TestLoop:
         self._opzone_only = operation_zone_only
 
         self._state_generator = state_generator if state_generator is not None else \
-                                lambda sm: sm.random_state(uniform_distance=TestLoop.UNIFORM_DISTANCE_GENERATION,
+                                lambda sm: sm.random_state(uniform_distance=uniform_distance_gen,
                                                            opzone_only=self._opzone_only)
+
+        self.sm_noise = sm_noise
+        self.sm_noise_len_sc = sm_noise_len_sc
+        self.navcam_cache_id = navcam_cache_id
+        self.real_sm_noise = real_sm_noise
+        self.real_sm_noise_len_sc = real_sm_noise_len_sc
+        self.real_tx_noise = real_tx_noise
+        self.real_tx_noise_len_sc = real_tx_noise_len_sc
+        self.haze = haze
+        self.haze_len_sc = haze_len_sc
+        self.hapke_noise = hapke_noise
+        self.hapke_th_sd = hapke_th_sd
+        self.hapke_w_sd = hapke_w_sd
+        self.hapke_b_sd = hapke_b_sd
+        self.hapke_c_sd = hapke_c_sd
+        self.hapke_shoe = hapke_shoe
+        self.hapke_shoe_w = hapke_shoe_w
+        self.hapke_cboe = hapke_cboe
+        self.hapke_cboe_w = hapke_cboe_w
 
         self.file_prefix = system_model.mission_id+'_'+file_prefix_mod
         self.noisy_sm_prefix = system_model.mission_id
-        self.cache_path = os.path.join(CACHE_DIR, system_model.mission_id)
+        self.cache_path = cache_path if cache_path else os.path.join(CACHE_DIR, system_model.mission_id)
         os.makedirs(self.cache_path, exist_ok=True)
 
         self.render_engine = RenderEngine(system_model.view_width, system_model.view_height)
-        self.obj_idx = self.render_engine.load_object(self.system_model.asteroid.real_shape_model, smooth=self._smooth_faces)
+        self.obj_idx = None   #self.render_engine.load_object(self.system_model.asteroid.real_shape_model, smooth=self._smooth_faces)
 
-        self.keypoint = KeypointAlgo(self.system_model, self.render_engine, self.obj_idx, est_real_ast_orient=est_real_ast_orient)
-        self.centroid = CentroidAlgo(self.system_model, self.render_engine, self.obj_idx)
-        self.phasecorr = PhaseCorrelationAlgo(self.system_model, self.render_engine, self.obj_idx)
+        self.keypoint = KeypointAlgo(self.system_model, self.render_engine, 0, est_real_ast_orient=est_real_ast_orient)
+        self.keypoint.RENDER_TEXTURES = self.system_model.asteroid.hires_target_model_file_textures
+        self.centroid = CentroidAlgo(self.system_model, self.render_engine, 0)
+        self.centroid.RENDER_TEXTURES = self.system_model.asteroid.hires_target_model_file_textures
+        self.phasecorr = PhaseCorrelationAlgo(self.system_model, self.render_engine, 0)
         self.mixedalgo = MixedAlgo(self.centroid, self.keypoint)
         self.absnet = None  # lazy load
 
@@ -114,7 +146,10 @@ class TestLoop:
         self._shifterrs = []
         self._fails = 0        
         self._timer = None
-        self._L = None
+        self._L = (None, None)
+        self._shape_model = None
+        self._hires_L = (None, None)
+        self._tx_rand_support = None
         self._state_list = None
         self._rotation_noise = None
         self._loaded_sm_noise = None
@@ -126,13 +161,14 @@ class TestLoop:
 
 
     # main method
-    def run(self, times, log_prefix='test-', smn_type='', constant_sm_noise=True, state_db_path=None,
-            rotation_noise=True, resynth_cam_image=False, **kwargs):
-        self._smn_cache_id = smn_type
+    def run(self, times, log_prefix='test-', smn_cache_id='', constant_sm_noise=True, state_db_path=None,
+            rotation_noise=True, resynth_cam_image=False, method='akaze', **kwargs):
+        self._smn_cache_id = smn_cache_id
         self._state_db_path = state_db_path
         self._resynth_cam_image = resynth_cam_image
         self._rotation_noise = rotation_noise
         self._constant_sm_noise = constant_sm_noise
+        sm = self.system_model
 
         skip = 0
         if isinstance(times, str):
@@ -147,13 +183,11 @@ class TestLoop:
         
         # write logfile header
         self._init_log(log_prefix)
-        
-        li = 0
-        sm = self.system_model
-        
+
         for i in range(skip, times):
-            #print('%s'%self._state_list[i])
-            
+            # print out progress
+            tools.show_progress(times - skip, i - skip)
+
             # maybe generate new noise for shape model
             sm_noise = 0
             if self._smn_cache_id or self._constant_sm_noise:
@@ -205,24 +239,17 @@ class TestLoop:
                 continue
 
             # run algorithm
-            ok, rtime = self._run_algo(imgfile, self._iter_file(i), **kwargs)
+            ok, rtime = self._run_algo(imgfile, self._iter_file(i), method=method, **kwargs)
 
             if kwargs.get('use_feature_db', False) and kwargs.get('add_noise', False):
                 sm_noise = self.keypoint.sm_noise
             
             # calculate results
-            results = self.calculate_result(sm, i, imgfile, ok, initial, **kwargs)
+            results = self.calculate_result(sm, i, imgfile, ok, initial, method=method, **kwargs)
             
             # write log entry
             self._write_log_entry(i, rtime, sm_noise, *results)
             self._maybe_exit()
-
-            # print out progress
-            if DEBUG:
-                print('\niteration i=%d:'%(i+1), flush=True)
-            elif math.floor(100*i/(times - skip)) > li:
-                print('.', end='', flush=True)
-                li += 1
 
         self._close_log(times-skip)
 
@@ -309,13 +336,13 @@ class TestLoop:
     def generate_noisy_shape_model(self, sm, i):
         #sup = objloader.ShapeModel(fname=SHAPE_MODEL_NOISE_SUPPORT)
         noisy_model, sm_noise, self._L = \
-                tools.apply_noise(sm.asteroid.real_shape_model,
+                tools.apply_noise(self._shape_model,
                                   #support=np.array(sup.vertices),
                                   L=self._L,
-                                  len_sc=SHAPE_MODEL_NOISE_LEN_SC,
-                                  noise_lv=SHAPE_MODEL_NOISE_LV[self._smn_cache_id])
+                                  len_sc=self.sm_noise_len_sc,
+                                  noise_lv=self.sm_noise)
 
-        fname = self._cache_file(i, prefix=self.noisy_sm_prefix)+'_'+self._smn_cache_id+'.nsm'
+        fname = self._cache_file(i, prefix=self.noisy_sm_prefix, postfix=self._smn_cache_id)+'.nsm'
         with open(fname, 'wb') as fh:
             pickle.dump((noisy_model.as_dict(), sm_noise), fh, -1)
         
@@ -329,11 +356,12 @@ class TestLoop:
                     return self._loaded_sm_noise
                 fname = sm.asteroid.constant_noise_shape_model[self._smn_cache_id]
             else:
-                fname = self._cache_file(i, prefix=self.noisy_sm_prefix)+'_'+self._smn_cache_id+'.nsm'
+                fname = self._cache_file(i, prefix=self.noisy_sm_prefix, postfix=self._smn_cache_id)+'.nsm'
 
             with open(fname, 'rb') as fh:
                 noisy_model, self._loaded_sm_noise = pickle.load(fh)
-            self.render_engine.load_object(objloader.ShapeModel(data=noisy_model), self.obj_idx, smooth=self._smooth_faces)
+            self._shape_model = objloader.ShapeModel(data=noisy_model)
+            self.render_engine.load_object(self._shape_model, self.obj_idx, smooth=self._smooth_faces)
         except (FileNotFoundError, EOFError):
             print('cant find shape model "%s"' % fname)
             self._loaded_sm_noise = None
@@ -394,7 +422,7 @@ class TestLoop:
             object_flux *= cam.px_sr
         else:
             object_flux = object_flux.astype('f4')/255/cam.sensitivity/exposure/gain
-            lens_effect = 0
+            lens_effect = np.array([0])
 
         # add flux density of stars from Tycho-2 catalog
         star_flux = Stars.flux_density(sc_q, cam, mask=mask) if stars else 0
@@ -418,23 +446,78 @@ class TestLoop:
         return img
 
     def render_navcam_image(self, sm, i):
+        use_textures = sm.asteroid.hires_target_model_file_textures or self.real_tx_noise > 0
+        tx_randomize = self.real_tx_noise > 0
+        update_model = False
+        tx_hf_noise = 1
+
         if self._synth_navcam is None:
+            update_model = True
             self._synth_navcam = RenderEngine(sm.cam.width, sm.cam.height, antialias_samples=16)
             self._synth_navcam.set_frustum(sm.cam.x_fov, sm.cam.y_fov, sm.min_altitude, sm.max_distance)
-            self._hires_obj_idx = self._synth_navcam.load_object(sm.asteroid.hires_target_model_file)
+            if use_textures and not sm.asteroid.hires_target_model_file_textures:
+                sm.asteroid.real_shape_model.texfile = None
+                sm.asteroid.real_shape_model.tex = np.ones((4096, 4096) if tx_hf_noise else (100, 100))
 
-        use_textures = sm.asteroid.hires_target_model_file_textures
+        # NOTICE: Randomizing the vertices takes a lot of time, texture not so
+        #         - Also: caching the vertices would take too much space, so no caching
+        if self.real_sm_noise > 0 or tx_randomize:
+            update_model = True
+            Sv = np.array(self._shape_model.vertices) if self.real_sm_noise > 0 else None
+            if tx_randomize and self._tx_rand_support is None:
+                fname = sm.asteroid.constant_noise_shape_model['lo']
+                with open(fname, 'rb') as fh:
+                    sup, _ = pickle.load(fh)
+                self._tx_rand_support = objloader.ShapeModel(data=sup)
+            model, _, self._hires_L = \
+                tools.apply_noise(sm.asteroid.real_shape_model, support=(Sv, self._tx_rand_support), L=self._hires_L,
+                                  noise_lv=self.real_sm_noise, len_sc=self.real_sm_noise_len_sc,
+                                  tx_noise=self.real_tx_noise if use_textures else 0,
+                                  tx_noise_len_sc=self.real_tx_noise_len_sc,
+                                  tx_hf_noise=tx_hf_noise)
+        else:
+            model = sm.asteroid.real_shape_model
+
+        if update_model:
+            self._hires_obj_idx = self._synth_navcam.load_object(model, self._hires_obj_idx)
+
+        reflmod_params = self.randomized_hapke_params(sm)
         sm.swap_values_with_real_vals()
-        img = TestLoop.render_navcam_image_static(sm, self._synth_navcam, self._hires_obj_idx, use_textures=use_textures)
+        img = TestLoop.render_navcam_image_static(sm, self._synth_navcam, self._hires_obj_idx,
+                                                  use_textures=use_textures, reflmod_params=reflmod_params)
         sm.swap_values_with_real_vals()
 
-        cache_file = self._cache_file(i)+'.png'
+        cache_file = self._cache_file(i, postfix=self.navcam_cache_id)+'.png'
         cv2.imwrite(cache_file, img, [cv2.IMWRITE_PNG_COMPRESSION, 9])
         return cache_file
 
+    def randomized_hapke_params(self, sm):
+        reflmod_params = list(sm.asteroid.reflmod_params[RenderEngine.REFLMOD_HAPKE])
+        params = {
+            1: ('hapke_th_sd', 0, 90),
+            2: ('hapke_w_sd', 0, 1),
+            3: ('hapke_b_sd', -1 if reflmod_params[4] == 0 else 0, 1),
+            4: ('hapke_c_sd', 0, 1),
+            5: ('hapke_shoe', 0, np.inf),
+            6: ('hapke_shoe_w', 0, np.pi),
+            7: ('hapke_cboe', 0, np.inf),
+            8: ('hapke_cboe_w', 0, np.pi),
+        }
+        for i, (param, lo, hi) in params.items():
+            sd = getattr(self, param)
+            if sd is None and self.hapke_noise > 0:
+                # multiplicative noise
+                reflmod_params[i] *= np.random.lognormal(0, self.hapke_noise)
+            elif sd is not None and sd > 0:
+                # additive noise
+                reflmod_params[i] += np.random.normal(0, sd)
+            reflmod_params[i] = np.clip(reflmod_params[i], lo, hi)
+
+        return reflmod_params
+
     def load_navcam_image(self, i):
         if self._state_list is None or self._resynth_cam_image:
-            fname = self._cache_file(i)+'.png'
+            fname = self._cache_file(i, postfix=self.navcam_cache_id)+'.png'
         else:
             fname = os.path.join(self._state_db_path, self._state_list[i]+'_P.png')
         return fname if os.path.isfile(fname) else None
@@ -644,7 +727,7 @@ class TestLoop:
                 roterr_pctls,
             )
         else:
-            summary_data = tuple(np.ones(8) * float('nan'))
+            summary_data = tuple(np.ones(4) * float('nan'))
 
         return (
               '%s - t: %.1fmin (%.0fms), '
@@ -723,12 +806,14 @@ class TestLoop:
         return os.path.normpath(
                 os.path.join(self._iter_dir, prefix+'%04d'%i))
     
-    def _cache_file(self, i, prefix=None):
+    def _cache_file(self, i, prefix=None, postfix=None):
         if prefix is None:
             prefix = self.file_prefix
         return os.path.normpath(
-            os.path.join(self.cache_path, (prefix+'%04d'%i) if self._state_list is None
-                                    else self._state_list[i]))
+            os.path.join(self.cache_path,
+                         (prefix+'%04d'%i) if self._state_list is None
+                                           else self._state_list[i])) \
+            + ('' if not postfix else '_%s' % postfix)
     
     def _maybe_exit(self):
         if self.exit:

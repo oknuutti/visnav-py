@@ -36,7 +36,8 @@ PLOT_LIMITS = {
     },
 }
 
-FONT_SIZE = 6
+FONT_SIZE = 8
+FONT_SIZE_LEGEND = 7
 MARKER_SIZE = 4
 LINE_WIDTH = 0.5
 default_cycler = (cycler(color=['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728']) +    # default colors in matplotlib v2.0
@@ -148,7 +149,7 @@ if __name__ == '__main__':
     mpl.rcParams['lines.markersize'] = MARKER_SIZE
     mpl.rcParams['lines.linewidth'] = LINE_WIDTH
     plt.rc('axes', prop_cycle=default_cycler)
-    #mpl.rcParams['legend.fontsize'] = FONT_SIZE
+    mpl.rcParams['legend.fontsize'] = FONT_SIZE_LEGEND
 
     predictors = (
         'distance',     # distance of object
@@ -266,14 +267,15 @@ if __name__ == '__main__':
                 ax.set_prop_cycle(None)
             old_itype = itype
 
+            lbl0 = algo if 1 else ', '.join((itype, algo))
             if single_algo:
-                ax.plot(xt, yt, label=', '.join((itype, algo)) + lbl)
+                ax.plot(xt, yt, label=lbl0+lbl)
                 if ti != -1:
                     xt2, yt2 = windowed_percentile(X[I, pi], yr, 100, window=0.2, p_lim=95, plot_xlim=xlim)
-                    ax.plot(xt2, yt2, color='C1', label=', '.join((itype, algo)) + ' p95')
+                    ax.plot(xt2, yt2, color='C1', label=lbl0+' p95')
             else:
                 # '--' if image_type == 'both' and itype == 'real' else '-'
-                ax.plot(xt, yt, label=', '.join((itype, algo))+lbl)
+                ax.plot(xt, yt, label=lbl0 + lbl)
 
             ax.set_xlim(*PLOT_LIMITS[mode][itype][pi])
             if not single_algo:

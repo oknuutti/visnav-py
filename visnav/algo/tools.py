@@ -8,7 +8,9 @@ import quaternion
 import sys
 from astropy.coordinates import SkyCoord
 from numba.cgutils import printf
+from scipy.interpolate import RectBivariateSpline
 
+from visnav.iotools import objloader
 from visnav.settings import *
 
 
@@ -59,8 +61,20 @@ def sphere_angle_radius(loc, r):
     return np.arcsin(r / np.linalg.norm(loc, axis=1))
 
 
+def dist_across_and_along_vect(A, b):
+    """ A: array of vectors, b: axis vector """
+    lat, lon, r = cartesian2spherical(*b)
+    q = ypr_to_q(lat, lon, 0).conj()
+    R = quaternion.as_rotation_matrix(q)
+    Ab = R.dot(A.T).T
+    d = Ab[:, 0:1]
+    r = np.linalg.norm(Ab[:, 1:3], axis=1).reshape((-1, 1))
+    return r, d
+
+
 def point_vector_dist(A, B, dist_along_v=False):
     """ A: point, B: vector """
+    print("tools.point_vector_dist(A, B) is DEPRECATED, switch to faster tools.dist_across_and_along_vect(A, b)")
 
     # (length of b)**2
     normB2 = (B ** 2).sum(-1).reshape((-1, 1))
@@ -114,9 +128,30 @@ def normalize_v_f8(v):
     return v/norm if norm != 0 else v
 
 
+def generate_field_fft(shape, sd=(0.33, 0.33, 0.34), len_sc=(0.5, 0.5/4, 0.5/16)):
+    from visnav.algo.image import ImageProc
+    sds = sd if getattr(sd, '__len__', False) else [sd]
+    len_scs = len_sc if getattr(len_sc, '__len__', False) else [len_sc]
+    assert len(shape) == 2, 'only 2d shapes are valid'
+    assert len(sds) == len(len_scs), 'len(sd) differs from len(len_sc)'
+    n = np.prod(shape)
+
+    kernel = np.sum(np.stack([1/len_sc*sd*n*ImageProc.gkern2d(shape, 1/len_sc) for sd, len_sc in zip(sds, len_scs)], axis=2), axis=2)
+    f_img = np.random.normal(0, 1, shape) + np.complex(0, 1) * np.random.normal(0, 1, shape)
+    f_img = np.real(np.fft.ifft2(np.fft.fftshift(kernel * f_img)))
+    return f_img
+
+
+@nb.njit(nb.types.f8[:](nb.types.f8[:], nb.types.f8[:], nb.types.f8[:]))
+def _surf_normal(x1, x2, x3):
+#    a, b, c = np.array(x1, dtype=np.float64), np.array(x2, dtype=np.float64), np.array(x3, dtype=np.float64)
+    return normalize_v_f8(cross3d(x2-x1, x3-x1))
+
+
 def surf_normal(x1, x2, x3):
     a, b, c = np.array(x1, dtype=np.float64), np.array(x2, dtype=np.float64), np.array(x3, dtype=np.float64)
-    return normalize_v_f8(cross3d(b-a, c-a))
+    return _surf_normal(a, b, c)
+#    return normalize_v_f8(cross3d(b-a, c-a))
 
 
 def angle_between_v(v1, v2):
@@ -270,8 +305,8 @@ def q_times_mx(q, mx):
     return aqqmx[:, 1:]
 
 def mx2qmx(mx):
-    qmx = np.zeros((mx.shape[0],4))
-    qmx[:,1:] = mx
+    qmx = np.zeros((mx.shape[0], 4))
+    qmx[:, 1:] = mx
     return quaternion.as_quat_array(qmx)
 
 def wrap_rads(a):
@@ -340,6 +375,16 @@ def find_nearest_n(array, value, r, ord=None, fun=None):
     d = np.linalg.norm(diff if fun is None else list(map(fun, diff)), ord=ord, axis=1)
     idxs = np.where(d < r)
     return idxs[0]
+
+def find_nearest_each(haystack, needles, ord=None):
+    assert len(haystack.shape) == 2 and len(needles.shape) == 2 and haystack.shape[1] == needles.shape[1], \
+        'wrong shapes for haystack and needles, %s and %s, respectively' % (haystack.shape, needles.shape)
+    c = haystack.shape[1]
+    diff_mx = np.repeat(needles.reshape((-1, 1, c)), haystack.shape[0], axis=1) - np.repeat(haystack.reshape((1, -1, c)), needles.shape[0], axis=0)
+    norm_mx = np.linalg.norm(diff_mx, axis=2, ord=ord)
+    idxs = norm_mx.argmin(axis=1)
+    return haystack[idxs], idxs
+
 
 def cartesian2spherical(x, y, z):
     r = math.sqrt(x**2 + y**2 + z**2)
@@ -494,7 +539,7 @@ def mv_normal(mean, cov=None, L=None, size=None):
         L = np.linalg.cholesky(cov)
 
     from numpy.random import standard_normal
-    z = standard_normal(final_shape).reshape(mean.shape[0],-1)
+    z = standard_normal(final_shape).reshape(mean.shape[0], -1)
     
     x = L.dot(z).T
     x += mean
@@ -662,23 +707,156 @@ def augment_model(model, multiplier=3, length_scales=(0, 0.1, 1), sds=(1e-5, 1.6
     return aug_model, L
 
 
-def apply_noise(model, support=None, L=None, len_sc=SHAPE_MODEL_NOISE_LEN_SC, 
-                noise_lv=SHAPE_MODEL_NOISE_LV['lo'], only_z=False):
-    
-    noisy_points, avg_dev, L = points_with_noise(points=np.array(model.vertices),
-            support=support, L=L, len_sc=len_sc, noise_lv=noise_lv, only_z=only_z)
+def apply_noise(model, support=(None, None), L=(None, None), len_sc=SHAPE_MODEL_NOISE_LEN_SC,
+                noise_lv=SHAPE_MODEL_NOISE_LV['lo'], only_z=False,
+                tx_noise=0, tx_noise_len_sc=SHAPE_MODEL_NOISE_LEN_SC, tx_hf_noise=True):
 
-    data = model.as_dict()
-    data['vertices'] = noisy_points
-    from visnav.iotools import objloader
-    noisy_model = objloader.ShapeModel(data=data)
-    noisy_model.recalc_norms()
-    
-    return noisy_model, avg_dev, L
+    Sv, St = support
+    Lv, Lt = L
+    inplace = noise_lv == 0 and model.texfile is None
+
+    if noise_lv > 0:
+        noisy_points, avg_dev, Lv = points_with_noise(points=model.vertices, support=Sv, L=Lv,
+                                                      noise_lv=noise_lv, len_sc=len_sc, only_z=only_z)
+    else:
+        noisy_points, avg_dev, Lv = model.vertices, 0, None
+
+    tex = model.tex
+    if tx_noise > 0:
+        if inplace:
+            model.tex = np.ones(model.tex.shape)
+        Lt = Lv if Lt is None and tx_noise == noise_lv and tx_noise_len_sc == len_sc else Lt
+        tex, tx_avg_dev, Lt = texture_noise(model, support=St, L=Lt, noise_sd=tx_noise,
+                                            len_sc=tx_noise_len_sc, hf_noise=tx_hf_noise)
+
+    if inplace:
+        model.tex = tex
+        noisy_model = model
+    else:
+        data = model.as_dict()
+        data['vertices'] = noisy_points
+        if tx_noise > 0:
+            data['tex'] = tex
+            data['texfile'] = None
+
+        from visnav.iotools import objloader
+        noisy_model = objloader.ShapeModel(data=data)
+        if noise_lv > 0:
+            noisy_model.recalc_norms()
+        else:
+            noisy_model.normals = model.normals
+
+    return noisy_model, avg_dev, (Lv, Lt)
     
 
-def points_with_noise(points, support=None, L=None, len_sc=SHAPE_MODEL_NOISE_LEN_SC, 
-                noise_lv=SHAPE_MODEL_NOISE_LV['lo'], max_rng=None, only_z=False):
+def texture_noise(model, support=None, L=None, noise_sd=SHAPE_MODEL_NOISE_LV['lo'],
+                  len_sc=SHAPE_MODEL_NOISE_LEN_SC, max_rng=None, max_n=1e4, hf_noise=True):
+    tex = model.load_texture()
+    if tex is None:
+        print('tools.texture_noise: no texture loaded')
+        return [None] * 3
+
+    r = np.sqrt(max_n / np.prod(tex.shape[:2]))
+    ny, nx = (np.array(tex.shape[:2]) * r).astype(np.int)
+    n = nx * ny
+    tx_grid_xx, tx_grid_yy = np.meshgrid(np.linspace(0, 1, nx), np.linspace(0, 1, ny))
+    tx_grid = np.hstack((tx_grid_xx.reshape((-1, 1)), tx_grid_yy.reshape((-1, 1))))
+
+    support = support if support else model
+    points = np.array(support.vertices)
+    max_rng = np.max(np.ptp(points, axis=0)) if max_rng is None else max_rng
+
+    # use vertices for distances, find corresponding vertex for each pixel
+    y_cov = None
+    if L is None:
+        try:
+            from sklearn.gaussian_process.kernels import Matern, WhiteKernel
+        except:
+            print('Requires scikit-learn, install using "conda install scikit-learn"')
+            sys.exit()
+
+        kernel = 1.0*noise_sd * Matern(length_scale=len_sc*max_rng, nu=1.5) \
+               + 0.5*noise_sd * Matern(length_scale=0.1*len_sc*max_rng, nu=1.5) \
+               + WhiteKernel(noise_level=1e-5*noise_sd*max_rng)  # white noise for positive definite covariance matrix only
+
+        # texture coordinates given so that x points left and *Y POINTS UP*
+        tex_img_coords = np.array(support.texcoords)
+        tex_img_coords[:, 1] = 1 - tex_img_coords[:, 1]
+        _, idxs = find_nearest_each(haystack=tex_img_coords, needles=tx_grid)
+        tx2vx = support.texture_to_vertex_map()
+        y_cov = kernel(points[tx2vx[idxs], :] - np.mean(points, axis=0))
+
+        if 0:
+            # for debugging distances
+            import matplotlib.pyplot as plt
+            import cv2
+            from visnav.algo.image import ImageProc
+
+            orig_tx = cv2.imread(os.path.join(DATA_DIR, '67p+tex.png'), cv2.IMREAD_GRAYSCALE)
+            gx, gy = np.gradient(points[tx2vx[idxs], :].reshape((ny, nx, 3)), axis=(1, 0))
+            gxy = np.linalg.norm(gx, axis=2) + np.linalg.norm(gy, axis=2)
+            gxy = (gxy - np.min(gxy))/(np.max(gxy) - np.min(gxy))
+            grad_img = cv2.resize((gxy*255).astype('uint8'), orig_tx.shape)
+            overlaid = ImageProc.merge((orig_tx, grad_img))
+
+            plt.figure(1)
+            plt.imshow(overlaid)
+            plt.show()
+
+    # sample gp
+    e0, L = mv_normal(np.zeros(n), cov=y_cov, L=L)
+    e0 = e0.reshape((ny, nx))
+
+    # interpolate for final texture
+    x = np.linspace(np.min(tx_grid_xx), np.max(tx_grid_xx), tex.shape[1])
+    y = np.linspace(np.min(tx_grid_yy), np.max(tx_grid_yy), tex.shape[0])
+    interp0 = RectBivariateSpline(tx_grid_xx[0, :], tx_grid_yy[:, 0], e0, kx=1, ky=1)
+    err0 = interp0(x, y)
+
+    if 0:
+        import matplotlib.pyplot as plt
+        import cv2
+        from visnav.algo.image import ImageProc
+        orig_tx = cv2.imread(os.path.join(DATA_DIR, '67p+tex.png'), cv2.IMREAD_GRAYSCALE)
+        err_ = err0 if 1 else e0
+        eimg = (err_ - np.min(err_)) / (np.max(err_) - np.min(err_))
+        eimg = cv2.resize((eimg * 255).astype('uint8'), orig_tx.shape)
+        overlaid = ImageProc.merge((orig_tx, eimg))
+        plt.figure(1)
+        plt.imshow(overlaid)
+        plt.show()
+
+    err1 = 0
+    if hf_noise:
+        e1, L = mv_normal(np.zeros(n), L=L)
+        e1 = e1.reshape((ny, nx))
+        interp1 = RectBivariateSpline(tx_grid_xx[0, :], tx_grid_yy[:, 0], e1, kx=1, ky=1)
+        err_coef = interp1(x, y)
+        lo, hi = np.min(err_coef), np.max(err_coef)
+        err_coef = (err_coef - lo)/(hi - lo)
+
+        len_sc = 10
+        err1 = generate_field_fft(tex.shape, (6*noise_sd, 4*noise_sd), (len_sc/1000, len_sc/4500)) if hf_noise else 0
+        err1 *= err_coef
+
+    noisy_tex = tex + err0 + err1
+    noisy_tex /= np.max(noisy_tex)
+
+    if 0:
+        import matplotlib.pyplot as plt
+        plt.figure(1)
+        plt.imshow(noisy_tex)
+        plt.figure(2)
+        plt.imshow(err0)
+        plt.figure(3)
+        plt.imshow(err1)
+        plt.show()
+
+    return noisy_tex, np.std(err0 + err1), L
+
+
+def points_with_noise(points, support=None, L=None, noise_lv=SHAPE_MODEL_NOISE_LV['lo'],
+                      len_sc=SHAPE_MODEL_NOISE_LEN_SC, max_rng=None, only_z=False):
     
     from scipy.interpolate import LinearNDInterpolator, NearestNDInterpolator
     import random
@@ -706,7 +884,7 @@ def points_with_noise(points, support=None, L=None, len_sc=SHAPE_MODEL_NOISE_LEN
 
     # sample gp
     e0, L = mv_normal(np.zeros(n), cov=y_cov, L=L)
-    err = np.exp(e0).reshape((-1, 1))
+    err = np.exp(e0.astype(points.dtype)).reshape((-1, 1))
 
     if len(err) == len(points):
         full_err = err
@@ -715,7 +893,7 @@ def points_with_noise(points, support=None, L=None, len_sc=SHAPE_MODEL_NOISE_LEN
     else:
         # interpolate
         interp = LinearNDInterpolator((support-mean)*1.0015, err)
-        full_err = interp(points-mean)
+        full_err = interp(points-mean).astype(points.dtype)
 
         # maybe extrapolate
         nanidx = tuple(np.isnan(full_err).flat)
@@ -724,7 +902,7 @@ def points_with_noise(points, support=None, L=None, len_sc=SHAPE_MODEL_NOISE_LEN
                 print('%sx nans'%np.sum(nanidx))
             naninterp = NearestNDInterpolator(support, err)
             try:
-                full_err[nanidx,] = naninterp(points[nanidx,:])
+                full_err[nanidx,] = naninterp(points[nanidx, :]).astype(points.dtype)
             except IndexError as e:
                 raise IndexError('%s,%s,%s'%(err.shape, full_err.shape, points.shape)) from e
 
@@ -1046,22 +1224,22 @@ def plot_poses(poses, conseq=True, wait=True, arrow_len=1):
 #        x = np.matrix(np.outer(v, b_dst[i]))
 #        M = M + x
 #
-#    N11 = float(M[0][:,0] + M[1][:,1] + M[2][:,2])
-#    N22 = float(M[0][:,0] - M[1][:,1] - M[2][:,2])
-#    N33 = float(-M[0][:,0] + M[1][:,1] - M[2][:,2])
-#    N44 = float(-M[0][:,0] - M[1][:,1] + M[2][:,2])
-#    N12 = float(M[1][:,2] - M[2][:,1])
-#    N13 = float(M[2][:,0] - M[0][:,2])
-#    N14 = float(M[0][:,1] - M[1][:,0])
-#    N21 = float(N12)
-#    N23 = float(M[0][:,1] + M[1][:,0])
-#    N24 = float(M[2][:,0] + M[0][:,2])
-#    N31 = float(N13)
-#    N32 = float(N23)
-#    N34 = float(M[1][:,2] + M[2][:,1])
-#    N41 = float(N14)
-#    N42 = float(N24)
-#    N43 = float(N34)
+    # N11 = M[0, 0] + M[1, 1] + M[2, 2]
+    # N22 = M[0, 0] - M[1, 1] - M[2, 2]
+    # N33 = -M[0, 0] + M[1, 1] - M[2, 2]
+    # N44 = -M[0, 0] - M[1, 1] + M[2, 2]
+    # N12 = M[1, 2] - M[2, 1]
+    # N13 = M[2, 0] - M[0, 2]
+    # N14 = M[0, 1] - M[1, 0]
+    # N21 = N12
+    # N23 = M[0, 1] + M[1, 0]
+    # N24 = M[2, 0] + M[0, 2]
+    # N31 = N13
+    # N32 = N23
+    # N34 = M[1, 2] + M[2, 1]
+    # N41 = N14
+    # N42 = N24
+    # N43 = N34
 #
 #    N=np.matrix([[N11, N12, N13, N14],\
 #                 [N21, N22, N23, N24],\

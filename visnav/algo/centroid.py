@@ -24,6 +24,7 @@ class CentroidAlgo(AlgorithmBase):
         self.DEBUG_IMG_POSTFIX = 'c'            # fi batch mode, save result image in a file ending like this
 
         self.RENDER_SHADOWS = True
+        self.RENDER_TEXTURES = True
         self.MIN_PIXELS_FOR_DETECTION = 30      # fail if less pixels lit
         self.ASTEROID_MIN_BORDER_MARGIN = 0.04  # if less than margin at both extrames, astroid too close
         self.ASTEROID_MAX_SPAN = 0.85           # if asteroid spans more than this, it's too close
@@ -72,7 +73,7 @@ class CentroidAlgo(AlgorithmBase):
                 raise PositioningException('Result failed quality test with score: %.3f'%(result_quality,))
         
         if BATCH_MODE and self.debug_filebase:
-            img = self.render(shadows=self.RENDER_SHADOWS)
+            img = self.render(shadows=self.RENDER_SHADOWS, textures=self.RENDER_TEXTURES)
             cv2.imwrite(self.debug_filebase+'r.png', img)
 
         if DEBUG:
@@ -85,7 +86,7 @@ class CentroidAlgo(AlgorithmBase):
         
         if not simple:
             if ref_img is None:
-                ref_img = self.render(shadows=self.RENDER_SHADOWS)
+                ref_img = self.render(shadows=self.RENDER_SHADOWS, textures=self.RENDER_TEXTURES)
                 th, ref_img = cv2.threshold(ref_img, self._bg_threshold, 255, cv2.THRESH_TOZERO)
                 ref_img = np.atleast_3d(ref_img)
                 self._ref_img = ref_img
