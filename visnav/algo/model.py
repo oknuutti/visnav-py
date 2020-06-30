@@ -545,6 +545,25 @@ class SystemModel(ABC):
             self.asteroid_q = self.spacecraft_q * dq * sc_ast_lf_q
 
     def cropped_system_tf(self, x, y, w, h):
+        # for distance adjustment
+        oh, ow = self.cam.height, self.cam.width
+        sc = max(h / oh, w / ow)
+
+        # crop to same aspect ratio, center the area
+        th, tw = oh * sc, ow * sc
+        ty, tx = y - (th - h) / 2, x - (tw - w) / 2
+
+        # don't rotate centre of crop area to view if any of the sides coincide with original bounds
+        if tx + tw >= ow:
+            tx = ow - tw
+        elif tx <= 0:
+            tx = 0
+
+        if ty + th >= oh:
+            ty = oh - th
+        elif ty <= 0:
+            ty = 0
+
         # for rotation adjustment
         if False:
             # px are on a plane
@@ -554,12 +573,10 @@ class SystemModel(ABC):
                 ((y + h / 2) - self.cam.height // 2) / (self.cam.height / 2) * math.tan(math.radians(sm.cam.y_fov / 2)))
         else:
             # px are on a curved surface
-            dx = ((x + w / 2) - self.cam.width // 2) / self.cam.width * math.radians(self.cam.x_fov)
-            dy = ((y + h / 2) - self.cam.height // 2) / self.cam.height * math.radians(self.cam.y_fov)
+            dx = ((tx + tw / 2) - ow // 2) / ow * math.radians(self.cam.x_fov)
+            dy = ((ty + th / 2) - oh // 2) / oh * math.radians(self.cam.y_fov)
         dq = tools.ypr_to_q(-dy, -dx, 0)
 
-        # for distance adjustment
-        sc = max(h / self.cam.height, w / self.cam.width)
         return sc, dq
 
     def random_state(self, uniform_distance=True, opzone_only=False):
@@ -853,6 +870,11 @@ class Camera:
     #     return 1/np.linspace(1/f_min, 1/f_max, n+(0 if endpoints else 1), endpoint=endpoints)[(0 if endpoints else 1):]
 
     @staticmethod
+    def sample_qeff(qeff_coefs, lambda_min, lambda_max, lam):
+        qeff_fn, _ = Camera.qeff_fn(tuple(qeff_coefs), lambda_min, lambda_max)
+        return qeff_fn(lam)[0]
+
+    @staticmethod
     def qeff_fn_lams(lambda_min, lambda_max, n, endpoints=True):
         return np.linspace(lambda_min, lambda_max, n+(0 if endpoints else 1), endpoint=endpoints)[(0 if endpoints else 1):]
 
@@ -934,14 +956,18 @@ class Camera:
 
     @staticmethod
     @lru_cache(maxsize=10)
-    def electrons_per_solar_irradiance_s(qeff_coefs, lambda_min, lambda_max):
+    def electrons_per_solar_irradiance_s(qeff_coefs, lambda_min, lambda_max, use_bb=True):
         """
         Returns electrons per total solar irradiance [W/m2] assuming spectrum of the sun & sensor
         """
 
         from visnav.render.stars import Stars
         from visnav.render.sun import Sun
-        spectrum_fn = Stars.black_body_radiation_fn(Sun.TEMPERATURE)  # temperature of sun
+        if use_bb:
+            spectrum_fn = Stars.black_body_radiation_fn(Sun.TEMPERATURE)  # temperature of sun
+        else:
+            spectrum_fn = Stars.synthetic_radiation_fn(Sun.TEMPERATURE, Sun.METALLICITY,
+                                                       Sun.LOG_SURFACE_G, mag_v=Sun.MAG_V)
 
         # need to divide result with value integrated over whole spectrum as units are in W/m3/sr
         tphi = integrate.quad(spectrum_fn, 1e-8, 1e-2)
@@ -950,10 +976,15 @@ class Camera:
 
     @staticmethod
     @lru_cache(maxsize=1000)
-    def electron_flux_in_sensed_spectrum(qeff_coefs, T, mag_v, lambda_min, lambda_max):
+    def electron_flux_in_sensed_spectrum(qeff_coefs, Teff, fe_h, log_g, mag_v, lambda_min, lambda_max):
         from visnav.render.stars import Stars
-        coef = Stars.magnitude_to_spectral_flux_density(mag_v) / Stars.black_body_radiation(T, Stars.MAG_V_LAM0)
-        spectrum_fn = lambda lam: coef * Stars.black_body_radiation(T, lam)
+
+        if 1:
+            spectrum_fn = Stars.synthetic_radiation_fn(Teff, fe_h, log_g, mag_v=mag_v)
+        else:
+            coef = Stars.magnitude_to_spectral_flux_density(mag_v) / Stars.black_body_radiation(T, Stars.MAG_V_LAM0)
+            spectrum_fn = lambda lam: coef * Stars.black_body_radiation(Teff, lam)
+
         return Camera.electron_flux_in_sensed_spectrum_fn(qeff_coefs, spectrum_fn, lambda_min, lambda_max)
 
     @staticmethod

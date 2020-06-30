@@ -6,9 +6,13 @@ import numpy as np
 import numba as nb
 import quaternion
 import sys
+
+import scipy
 from astropy.coordinates import SkyCoord
 from numba.cgutils import printf
 from scipy.interpolate import RectBivariateSpline
+from scipy.interpolate import NearestNDInterpolator
+from scipy.spatial.ckdtree import cKDTree
 
 from visnav.iotools import objloader
 from visnav.settings import *
@@ -74,7 +78,6 @@ def dist_across_and_along_vect(A, b):
 
 def point_vector_dist(A, B, dist_along_v=False):
     """ A: point, B: vector """
-    print("tools.point_vector_dist(A, B) is DEPRECATED, switch to faster tools.dist_across_and_along_vect(A, b)")
 
     # (length of b)**2
     normB2 = (B ** 2).sum(-1).reshape((-1, 1))
@@ -171,9 +174,10 @@ def angle_between_v(v1, v2):
     return math.acos(np.clip(cos_angle, -1, 1))
 
 
-def angle_between_v_mx(a, B):
-    cos_angles = (B/np.linalg.norm(B, axis=1).reshape((-1, 1))).dot(normalize_v(a).reshape((-1, 1)))
-    return np.arccos(np.clip(cos_angles, -1.0, 1.0))
+def angle_between_v_mx(a, B, normalize=True):
+    Bn = B/np.linalg.norm(B, axis=1).reshape((-1, 1)) if normalize else B
+    an = normalize_v(a).reshape((-1, 1)) if normalize else a
+    return np.arccos(np.clip(Bn.dot(an), -1.0, 1.0))
 
 
 def angle_between_mx(A, B):
@@ -219,6 +223,14 @@ def angle_between_ypr(ypr1, ypr2):
     q1 = ypr_to_q(*ypr1)
     q2 = ypr_to_q(*ypr2)
     return angle_between_q(q1, q2)
+
+
+def distance_mx(A, B):
+    assert A.shape[1] == B.shape[1], 'matrices must have same amount of columns'
+    k = A.shape[1]
+    O = np.repeat(A.reshape((-1, 1, k)), B.shape[0], axis=1) - np.repeat(B.reshape((1, -1, k)), A.shape[0], axis=0)
+    D = np.linalg.norm(O, axis=2)
+    return D
 
 
 def q_to_unitbase(q):
@@ -404,12 +416,16 @@ def spherical2cartesian(lat, lon, r):
     return np.array([x, y, z])
 
 
-def spherical2cartesian_arr(A):
+def spherical2cartesian_arr(A, r=None):
     theta = math.pi/2 - A[:, 0]
     phi = A[:, 1]
-    x = A[:, 2] * np.sin(theta) * np.cos(phi)
-    y = A[:, 2] * np.sin(theta) * np.sin(phi)
-    z = A[:, 2] * np.cos(theta)
+    r = (r or A[:, 2])
+    x = r * np.sin(theta)
+    y = x * np.sin(phi)
+    x *= np.cos(phi)
+    # x = r * np.sin(theta) * np.cos(phi)
+    # y = r * np.sin(theta) * np.sin(phi)
+    z = r * np.cos(theta)
     return np.vstack([x, y, z]).T
 
 
@@ -855,12 +871,90 @@ def texture_noise(model, support=None, L=None, noise_sd=SHAPE_MODEL_NOISE_LV['lo
     return noisy_tex, np.std(err0 + err1), L
 
 
+class NearestKernelNDInterpolator(NearestNDInterpolator):
+    def __init__(self, *args, k_nearest=None, kernel='gaussian', kernel_sc=None,
+                 kernel_eps=1e-12, query_eps=0.05, max_distance=None, **kwargs):
+        """
+        Parameters
+        ----------
+        kernel : one of the following functions of distance that give weight to neighbours:
+            'linear': (kernel_sc/(r + kernel_eps))
+            'quadratic': (kernel_sc/(r + kernel_eps))**2
+            'cubic': (kernel_sc/(r + kernel_eps))**3
+            'gaussian': exp(-(r/kernel_sc)**2)
+        k_nearest : if given, uses k_nearest neighbours for interpolation regardless of their distances
+        """
+        choices = ('linear', 'quadratic', 'cubic', 'gaussian')
+        assert kernel in choices, 'kernel must be one of %s' % (choices,)
+        self._tree_options = kwargs.get('tree_options', {})
+
+        super(NearestKernelNDInterpolator, self).__init__(*args, **kwargs)
+        if max_distance is None:
+            if kernel_sc is None:
+                d, _ = self.tree.query(self.points, k=k_nearest)
+                kernel_sc = np.mean(d) * k_nearest/(k_nearest-1)
+            max_distance = kernel_sc * 3
+
+        assert kernel_sc is not None, 'kernel_sc need to be set'
+        self.kernel = kernel
+        self.kernel_sc = kernel_sc
+        self.kernel_eps = kernel_eps
+        self.k_nearest = k_nearest
+        self.max_distance = max_distance
+        self.query_eps = query_eps
+
+    def _linear(self, r):
+        if scipy.sparse.issparse(r):
+            return self.kernel_sc / (r + self.kernel_eps)
+        else:
+            return self.kernel_sc/(r + self.kernel_eps)
+
+    def _quadratic(self, r):
+        if scipy.sparse.issparse(r):
+            return np.power(self.kernel_sc/(r.data + self.kernel_eps), 2, out=r.data)
+        else:
+            return (self.kernel_sc/(r + self.kernel_eps)) ** 2
+
+    def _cubic(self, r):
+        if scipy.sparse.issparse(r):
+            return self.kernel_sc/(r + self.kernel_eps).power(3)
+        else:
+            return (self.kernel_sc/(r + self.kernel_eps)) ** 3
+
+    def _gaussian(self, r):
+        if scipy.sparse.issparse(r):
+            return np.exp((-r.data/self.kernel_sc)**2, out=r.data)
+        else:
+            return np.exp(-(r/self.kernel_sc)**2)
+
+    def __call__(self, *args):
+        """
+        Evaluate interpolator at given points.
+
+        Parameters
+        ----------
+        xi : ndarray of float, shape (..., ndim)
+            Points where to interpolate data at.
+
+        """
+        from scipy.interpolate.interpnd import _ndim_coords_from_arrays
+
+        xi = _ndim_coords_from_arrays(args, ndim=self.points.shape[1])
+        xi = self._check_call_shape(xi)
+        xi = self._scale_x(xi)
+
+        r, idxs = self.tree.query(xi, self.k_nearest, eps=self.query_eps, distance_upper_bound=self.max_distance or np.inf)
+
+        w = getattr(self, '_'+self.kernel)(r).reshape((-1, self.k_nearest, 1)) + self.kernel_eps
+        w /= np.sum(w, axis=1).reshape((-1, 1, 1))
+
+        yt = np.vstack((self.values, [0]))  # if idxs[i, j] == len(values), then i:th point doesnt have j:th match
+        yi = np.sum(yt[idxs, :] * w, axis=1)
+        return yi
+
+
 def points_with_noise(points, support=None, L=None, noise_lv=SHAPE_MODEL_NOISE_LV['lo'],
                       len_sc=SHAPE_MODEL_NOISE_LEN_SC, max_rng=None, only_z=False):
-    
-    from scipy.interpolate import LinearNDInterpolator, NearestNDInterpolator
-    import random
-    import time
     
     try:
         from sklearn.gaussian_process.kernels import Matern, WhiteKernel
@@ -892,19 +986,22 @@ def points_with_noise(points, support=None, L=None, noise_lv=SHAPE_MODEL_NOISE_L
             print('using orig gp sampled err')
     else:
         # interpolate
-        interp = LinearNDInterpolator((support-mean)*1.0015, err)
+        sc = 0.05*len_sc*max_rng
+        interp = NearestKernelNDInterpolator(support-mean, err, k_nearest=12, kernel='gaussian',
+                                             kernel_sc=sc, max_distance=sc*6)
         full_err = interp(points-mean).astype(points.dtype)
 
         # maybe extrapolate
         nanidx = tuple(np.isnan(full_err).flat)
         if np.any(nanidx):
-            if DEBUG or not BATCH_MODE:
-                print('%sx nans'%np.sum(nanidx))
-            naninterp = NearestNDInterpolator(support, err)
-            try:
-                full_err[nanidx,] = naninterp(points[nanidx, :]).astype(points.dtype)
-            except IndexError as e:
-                raise IndexError('%s,%s,%s'%(err.shape, full_err.shape, points.shape)) from e
+            assert False, 'shouldnt happen'
+            # if DEBUG or not BATCH_MODE:
+            #     print('%sx nans'%np.sum(nanidx))
+            # naninterp = NearestNDInterpolator(support, err)
+            # try:
+            #     full_err[nanidx,] = naninterp(points[nanidx, :]).astype(points.dtype)
+            # except IndexError as e:
+            #     raise IndexError('%s,%s,%s'%(err.shape, full_err.shape, points.shape)) from e
 
     # extra high frequency noise
     # white_noise = 1 if True else np.exp(np.random.normal(scale=0.2*noise_lv*max_rng, size=(len(full_err),1)))

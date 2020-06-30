@@ -120,11 +120,11 @@ class ShapeModel:
                                     'wrong shape "vertices" array %s should be (-1, 3)' % (self.vertices.shape,)
 
         self.texcoords = np.array(texcoords, dtype=np.float32)
-        assert self.texcoords.shape[1:] == (2,),\
+        assert len(self.texcoords) == 0 or self.texcoords.shape[1:] == (2,),\
                                     'wrong shape "texcoords" array %s should be (-1, 2)' % (self.texcoords.shape,)
 
         self.recalc_norms()
-        assert len(self.normals) == 0 or self.normals.shape[1:] == (3,), \
+        assert self.normals.shape[1:] == (3,), \
                                     'wrong shape "normals" array %s should be (-1, 3)' % (self.normals.shape,)
 
     @staticmethod
@@ -188,6 +188,7 @@ class ShapeModel:
 
     def pack_all(self):
         f, v, n, t = self.faces, self.vertices, self.normals, self.texcoords
+        t = t if len(t) else np.zeros((len(f), 2), dtype=np.float32)
         return np.hstack((v[f[:, 0], :], n[f[:, 1], :], t[f[:, 2], :])).astype(np.float32).tobytes()
 
     def pack_simple(self):

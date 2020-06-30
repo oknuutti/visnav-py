@@ -175,9 +175,14 @@ if __name__ == '__main__':
         base_loc = np.array(sm.spacecraft_pos) + np.array([-0.1, 1.1, 0])
 
         if 1:
-            img = ImageProc.add_jet(sm.cam, img, dist < 1000, base_loc, 0.6,
-                                    phase_angle=math.radians(120), direction=math.radians(120),
-                                    intensity=0.35, angular_radius=np.pi/30, down_scaling=6)
+            img = ImageProc.add_jets(sm.cam, img, dist < 1000,
+                                     (base_loc, base_loc, base_loc),
+                                     (0.6, 0.4, 0.8),
+                                     phase_angles=(math.radians(60), None, None),
+                                     directions=(math.radians(120), None, None),
+                                     intensities=(0.35, 0.2, 0.3),
+                                     angular_radii=(np.pi/30, np.pi/20, np.pi/40),
+                                     down_scaling=6)
         if 1:
             img = ImageProc.add_haze(img, dist < 1000, 0.15)
 

@@ -47,7 +47,7 @@ class DidymosSystemModel(SystemModel):
             7.309,  # y fov in degrees
             f_stop=5,       # TODO: put better value here
             point_spread_fn=0.50,   # ratio of brightness in center pixel
-            scattering_coef=5e-9,  # affects strength of haze/veil when sun shines on the lens
+            scattering_coef=2e-10,  # affects strength of haze/veil when sun shines on the lens
             **common_kwargs
         )
         wide_cam = Camera(
@@ -57,7 +57,7 @@ class DidymosSystemModel(SystemModel):
             58.38,  # y fov in degrees
             f_stop=5,   # TODO: put better value here
             point_spread_fn=0.35,   # ratio of brightness in center pixel
-            scattering_coef=5e-9,  # affects strength of haze/veil when sun shines on the lens
+            scattering_coef=2e-10,  # affects strength of haze/veil when sun shines on the lens
             **common_kwargs
         )
 

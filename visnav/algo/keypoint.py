@@ -426,12 +426,11 @@ class KeypointAlgo(AlgorithmBase):
 
         n_sce_kp = np.tan((np.array([kp.pt for kp in sce_kp])
                         - np.array([ix_off + sm.cam.width/2, iy_off + sm.cam.height/2])*sce_img_sc
-                   ) * math.radians(sm.cam.x_fov) / sm.cam.width).reshape((-1, 1, 2)) * abs(ast_z)
+                   ) * math.radians(sm.cam.x_fov) / sm.cam.width).reshape((-1, 2)) * abs(ast_z)
         n_ref_kp = np.tan((np.array([kp.pt for kp in ref_kp])
                         - np.array([sm.view_width/2, sm.view_height/2])*ref_img_sc
-                   ) * math.radians(sm.cam.x_fov) / sm.cam.width).reshape((1, -1, 2)) * abs(render_z)
-        O = np.repeat(n_sce_kp, n_ref_kp.shape[1], axis=1) - np.repeat(n_ref_kp, n_sce_kp.shape[0], axis=0)
-        D = np.linalg.norm(O, axis=2)
+                   ) * math.radians(sm.cam.x_fov) / sm.cam.width).reshape((-1, 2)) * abs(render_z)
+        D = tools.distance_mx(n_sce_kp, n_ref_kp)
 
         match_radius = uncertainty_radius + KeypointAlgo.MATCH_MASK_RADIUS * sm.asteroid.max_radius * 2 / 1000
         return (D < match_radius).astype('uint8')

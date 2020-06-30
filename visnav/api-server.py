@@ -16,6 +16,7 @@ import numpy as np
 import quaternion
 import sys
 import pytz
+#import tracemalloc
 
 import settings
 from visnav.algo.centroid import CentroidAlgo
@@ -41,9 +42,9 @@ def main():
     port = int(sys.argv[2])
 
     if len(sys.argv) > 3:
-        server = ApiServer(sys.argv[3], port=port, hires=False, result_rendering=True)
+        server = ApiServer(sys.argv[3], port=port, hires=True, result_rendering=False)
     else:
-        server = SpawnMaster(port=port, max_count=5000)
+        server = SpawnMaster(port=port, max_count=20000)
 
     try:
         server.listen()
@@ -363,7 +364,7 @@ class ApiServer:
         return json.dumps(result)
 
     def _odometry_track(self, params):
-        VO_EST_CAM_FRAME = False
+        VO_EST_CAM_POSE = False
 
         session = params[0]
 
@@ -380,31 +381,37 @@ class ApiServer:
 
         cv2sc_q = SystemModel.cv2gl_q * SystemModel.sc2gl_q.conj()
         sc_ast_cvf_q = cv2sc_q * sc_q.conj() * ast_q * cv2sc_q.conj()
-        sc_ast_cvf_v = tools.q_times_v(cv2sc_q * sc_q.conj(), ast_v - sc_v)
+        sc_ast_cvf_v = tools.q_times_v(cv2sc_q * sc_q.conj(), ast_v - sc_v) * 1000
 
-        if VO_EST_CAM_FRAME:
+        if VO_EST_CAM_POSE:
             # still from global to old ast-sc frame
             sc_ast_cvf_q = cv2sc_q * ast_q.conj() * sc_q * cv2sc_q.conj()
-            sc_ast_cvf_v = tools.q_times_v(cv2sc_q * ast_q.conj(), sc_v - ast_v)
+            sc_ast_cvf_v = tools.q_times_v(cv2sc_q * ast_q.conj(), sc_v - ast_v) * 1000
 #            sc_ast_cvf_v = tools.q_times_v(sc_ast_cvf_q * cv2sc_q, sc_v - ast_v)
 
         # TODO: modify so that uncertainties are given (or not)
         prior = Pose(sc_ast_cvf_v, sc_ast_cvf_q, np.ones((3,))*0.1, np.ones((3,))*0.01)
 
+        # tracemalloc.start()
+        # current0, peak0 = tracemalloc.get_traced_memory()
+        # print("before: %.0fMB" % (current0/1024/1024))
         if session not in self._odometry:
             self._odometry[session] = VisualOdometry(self._sm, self._sm.view_width*2, verbose=1,
-                                                     use_scale_correction=False, est_cam_frame=VO_EST_CAM_FRAME)
+                                                     use_scale_correction=False, est_cam_pose=VO_EST_CAM_POSE)
         post, bias_sds, scale_sd = self._odometry[session].process(img, time, prior, sc_q)
+        # current, peak = tracemalloc.get_traced_memory()
+        # print("transient: %.0fMB" % ((peak - current)/1024/1024))
+        # tracemalloc.stop()
 
         if post is not None:
             est_sc_ast_scf_q = cv2sc_q.conj() * post.quat * cv2sc_q
-            est_sc_ast_scf_v = tools.q_times_v(cv2sc_q.conj(), post.loc) * 1000
+            est_sc_ast_scf_v = tools.q_times_v(cv2sc_q.conj(), post.loc)
 
-            if VO_EST_CAM_FRAME:
+            if VO_EST_CAM_POSE:
                 # still from old ast-sc frame to local sc-ast frame
                 est_sc_ast_scf_q = cv2sc_q.conj() * post.quat.conj() * cv2sc_q
                 # NOTE: we use prior orientation instead of posterior one as the error there grows over time
-                est_sc_ast_scf_v = -tools.q_times_v(cv2sc_q.conj() * prior.quat.conj(), post.loc) * 1000
+                est_sc_ast_scf_v = -tools.q_times_v(cv2sc_q.conj() * prior.quat.conj(), post.loc)
 
             if self._result_frame == ApiServer.FRAME_GLOBAL:
                 est_sc_ast_scf_q = sc_q * est_sc_ast_scf_q
@@ -420,7 +427,9 @@ class ApiServer:
             #   - orientation bias drift sd (pitch & yaw)
             #   - orientation bias drift sd (roll)
             #   - scale drift sd
-            est_sc_ast_lf_v_s2 = post.loc_s2
+            dist = np.linalg.norm(sc_ast_cvf_v)
+            bias_sds = bias_sds * dist
+            est_sc_ast_lf_v_s2 = post.loc_s2 * dist
             est_sc_ast_lf_so3_s2 = post.so3_s2
 
             result = [
@@ -489,7 +498,7 @@ class ApiServer:
         idx = call.find(' ')
         mission, command = (call[:idx] if idx >= 0 else call).split('|')
         if mission != self._mission:
-            assert False, 'wrong mission for this server instance, expected %s but got %s'%(self._mission, mission)
+            assert False, 'wrong mission for this server instance, expected %s but got %s, command was %s'%(self._mission, mission, command)
 
         params = []
         try:

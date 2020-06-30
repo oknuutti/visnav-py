@@ -25,21 +25,41 @@ class ImageProc():
         return cv2.add(image, noise_img[:,:,3])
     
     @staticmethod
-    def crop_and_zoom_image(img, x_off, y_off, width, height, scale, trg_w_h=None):
+    def crop_and_zoom_image(image, x_off, y_off, width, height, scale, trg_w_h=None, depth=None):
+        tw, th = trg_w_h
         if scale is None:
-            scale = min(trg_w_h[1] / height, trg_w_h[0] / width)
+            scale = min(th / height, tw / width)
 
-        imgc = cv2.resize(img[y_off:y_off + height, x_off:x_off + width], None, fx=scale, fy=scale,
-                          interpolation=cv2.INTER_CUBIC)
+        res = []
+        for img in [image] + ([] if depth is None else [depth]):
+            imgc = cv2.resize(img[y_off:y_off + height, x_off:x_off + width], None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+            oh, ow = img.shape
+            ch, cw = imgc.shape
 
-        if trg_w_h is not None:
-            imgd = np.zeros((trg_w_h[1], trg_w_h[0]), dtype=img.dtype)
-            y0, x0 = (imgd.shape[0] - imgc.shape[0]) // 2, (imgd.shape[1] - imgc.shape[1]) // 2
-            imgd[y0:y0 + imgc.shape[0], x0:x0 + imgc.shape[1]] = imgc
-        else:
-            imgd = imgc
+            if trg_w_h is not None:
+                if x_off + width >= ow:
+                    x0 = tw - cw
+                elif x_off <= 0:
+                    x0 = 0
+                else:
+                    x0 = (tw - cw) // 2
 
-        return imgd
+                if y_off + height >= oh:
+                    y0 = th - ch
+                elif y_off <= 0:
+                    y0 = 0
+                else:
+                    y0 = (th - ch) // 2
+
+                imgd = np.zeros((th, tw), dtype=img.dtype)
+                imgd[y0:y0+ch, x0:x0+cw] = imgc
+            else:
+                imgd = imgc
+            res.append(imgd)
+
+        if depth is not None:
+            return res
+        return res[0]
 
     @staticmethod
     def single_object_bounds(img, threshold, crop_marg, min_px, debug=False):
@@ -228,8 +248,8 @@ class ImageProc():
         return skernel
 
     @staticmethod
-    def add_jet(cam, img, mask, base_loc, trunc_len=None, phase_angle=None, direction=None,
-                intensity=0.1, angular_radius=np.pi/16, down_scaling=1):
+    def add_jets(cam, img, mask, base_locs: tuple, trunc_lens=(None,), phase_angles=(None,), directions=(None,),
+                intensities=(0.1,), angular_radii=(np.pi/16,), down_scaling=1):
         """
         - The jet generated is a truncated cone that has a density proportional to (truncation_distance/distance_from_untruncated_origin)**2
         - Truncation so that base width is 0.1 of mask diameter
@@ -244,21 +264,25 @@ class ImageProc():
         assert down_scaling >= 1, 'only values of >=1 make sense for down_scaling'
         scaling = 1/down_scaling
 
-        max = ImageProc._img_max_valid(img)
-        phase_angle = np.random.uniform(0, np.pi) if phase_angle is None else phase_angle
-        direction = np.random.uniform(-np.pi, np.pi) if direction is None else direction
-        d0 = np.linalg.norm(base_loc)*0.01 if trunc_len is None else trunc_len
+        maxval = ImageProc._img_max_valid(img)
+        base_locs = np.array(base_locs).copy()
+        phase_angles = [np.random.uniform(0, np.pi) if pa is None else pa for pa in phase_angles]
+        directions = [np.random.uniform(-np.pi, np.pi) if dir is None else dir for dir in directions]
+        trunc_lens = [np.linalg.norm(base_locs[i])*0.01 if tl is None else tl for i, tl in enumerate(trunc_lens)]
 
-        # q = np.quaternion(math.cos(-direction / 2), 0, 0, math.sin(-direction / 2)) \
-        #     * np.quaternion(math.cos(phase_angle / 2), 0, math.sin(phase_angle / 2), 0)
-        q1 = np.quaternion(math.cos(-phase_angle / 2), 0, math.sin(-phase_angle / 2), 0)
-        q2 = np.quaternion(math.cos(direction / 2), 0, 0, math.sin(direction / 2))
-        q = q2*q1
-        axis = tools.q_times_v(q, np.array([0, 0, -1]))
-        base_loc = base_loc - axis * trunc_len
+        axes = []
+        for i in range(len(phase_angles)):
+            # q = np.quaternion(math.cos(-direction / 2), 0, 0, math.sin(-direction / 2)) \
+            #     * np.quaternion(math.cos(phase_angle / 2), 0, math.sin(phase_angle / 2), 0)
+            q1 = np.quaternion(math.cos(-phase_angles[i] / 2), 0, math.sin(-phase_angles[i] / 2), 0)
+            q2 = np.quaternion(math.cos(directions[i] / 2), 0, 0, math.sin(directions[i] / 2))
+            q = q2 * q1
+            axis = tools.q_times_v(q, np.array([0, 0, -1]))
+            axes.append(axis)
+            base_locs[i] -= axis * trunc_lens[i]
 
         # density function of the jet
-        def density(loc_arr):
+        def density(loc_arr, base_loc, axis, d0, angular_radius, intensity):
             loc_arr = loc_arr - base_loc
             r, d = tools.dist_across_and_along_vect(loc_arr, axis)
 #            r, d = tools.point_vector_dist(loc_arr, axis, dist_along_v=True)
@@ -271,7 +295,7 @@ class ImageProc():
             r_sd = d[coef > 0] * np.tan(angular_radius)
             coef[coef > 0] *= np.exp((-0.5/r_sd**2)*(r[coef > 0]**2))
 
-            return coef
+            return coef * intensity
 
         # x(r), y(r), z(r), r>0 for a ray cast from each pixel
         # construct an array of unit rays, one ray per pixel
@@ -282,23 +306,56 @@ class ImageProc():
         ray_axes = iK.dot(img_coords).T * -1
         ray_axes /= np.linalg.norm(ray_axes, axis=1).reshape((-1, 1))
 
-        def i_fun(r):
-            return density(ray_axes * r)
+        def i_fun(r, arg_arr):
+            result = None
+            for args in arg_arr:
+                res = density(ray_axes * r, *args)
+                if result is None:
+                    result = res
+                else:
+                    result += res
+            return result
 
-        #  integrate density along the rays
-        far = 2*np.linalg.norm(base_loc)
-        res = integrate.quad_vec(i_fun, 0, far, limit=25)      # requires at least scipy 1.4.x
-        result = cv2.resize((res[0].reshape(xx.shape) / np.max(res[0]) * max * intensity).astype(img.dtype), img.shape)
+        bg_args_arr, bg_near, bg_far = [], np.inf, -np.inf
+        fg_args_arr, fg_near, fg_far = [], np.inf, -np.inf
+        for args in zip(base_locs, axes, trunc_lens, angular_radii, intensities):
+            base_loc, axis, trunc_len, angular_radius, intensity = args
+            dist = np.linalg.norm(base_loc)
+            if axis[2] < 0:
+                # z-component of axis is negative => jet goes away from cam => starts behind object
+                bg_args_arr.append(args)
+                bg_near = min(bg_near, dist - trunc_len)
+                bg_far = max(bg_far, 2 * dist)    # crude heuristic, is it enough?
+            else:
+                # jet goes towards cam
+                fg_args_arr.append(args)
+                fg_near = min(fg_near, 0)
+                fg_far = max(fg_far, dist + trunc_len)
+
+        bg_res, fg_res = None, None
+        if bg_args_arr:
+            #  integrate density along the rays (quad_vec requires at least scipy 1.4.x)
+            res = integrate.quad_vec(lambda r: i_fun(r, bg_args_arr), bg_near, bg_far, limit=25)
+#            bg_sc = np.max(res[0])/maxval
+            bg_res = cv2.resize(res[0].reshape(xx.shape).astype(np.float32), img.shape)
+#            bg_res = cv2.resize((res[0]/bg_sc).reshape(xx.shape).astype(img.dtype), img.shape).astype(np.float32)*bg_sc
+            bg_res[mask] = 0
+        if fg_args_arr:
+            #  integrate density along the rays (quad_vec requires at least scipy 1.4.x)
+            res = integrate.quad_vec(lambda r: i_fun(r, fg_args_arr), fg_near, fg_far, limit=25)
+#            fg_sc = np.max(res[0])/maxval
+            fg_res = cv2.resize(res[0].reshape(xx.shape).astype(np.float32), img.shape)
+#            fg_res = cv2.resize((res[0]/fg_sc).reshape(xx.shape).astype(img.dtype), img.shape).astype(np.float32)*fg_sc
+
+        result = (0 if bg_res is None else bg_res) + (0 if fg_res is None else fg_res)
+        max_r = np.max(result)
+        if max_r > 0:
+            result = result / max_r * maxval * np.max(intensities)
 
         dtype = img.dtype
         img = img.astype(np.float32)
-        if phase_angle < np.pi/2:
-            inv_mask = np.logical_not(mask)
-            img[inv_mask] = np.clip(img[inv_mask] + result[inv_mask], 0, max)
-        else:
-            img = np.clip(img + result, 0, max)
-
-        return img.astype(dtype)
+        img = np.clip(img + result, 0, maxval).astype(dtype)
+        return img
 
     @staticmethod
     def add_haze(img, mask=None, intensity=0.05):

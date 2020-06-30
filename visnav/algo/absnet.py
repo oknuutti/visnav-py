@@ -13,11 +13,7 @@ from visnav.settings import *
 
 
 class AbsoluteNavigationNN(AlgorithmBase):
-#    DEF_MODEL_NAME = 'model_best_rose-mob-gradloss-x1.pth.tar'
-#    DEF_MODEL_NAME = 'model_best_rose-mob-v6.pth.tar'
-#    DEF_MODEL_NAME = 'model_best_rose-mob-v4.pth.tar'
-#    DEF_MODEL_NAME = 'rose-mob-adv-v2.pth.tar'
-    DEF_MODEL_NAME = 'model_best_rose-mob-gradloss-x03.pth.tar'
+    DEF_MODEL_NAME = 'rose-mob-v10.tar'          # median ~28deg: v6, v8; ~25deg: v9, 27.5deg: v10
 
     DEF_LUMINOSITY_THRESHOLD = 65
     DEF_CROP_MARGIN = 10

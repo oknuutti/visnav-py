@@ -98,8 +98,11 @@ class RenderEngine:
         self._sdbo = self._ctx.depth_texture((view_width*n, view_height*n), alignment=1)
         self._sfbo = self._ctx.framebuffer([self._scbo], self._sdbo)
 
+        self._vbos = []
         self._objs = []
+        self._s_vbos = []
         self._s_objs = []
+        self._w_vbos = []
         self._w_objs = []
         self._raw_objs = []
         self._textures = []
@@ -126,9 +129,15 @@ class RenderEngine:
             self._fbo2.release()
         for o in self._objs:
             o.release()
+        for o in self._vbos:
+            o.release()
         for o in self._s_objs:
             o.release()
+        for o in self._s_vbos:
+            o.release()
         for o in self._w_objs:
+            o.release()
+        for o in self._w_vbos:
             o.release()
         for t in self._textures:
             if t is not None:
@@ -220,10 +229,25 @@ class RenderEngine:
             return self.load_cached_object(object, obj_bytes, s_obj_bytes, obj_idx=obj_idx)
 
     def load_cached_object(self, object, obj_bytes, s_obj_bytes, obj_idx=None):
+        if obj_idx is not None:
+            self._objs[obj_idx].release()
+            self._vbos[obj_idx].release()
+            self._s_objs[obj_idx].release()
+            self._s_vbos[obj_idx].release()
+            self._textures[obj_idx].release()
+
         texture = None
         if object.tex is not None:
             texture = self._ctx.texture(object.tex.T.shape, 1, np.flipud(object.tex).tobytes(), dtype='f4')
             texture.build_mipmaps()
+
+        # TODO: check if this can be done and if it's faster:
+        # if obj_idx is not None:
+        #   self._vbos[obj_idx].orphan(len(obj_bytes))
+        #   self._vbos[obj_idx].write(obj_bytes)
+        #   # no changes to obj
+        # else:
+        #   # continue as before
 
         vbo = self._ctx.buffer(obj_bytes)
         obj = self._ctx.simple_vertex_array(self._prog, vbo, 'vertexPosition_modelFrame', 'vertexNormal_modelFrame', 'aTexCoords')
@@ -232,12 +256,16 @@ class RenderEngine:
         s_obj = self._ctx.simple_vertex_array(self._shadow_prog, s_vbo, 'vertexPosition_modelFrame')
 
         if obj_idx is None:
+            self._vbos.append(vbo)
             self._objs.append(obj)
+            self._s_vbos.append(s_vbo)
             self._s_objs.append(s_obj)
-            self._raw_objs.append(object)
             self._textures.append(texture)
+            self._raw_objs.append(object)
         else:
+            self._vbos[obj_idx] = vbo
             self._objs[obj_idx] = obj
+            self._s_vbos[obj_idx] = s_vbo
             self._s_objs[obj_idx] = s_obj
             self._raw_objs[obj_idx] = object
             self._textures[obj_idx] = texture
@@ -245,11 +273,17 @@ class RenderEngine:
         return len(self._objs) - 1
 
     def load_cached_wf_object(self, w_obj_bytes, obj_idx=None):
+        if obj_idx is not None:
+            self._w_objs[obj_idx].release()
+            self._w_vbos[obj_idx].release()
+
         w_vbo = self._ctx.buffer(w_obj_bytes)
         w_obj = self._ctx.simple_vertex_array(self._wireframe_prog, w_vbo, 'vertexPosition_modelFrame')
         if obj_idx is None:
+            self._w_vbos.append(w_vbo)
             self._w_objs.append(w_obj)
         else:
+            self._w_vbos[obj_idx] = w_vbo
             self._w_objs[obj_idx] = w_obj
         return len(self._w_objs) - 1
 

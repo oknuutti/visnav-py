@@ -16,3 +16,6 @@ nbproject
 *.zip
 *.avi
 *.log
+*.lnk
+./*.txt
+./*.pickle

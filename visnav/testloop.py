@@ -1,3 +1,5 @@
+import random
+
 import math
 from math import degrees as deg, radians as rad
 import os
@@ -30,7 +32,8 @@ from visnav.render.sun import Sun
 from visnav.settings import *
 
 #from memory_profiler import profile
-#import tracemalloc
+import tracemalloc
+#tracemalloc.start()
 #import gc
 # TODO: fix suspected memory leaks at
 #   - quaternion.as_float_array (?)
@@ -45,10 +48,10 @@ class TestLoop:
                  uniform_distance_gen=UNIFORM_DISTANCE_GENERATION,
                  operation_zone_only=False, state_generator=None, cache_path=None,
                  sm_noise=0, sm_noise_len_sc=SHAPE_MODEL_NOISE_LEN_SC,
-                 navcam_cache_id='',
+                 navcam_cache_id='', save_depth=False,
                  real_sm_noise=0, real_sm_noise_len_sc=SHAPE_MODEL_NOISE_LEN_SC,
                  real_tx_noise=0, real_tx_noise_len_sc=SHAPE_MODEL_NOISE_LEN_SC,
-                 haze=0, haze_len_sc=SHAPE_MODEL_NOISE_LEN_SC,
+                 haze=0, jets=0, jet_int_mode=0.2, jet_int_conc=10,
                  hapke_noise=0,
                  hapke_th_sd=None, hapke_w_sd=None,
                  hapke_b_sd=None, hapke_c_sd=None,
@@ -75,7 +78,9 @@ class TestLoop:
         self.real_tx_noise = real_tx_noise
         self.real_tx_noise_len_sc = real_tx_noise_len_sc
         self.haze = haze
-        self.haze_len_sc = haze_len_sc
+        self.jets = jets
+        self.jet_int_mode = jet_int_mode
+        self.jet_int_conc = jet_int_conc
         self.hapke_noise = hapke_noise
         self.hapke_th_sd = hapke_th_sd
         self.hapke_w_sd = hapke_w_sd
@@ -85,6 +90,7 @@ class TestLoop:
         self.hapke_shoe_w = hapke_shoe_w
         self.hapke_cboe = hapke_cboe
         self.hapke_cboe_w = hapke_cboe_w
+        self.save_depth = save_depth
 
         self.file_prefix = system_model.mission_id+'_'+file_prefix_mod
         self.noisy_sm_prefix = system_model.mission_id
@@ -139,12 +145,13 @@ class TestLoop:
         self._iter_dir = None
         self._logfile = None
         self._fval_logfile = None
-        self._run_times = []
-        self._laterrs = []
-        self._disterrs = []
-        self._roterrs = []
-        self._shifterrs = []
-        self._fails = 0        
+        self.image_files = []
+        self.run_times = []
+        self.laterrs = []
+        self.disterrs = []
+        self.roterrs = []
+        self.shifterrs = []
+        self.fails = []
         self._timer = None
         self._L = (None, None)
         self._shape_model = None
@@ -226,20 +233,35 @@ class TestLoop:
 
                 # save state to lbl file
                 if self._rotation_noise:
-                    sm.save_state(self._cache_file(i))
+                    sm.save_state(self.cache_file(i))
             
             # maybe new system state or no previous image, if so, render
             if imgfile is None:
                 if DEBUG:
                     print('generating new navcam image')
+
+                # snapshot1 = tracemalloc.take_snapshot()
                 imgfile = self.render_navcam_image(sm, i)
+                # snapshot2 = tracemalloc.take_snapshot()
+                # top_stats = snapshot2.compare_to(snapshot1, 'lineno')
+                # print("[ Top 10 differences ]")
+                # for stat in top_stats[:10]:
+                #     print(stat)
+                # input("Press Enter to continue...")
                 self._maybe_exit()
 
             if ONLY_POPULATE_CACHE:
                 continue
 
+
             # run algorithm
+            #tracemalloc.start()
+            #current, peak = tracemalloc.get_traced_memory()
+            #print("before: %.0fMB" % ((peak - current)/1024/1024))
             ok, rtime = self._run_algo(imgfile, self._iter_file(i), method=method, **kwargs)
+            #current, peak = tracemalloc.get_traced_memory()
+            #print("after: %.0fMB" % ((peak - current)/1024/1024))
+            #tracemalloc.stop()
 
             if kwargs.get('use_feature_db', False) and kwargs.get('add_noise', False):
                 sm_noise = self.keypoint.sm_noise
@@ -315,8 +337,8 @@ class TestLoop:
             return None
 
         try:
-            sm.load_state(self._cache_file(i)+'.lbl', sc_ast_vertices=True)
-            self._fill_or_censor_init_sc_pos(sm, self._cache_file(i)+'.lbl')
+            sm.load_state(self.cache_file(i) + '.lbl', sc_ast_vertices=True)
+            self._fill_or_censor_init_sc_pos(sm, self.cache_file(i) + '.lbl')
             initial = self._initial_state(sm)
         except FileNotFoundError:
             initial = None
@@ -342,7 +364,7 @@ class TestLoop:
                                   len_sc=self.sm_noise_len_sc,
                                   noise_lv=self.sm_noise)
 
-        fname = self._cache_file(i, prefix=self.noisy_sm_prefix, postfix=self._smn_cache_id)+'.nsm'
+        fname = self.cache_file(i, prefix=self.noisy_sm_prefix, postfix=self._smn_cache_id) + '.nsm'
         with open(fname, 'wb') as fh:
             pickle.dump((noisy_model.as_dict(), sm_noise), fh, -1)
         
@@ -356,12 +378,13 @@ class TestLoop:
                     return self._loaded_sm_noise
                 fname = sm.asteroid.constant_noise_shape_model[self._smn_cache_id]
             else:
-                fname = self._cache_file(i, prefix=self.noisy_sm_prefix, postfix=self._smn_cache_id)+'.nsm'
+                fname = self.cache_file(i, prefix=self.noisy_sm_prefix, postfix=self._smn_cache_id) + '.nsm'
 
             with open(fname, 'rb') as fh:
                 noisy_model, self._loaded_sm_noise = pickle.load(fh)
             self._shape_model = objloader.ShapeModel(data=noisy_model)
-            self.render_engine.load_object(self._shape_model, self.obj_idx, smooth=self._smooth_faces)
+            i = self.render_engine.load_object(self._shape_model, self.obj_idx, smooth=self._smooth_faces)
+            self.obj_idx = i if self.obj_idx is None else self.obj_idx
         except (FileNotFoundError, EOFError):
             print('cant find shape model "%s"' % fname)
             self._loaded_sm_noise = None
@@ -373,7 +396,7 @@ class TestLoop:
     def render_navcam_image_static(sm, renderer, obj_idxs, rel_pos_v=None, rel_rot_q=None, light_v=None, sc_q=None,
                                    sun_distance=None, exposure=None, gain=None, gamma=1.8, auto_gain=True,
                                    use_shadows=True, use_textures=False, reflmod_params=None, cam=None, fluxes_only=False,
-                                   stars=True, lens_effects=True, star_db=None):
+                                   stars=True, lens_effects=True, star_db=None, return_depth=False):
 
         if rel_pos_v is None:
             rel_pos_v = sm.spacecraft_pos
@@ -416,6 +439,7 @@ class TestLoop:
         if not auto_gain:
             sun_lf = - tools.q_times_v(SystemModel.sc2gl_q, sun_sc_distance * light_v)
             # TODO: investigate if need *cam.px_sr or something else!!
+            downsample = 2
             lens_effect = Sun.flux_density(cam, sun_lf, mask) if lens_effects else 0
 
             # radiance given in W/(m2*sr) => needed in W/m2
@@ -443,6 +467,8 @@ class TestLoop:
             cv2.waitKey()
             quit()
 
+        if return_depth:
+            return img, depth
         return img
 
     def render_navcam_image(self, sm, i):
@@ -457,7 +483,8 @@ class TestLoop:
             self._synth_navcam.set_frustum(sm.cam.x_fov, sm.cam.y_fov, sm.min_altitude, sm.max_distance)
             if use_textures and not sm.asteroid.hires_target_model_file_textures:
                 sm.asteroid.real_shape_model.texfile = None
-                sm.asteroid.real_shape_model.tex = np.ones((4096, 4096) if tx_hf_noise else (100, 100))
+                # TODO: customize the size, affects performance quite a lot
+                sm.asteroid.real_shape_model.tex = np.ones((2048, 2048) if tx_hf_noise else (100, 100))
 
         # NOTICE: Randomizing the vertices takes a lot of time, texture not so
         #         - Also: caching the vertices would take too much space, so no caching
@@ -483,13 +510,63 @@ class TestLoop:
 
         reflmod_params = self.randomized_hapke_params(sm)
         sm.swap_values_with_real_vals()
-        img = TestLoop.render_navcam_image_static(sm, self._synth_navcam, self._hires_obj_idx,
-                                                  use_textures=use_textures, reflmod_params=reflmod_params)
+        img, depth = TestLoop.render_navcam_image_static(sm, self._synth_navcam, self._hires_obj_idx,
+                                                         use_textures=use_textures, reflmod_params=reflmod_params,
+                                                         return_depth=True)
+
+        if self.jets > 0:
+            img = TestLoop.generate_jets(sm, img, depth, self.jets, self.jet_int_mode, self.jet_int_conc)
+        if self.haze > 0:
+            min_d = np.min(depth)
+            hz = (sm.min_distance / min_d)**2 * self.haze
+            img = ImageProc.add_haze(img, depth < sm.max_distance * 0.99, np.random.uniform(0, hz))
+
         sm.swap_values_with_real_vals()
 
-        cache_file = self._cache_file(i, postfix=self.navcam_cache_id)+'.png'
+        cache_file = self.cache_file(i, postfix=self.navcam_cache_id) + '.png'
         cv2.imwrite(cache_file, img, [cv2.IMWRITE_PNG_COMPRESSION, 9])
+        if self.save_depth:
+            cv2.imwrite(cache_file[:-4]+'_d.exr', depth.astype(np.float32), (cv2.IMWRITE_EXR_TYPE, cv2.IMWRITE_EXR_TYPE_FLOAT))
+
         return cache_file
+
+    @staticmethod
+    def generate_jets(sm, img, dist, jets, jet_int_mode, jet_int_conc, trunc_len_m=0.1, trunc_len_sd=0.2,
+                      ang_rad_m=np.pi/30, ang_rad_sd=0.3):
+        n = int(np.random.exponential(jets))
+        if n == 0:
+            return img
+
+        mask = dist < sm.max_distance*0.99
+        fg_yx = np.vstack(np.where(np.logical_and(mask, img > 50))).T
+        bg_yx = np.vstack(np.where(mask)).T
+
+        base_locs, trunc_lens, phase_angles, directions, intensities, angular_radii = [], [], [], [], [], []
+        for i in range(n):
+            pa = np.random.uniform(0, np.pi)
+            if pa < np.pi/2 and len(bg_yx) > 0:
+                yi, xi = random.choice(bg_yx)
+            elif len(fg_yx) > 0:
+                yi, xi = random.choice(fg_yx)
+            else:
+                continue
+            z = -dist[yi, xi]
+            x, y = sm.cam.calc_xy(xi, yi, z)
+            base_locs.append(np.array((x, y, z)))
+
+            alpha = jet_int_mode * (jet_int_conc - 2) + 1
+            beta = (1 - jet_int_mode) * (jet_int_conc - 2) + 1
+            intensities.append(np.random.beta(alpha, beta))
+
+            phase_angles.append(pa)
+            directions.append(np.random.uniform(-np.pi, np.pi))
+            trunc_lens.append(sm.asteroid.max_radius * 1e-3 * trunc_len_m * np.random.lognormal(0, trunc_len_sd))
+            angular_radii.append(ang_rad_m * np.random.lognormal(0, ang_rad_sd))
+
+        img = ImageProc.add_jets(sm.cam, img, mask, base_locs=tuple(base_locs), trunc_lens=trunc_lens,
+                                 phase_angles=phase_angles, directions=directions, intensities=intensities,
+                                 angular_radii=angular_radii, down_scaling=6)
+        return img
 
     def randomized_hapke_params(self, sm):
         reflmod_params = list(sm.asteroid.reflmod_params[RenderEngine.REFLMOD_HAPKE])
@@ -517,7 +594,7 @@ class TestLoop:
 
     def load_navcam_image(self, i):
         if self._state_list is None or self._resynth_cam_image:
-            fname = self._cache_file(i, postfix=self.navcam_cache_id)+'.png'
+            fname = self.cache_file(i, postfix=self.navcam_cache_id) + '.png'
         else:
             fname = os.path.join(self._state_db_path, self._state_list[i]+'_P.png')
         return fname if os.path.isfile(fname) else None
@@ -542,7 +619,8 @@ class TestLoop:
                 *sm.real_spacecraft_rot, deg(elong), deg(direc),
                 *sm.real_spacecraft_pos, sm.real_spacecraft_altitude, *map(deg, real_rel_rot),
                 imgfile, final_fval)
-        
+        self.image_files.append(imgfile)
+
         # calculate added noise
         #
         getcontext().prec = 6
@@ -640,12 +718,12 @@ class TestLoop:
         with open(self._logfile, 'w') as file:
             file.write(' '.join(sys.argv)+'\n'+ '\t'.join(self.log_columns())+'\n')
             
-        self._run_times = []
-        self._laterrs = []
-        self._disterrs = []
-        self._roterrs = []
-        self._shifterrs = []
-        self._fails = 0
+        self.run_times = []
+        self.laterrs = []
+        self.disterrs = []
+        self.roterrs = []
+        self.shifterrs = []
+        self.fails = []
         self._timer = tools.Stopwatch()
         self._timer.start()
         
@@ -653,22 +731,24 @@ class TestLoop:
     def _write_log_entry(self, i, rtime, sm_noise, params, noise, pos, alt, rel_rot, fvals, err):
 
         # save execution time
-        self._run_times.append(rtime)
+        self.run_times.append(rtime)
 
         # calculate errors
         dist = abs(params[-7])
         if not math.isnan(err[0]):
             lerr = 1000*math.sqrt(err[0]**2 + err[1]**2) / dist     # m/km
             derr = 1000*err[2] / dist                               # m/km
-            rerr = abs(err[3])
+            rerr = abs(err[3])                                      # deg
             serr = 1000*err[4] / dist                               # m/km
-            self._laterrs.append(lerr)
-            self._disterrs.append(abs(derr))
-            self._roterrs.append(rerr)
-            self._shifterrs.append(serr)
+            fail = 0
         else:
             lerr = derr = rerr = serr = float('nan')
-            self._fails += 1
+            fail = 1
+        self.laterrs.append(lerr)
+        self.disterrs.append(abs(derr))
+        self.roterrs.append(rerr)
+        self.shifterrs.append(serr)
+        self.fails.append(fail)
 
         # log all parameter values, timing & errors into a file
         with open(self._logfile, 'a') as file:
@@ -685,8 +765,8 @@ class TestLoop:
     def _close_log(self, samples):
         self._timer.stop()
 
-        summary = self.calc_err_summary(self._timer.elapsed, samples, self._fails, self._run_times,
-                                        self._laterrs, self._disterrs, self._shifterrs, self._roterrs)
+        summary = self.calc_err_summary(self._timer.elapsed, samples, self.fails, self.run_times,
+                                        self.laterrs, self.disterrs, self.shifterrs, self.roterrs)
         
         with open(self._logfile, 'r') as org: data = org.read()
         with open(self._logfile, 'w') as mod: mod.write(summary + data)
@@ -741,7 +821,7 @@ class TestLoop:
               runtime / 60,
               1000 * np.nanmean(runtimes) if len(runtimes) else float('nan'),
               *summary_data,
-              100 * fails / samples,
+              100 * np.sum(fails) / samples,
         )
 
 
@@ -755,7 +835,8 @@ class TestLoop:
             try:
                 ok = self.mixedalgo.run(imgfile, outfile, **kwargs)
             except PositioningException as e:
-                print(str(e))
+                if kwargs.get('verbose', 0):
+                    print(str(e))
         if method == 'keypoint':
             try:
                 # try using pympler to find memory leaks, fail: crashes always
@@ -778,13 +859,15 @@ class TestLoop:
                 ok = True
                 rtime = self.keypoint.timer.elapsed
             except PositioningException as e:
-                print(str(e))
+                if kwargs.get('verbose', 0):
+                    print(str(e))
         elif method == 'centroid':
             try:
                 self.centroid.adjust_iteratively(imgfile, outfile, **kwargs)
                 ok = True
             except PositioningException as e:
-                print(str(e))
+                if kwargs.get('verbose', 0):
+                    print(str(e))
         elif method == 'absnet':
             if self.absnet is None:
                 from visnav.algo.absnet import AbsoluteNavigationNN
@@ -793,7 +876,8 @@ class TestLoop:
                 self.absnet.process(imgfile, outfile, **kwargs)
                 ok = True
             except PositioningException as e:
-                print(str(e))
+                if kwargs.get('verbose', 0):
+                    print(str(e))
         elif method == 'phasecorr':
             ok = self.phasecorr.findstate(imgfile, outfile, **kwargs)
         timer.stop()
@@ -806,7 +890,7 @@ class TestLoop:
         return os.path.normpath(
                 os.path.join(self._iter_dir, prefix+'%04d'%i))
     
-    def _cache_file(self, i, prefix=None, postfix=None):
+    def cache_file(self, i, prefix=None, postfix=None):
         if prefix is None:
             prefix = self.file_prefix
         return os.path.normpath(
@@ -814,7 +898,7 @@ class TestLoop:
                          (prefix+'%04d'%i) if self._state_list is None
                                            else self._state_list[i])) \
             + ('' if not postfix else '_%s' % postfix)
-    
+
     def _maybe_exit(self):
         if self.exit:
             print('Exiting...')

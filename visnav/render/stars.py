@@ -1,10 +1,12 @@
 from datetime import datetime
+from functools import lru_cache
 
 import cv2
 import math
 import os
 import sqlite3
 import re
+import time
 
 import numpy as np
 import quaternion
@@ -16,12 +18,27 @@ from visnav.missions.didymos import DidymosSystemModel
 from visnav.missions.rosetta import RosettaSystemModel
 from visnav.settings import *
 
-
-# TODO: investigate the usage of UCAC4 catalog (113M stars up to mag 16) through astropy
+#  https://pysynphot.readthedocs.io/en/latest/index.html#pysynphot-installation-setup
+import warnings
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore")
+    import importlib
+    root = importlib.util.find_spec('pysynphot').submodule_search_locations[0]
+    os.environ['PYSYN_CDBS'] = os.path.join(root, 'data', 'cdbs')  # http://ssb.stsci.edu/cdbs/tarfiles/synphot1.tar.gz
+    import pysynphot as S                                          # http://ssb.stsci.edu/cdbs/tarfiles/synphot2.tar.gz
+                                                                   # http://ssb.stsci.edu/cdbs/tarfiles/synphot3.tar.gz
 
 
 class Stars:
-    STARDB = os.path.join(DATA_DIR, 'deep_space_objects.sqlite')
+                                # from VizieR catalogs:
+    SOURCE_HIPPARCHOS = 'H'     #   I/239/hip_main
+    SOURCE_PASTEL = 'P'         #   B/pastel/pastel
+    SOURCE_WU = 'W'             #   J/A+A/525/A71/table2
+    SOURCE_GAIA1 = 'G'          #   J/MNRAS/471/770/table2
+
+    STARDB_TYC = os.path.join(DATA_DIR, 'deep_space_objects_tyc.sqlite')
+    STARDB_HIP = os.path.join(DATA_DIR, 'deep_space_objects_hip.sqlite')
+    STARDB = STARDB_HIP
     MAG_CUTOFF = 10
     MAG_V_LAM0 = 545e-9
     SUN_MAG_V = -26.74
@@ -31,18 +48,61 @@ class Stars:
     sc2ec_q = np.quaternion(1, 0, 0, 1).normalized().conj()
 
     @staticmethod
-    def black_body_radiation(T, lam):
-        return Stars.black_body_radiation_fn(T)(lam)
+    def black_body_radiation(Teff, lam):
+        return Stars.black_body_radiation_fn(Teff)(lam)
 
     @staticmethod
-    def black_body_radiation_fn(T):
+    def black_body_radiation_fn(Teff):
         def phi(lam):
             # planck's law of black body radiation [W/m3/sr]
             h = 6.626e-34  # planck constant (m2kg/s)
             c = 3e8  # speed of light
             k = 1.380649e-23  # Boltzmann constant
-            r = 2*h*c**2/lam**5/(np.exp(h*c/lam/k/T) - 1)
+            r = 2*h*c**2/lam**5/(np.exp(h*c/lam/k/Teff) - 1)
             return r
+        return phi
+
+    @staticmethod
+    def synthetic_radiation(Teff, fe_h, log_g, lam, mag_v=None):
+        return Stars.synthetic_radiation_fn(Teff, fe_h, log_g, mag_v=mag_v)(lam)
+
+    @staticmethod
+    @lru_cache(maxsize=1000)
+    def synthetic_radiation_fn(Teff, fe_h, log_g, mag_v=None):
+        sp = None
+        orig_log_g = log_g
+        if 1:
+            first_try = True
+
+            if Teff < 3500:
+                print('could not init spectral model with given t_eff=%s, using t_eff=3500K instead' % Teff)
+                Teff = 3500
+
+            for i in range(15):
+                try:
+                    sp = S.Icat('k93models', Teff, fe_h, log_g)    # 'ck04models' or 'k93models'
+                    break
+                except:
+                    first_try = False
+                    log_g = log_g + (0.2 if Teff > 6000 else -0.2)
+            assert sp is not None, 'could not init spectral model with given params: t_eff=%s, log_g=%s, fe_h=%s' % (Teff, orig_log_g, fe_h)
+            if not first_try:
+                print('could not init spectral model with given params (t_eff=%s, log_g=%s, fe_h=%s), changed log_g to %s' %
+                      (Teff, orig_log_g, fe_h, log_g))
+        else:
+            sp = S.Icat('ck04models', Teff, fe_h, log_g)
+
+        if mag_v is not None:
+            sp = sp.renorm(mag_v, 'vegamag', S.ObsBandpass('johnson,v'))
+
+        from scipy.interpolate import interp1d
+        I = np.logical_and(sp.wave >= 3000, sp.wave <= 11000)  # TODO: make configurable
+        sample_fn = interp1d(sp.wave[I], sp.flux[I], kind='linear', assume_sorted=True)
+
+        def phi(lam):
+            r = sample_fn(lam*1e10)    # wavelength in Å, result in "flam" (erg/s/cm2/Å)
+            return r * 1e-7 / 1e-4 / 1e-10
+
         return phi
 
     @staticmethod
@@ -79,7 +139,7 @@ class Stars:
         return 10**(c0+c1*(b_v)+c2*(b_v)**2+c3*(b_v)**3 + f1*metal + f2*metal**2 + g1*log_g + h1*(b_v)*log_g)
 
     @staticmethod
-    def flux_density(cam_q, cam, mask=None, mag_cutoff=MAG_CUTOFF, array=False, undistorted=False):
+    def flux_density(cam_q, cam, mask=None, mag_cutoff=MAG_CUTOFF, array=False, undistorted=False, order_by=None):
         """
         plots stars based on Tycho-2 database, gives out photon count per unit area given exposure time in seconds,
         cam_q is a quaternion in ICRS coord frame, x_fov and y_fov in degrees
@@ -108,10 +168,13 @@ class Stars:
 
         conn = sqlite3.connect(Stars.STARDB)
         cursor = conn.cursor()
+        # the magnitudes for tycho id xxxx-xxxxx-2 entries are bad as they are most likely taken from hip catalog that bundles all .*-(\d)
         results = cursor.execute("""
-            SELECT x, y, z, mag_v""" + (", mag_b, t_eff, dec, ra, id" if array else "") + """
+            SELECT x, y, z, mag_v""" + (", mag_b, t_eff, fe_h, log_g, dec, ra, id" if array else "") + """
             FROM deep_sky_objects
-            WHERE tycho like '%-1' AND mag_v < """ + str(mag_cutoff) + " AND " + dec_cond + " AND " + ra_cond)
+            WHERE """ + ("tycho like '%-1' AND " if Stars.STARDB == Stars.STARDB_TYC else "") +
+             "mag_v < " + str(mag_cutoff) + " AND " + dec_cond + " AND " + ra_cond +
+            ((" ORDER BY %s ASC" % order_by) if order_by is not None else ''))
         stars = np.array(results.fetchall())
         conn.close()
 
@@ -126,7 +189,7 @@ class Stars:
                                    stars_ixy[:, 0] <= cam.width-1,
                                    stars_ixy[:, 1] <= cam.height-1))
         if array:
-            cols = ('ix', 'iy', 'x', 'y', 'z', 'mag_v', 'mag_b', 't_eff', 'dec', 'ra', 'id')
+            cols = ('ix', 'iy', 'x', 'y', 'z', 'mag_v', 'mag_b', 't_eff', 'fe_h', 'log_g', 'dec', 'ra', 'id')
             return (
                 np.hstack((stars_ixy_[I, :], stars[I, :])),
                 dict(zip(cols, range(len(cols))))
@@ -150,38 +213,108 @@ class Stars:
         return flux_density
 
     @staticmethod
-    def get_tycho_id(id):
+    def get_catalog_id(id, field=None):
+        try:
+            is_arr = False
+            id = int(id)
+        except:
+            is_arr = True
         if Stars._query_conn is None:
             Stars._conn = sqlite3.connect(Stars.STARDB)
             Stars._query_cursor = Stars._conn.cursor()
-        results = Stars._query_cursor.execute("select tycho from deep_sky_objects where id = ?", (id,))
-        res = results.fetchone()[0]
-        return res
+        field = field or ("tycho" if Stars.STARDB == Stars.STARDB_TYC else "hip")
+        if is_arr:
+            res = Stars._query_cursor.execute(
+                "select id, %s from deep_sky_objects where id IN (%s)" % (
+                field, ','.join(str(i) for i in id))).fetchall()
+            return {r[0]: str(r[1]) for r in res}
+        else:
+            res = Stars._query_cursor.execute(
+                "select %s from deep_sky_objects where id = %s" % (
+                field, id)).fetchone()[0]
+            return str(res)
     _query_conn, _query_cursor = None, None
 
     @staticmethod
-    def import_stars():
-        conn = sqlite3.connect(Stars.STARDB)
+    def _create_stardb(fname):
+        conn = sqlite3.connect(fname)
         cursor = conn.cursor()
         cursor.execute("DROP TABLE IF EXISTS deep_sky_objects")
         cursor.execute("""
             CREATE TABLE deep_sky_objects (
                 id INTEGER PRIMARY KEY ASC NOT NULL,
-                tycho CHAR(12),
-                ra REAL NOT NULL,
-                dec REAL NOT NULL,
+                hip INT,
+                hd INT DEFAULT NULL,
+                simbad CHAR(20) DEFAULT NULL,
+                ra REAL NOT NULL,           /* src[0] */
+                dec REAL NOT NULL,          /* src[0] */
                 x REAL NOT NULL,
                 y REAL NOT NULL,
                 z REAL NOT NULL,
-                mag_b REAL NOT NULL,
-                mag_v REAL NOT NULL,
-                t_eff REAL DEFAULT NULL
+                mag_v REAL NOT NULL,        /* src[1] */
+                mag_b REAL DEFAULT NULL,    /* src[2] */
+                t_eff REAL DEFAULT NULL,    /* src[3] */
+                log_g REAL DEFAULT NULL,    /* src[4] */
+                fe_h REAL DEFAULT NULL,     /* src[5] */
+                src CHAR(6) DEFAULT 'HHHPPP'
             )""")
+        cursor.execute("DROP INDEX IF EXISTS ra_idx")
         cursor.execute("CREATE INDEX ra_idx ON deep_sky_objects (ra)")
+
+        cursor.execute("DROP INDEX IF EXISTS dec_idx")
         cursor.execute("CREATE INDEX dec_idx ON deep_sky_objects (dec)")
+
+        cursor.execute("DROP INDEX IF EXISTS mag_idx")
         cursor.execute("CREATE INDEX mag_idx ON deep_sky_objects (mag_v)")
-        cursor.execute("CREATE UNIQUE INDEX tycho ON deep_sky_objects (tycho)")
+
+        cursor.execute("DROP INDEX IF EXISTS hd")
+        cursor.execute("CREATE INDEX hd ON deep_sky_objects (hd)")
+
+        cursor.execute("DROP INDEX IF EXISTS simbad")
+        cursor.execute("CREATE INDEX simbad ON deep_sky_objects (simbad)")
+
+        cursor.execute("DROP INDEX IF EXISTS hip")
+        cursor.execute("CREATE UNIQUE INDEX hip ON deep_sky_objects (hip)")
         conn.commit()
+
+    @staticmethod
+    def import_stars_hip():
+        # I/239/hip_main
+        Stars._create_stardb(Stars.STARDB_HIP)
+        conn = sqlite3.connect(Stars.STARDB_HIP)
+        cursor = conn.cursor()
+
+        from astroquery.vizier import Vizier
+        Vizier.ROW_LIMIT = -1
+
+        cols = ["HIP", "HD", "_RA.icrs", "_DE.icrs", "Vmag", "B-V"]
+        r = Vizier(catalog="I/239/hip_main", columns=cols, row_limit=-1).query_constraints()[0]
+
+        for i, row in enumerate(r):
+            hip, hd, ra, dec, mag_v, b_v = [row[f] for f in cols]
+            if np.any(list(map(np.ma.is_masked, (ra, dec, mag_v)))):
+                continue
+            hd = 'null' if np.ma.is_masked(hd) else hd
+            mag_b = 'null' if np.ma.is_masked(b_v) or np.isnan(b_v) else b_v + mag_v
+            x, y, z = tools.spherical2cartesian(math.radians(dec), math.radians(ra), 1)
+            cursor.execute("""
+                INSERT INTO deep_sky_objects (hip, hd, ra, dec, x, y, z, mag_v, mag_b)
+                VALUES (%s, %s, %f, %f, %f, %f, %f, %f, %s)"""
+                   % (hip, hd, ra, dec, x, y, z, mag_v, mag_b))
+            if i % 100 == 0:
+                conn.commit()
+                tools.show_progress(len(r), i)
+
+        conn.commit()
+        conn.close()
+
+
+    @staticmethod
+    def import_stars_tyc():
+        assert False, 'not supported anymore'
+        Stars._create_stardb(Stars.STARDB_TYC, 12)
+        conn = sqlite3.connect(Stars.STARDB_TYC)
+        cursor = conn.cursor()
 
         # Tycho-2 catalogue, from http://archive.eso.org/ASTROM/TYC-2/data/
         for file in ('catalog.dat', 'suppl_1.dat'):
@@ -231,75 +364,154 @@ class Stars:
         conn.commit()
         conn.close()
 
+
+    @staticmethod
+    def add_simbad_col():
+        conn = sqlite3.connect(Stars.STARDB)
+        cursor_r = conn.cursor()
+        cursor_w = conn.cursor()
+
+        # cursor_w.execute("alter table deep_sky_objects add column simbad char(20) default null")
+        # conn.commit()
+
+        N_tot = cursor_r.execute("SELECT max(id) FROM deep_sky_objects WHERE 1").fetchone()[0]
+
+        skip = 0
+        result = cursor_r.execute("select id, hip from deep_sky_objects where id >= %d" % skip)
+
+        import time
+        from astroquery.simbad import Simbad
+        Simbad.add_votable_fields('typed_id')
+        while 1:
+            rows = result.fetchmany(1000)
+            if rows is None or len(rows) == 0:
+                break
+            tools.show_progress(N_tot, rows[0][0]-1)
+
+            s = Simbad.query_objects(['HIP %d' % int(row[1]) for row in rows])
+            time.sleep(2)
+
+            values = []
+            if s is not None:
+                s.add_index('TYPED_ID')
+                for row in rows:
+                    sr = get(s, ('HIP %d' % int(row[1])).encode('utf-8'))
+                    if sr is not None:
+                        k = sr['MAIN_ID'].decode('utf-8')
+                        values.append("(%d, '%s', 0,0,0,0,0,0)" % (row[0], k.replace("'", "''")))
+            if len(values) > 0:
+                cursor_w.execute("""
+                    INSERT INTO deep_sky_objects (id, simbad, ra, dec, x, y, z, mag_v) VALUES """ + ','.join(values) + """
+                    ON CONFLICT(id) DO UPDATE SET simbad = excluded.simbad""")
+                conn.commit()
+        conn.close()
+
+
     @staticmethod
     def query_t_eff():
         from astroquery.vizier import Vizier
-        v = Vizier(columns=["Tycho", "Teff"], catalog="V/136/tycall")
-        vhd = Vizier(columns=["TYC1", "TYC2", "TYC3", "HD"], catalog="IV/25/tyc2_hd")
-        v2 = Vizier(catalog="B/pastel/pastel", columns=["ID", "Teff", "RAJ2000", "DEJ2000"])
-        #v.query_constraints(ID='2MASS J06450887-1642566') # ID=HIP000085, TYC0002-01155-1, HD000005, BD+000444
-
-        #v = Vizier(catalog='J/A+A/450/735/table2', columns=['HIP', 'Teff'])    # cant find sirius
-        #v = Vizier(catalog='J/BaltA/20/89', columns=["Name", "Teff"])  # no sirius
+        v = Vizier(catalog="B/pastel/pastel", columns=["ID", "Teff", "logg", "[Fe/H]"], row_limit=-1)
+        v2 = Vizier(catalog="J/A+A/525/A71/table2", columns=["Name", "Teff", "log(g)", "[Fe/H]"], row_limit=-1)
+        v3 = Vizier(catalog="J/MNRAS/471/770/table2", columns=["HIP", "Teff", "log(g)"], row_limit=-1)
 
         conn = sqlite3.connect(Stars.STARDB)
         cursor_r = conn.cursor()
         cursor_w = conn.cursor()
-        N_tot = cursor_r.execute("SELECT max(id) FROM deep_sky_objects WHERE t_eff is null").fetchone()[0]
-        skip = 355062
 
+        cond = "(t_eff is null OR log_g is null OR 1)"
+        N_tot = cursor_r.execute("""
+            SELECT max(id) FROM deep_sky_objects 
+            WHERE %s
+            """ % cond).fetchone()[0]
+
+        skip = 37601
+        f_id, f_hip, f_hd, f_sim, f_ra, f_dec, f_t, f_g, f_m, f_src = range(10)
         results = cursor_r.execute("""
-            SELECT id, tycho, ra, dec
+            SELECT id, hip, hd, simbad, ra, dec, t_eff, log_g, fe_h, src
             FROM deep_sky_objects
-            WHERE t_eff is null and id >= ?
+            WHERE %s AND id >= ?
             ORDER BY id ASC
-            """, (skip,))
+            """ % cond, (skip,))
 
-        N = 35
+        r = v.query_constraints()[0]
+        r.add_index('ID')
+
+        N = 40
         while True:
             rows = results.fetchmany(N)
             if rows is None or len(rows) == 0:
                 break
+            tools.show_progress(N_tot, rows[0][f_id]-1)
 
-            tools.show_progress(N_tot, rows[0][0])
-
-            ids = {row[0]: i for i, row in enumerate(rows)}
-            r = v.query_constraints(Tycho='=,'+','.join([row[1] for row in rows]))
-            insert = []
-            if len(r):
-                r = r[0]
-                r.add_index('Tycho')
-                for row in rows:
-                    try:
-                        t_eff = r.loc[row[1]]['Teff']
-                        if not np.ma.is_masked(t_eff):
-                            insert.append("(%d, %.1f, 0,0,0,0,0,0,0)" % (row[0], float(t_eff)))
-                            ids.pop(row[0])
-                    except:
-                        pass
+            ids = {row[f_id]: [i, row[f_src][:3] + '___'] for i, row in enumerate(rows)}
+            insert = {}
+            for i, row in enumerate(rows):
+                k = 'HIP %6d' % int(row[f_hip])
+                if get(r, k) is None and row[f_hd]:
+                    k = 'HD %6d' % int(row[f_hd])
+                if get(r, k) is None and row[f_sim]:
+                    k = row[f_sim]
+                if get(r, k) is None and row[f_sim]:
+                    k = row[f_sim] + ' A'
+                dr = get(r, k)
+                if dr is not None:
+                    t_eff, log_g, fe_h = median(dr, ('Teff', 'logg', '__Fe_H_'), null='null')
+                    src = row[f_src][0:3] + ''.join([('_' if v == 'null' else Stars.SOURCE_PASTEL) for v in (t_eff, log_g, fe_h)])
+                    insert[row[f_id]] = [t_eff, log_g, fe_h, src]
+                    if '_' not in src[3:5]:
+                        ids.pop(row[f_id])
+                    else:
+                        ids[row[f_id]][1] = src
 
             if len(ids) > 0:
                 # try using other catalog
-                for id, i in ids.items():
-                    r = v2.query_constraints(ID='TYC' + Stars.get_tycho_id(id))
-                    if len(r) == 0:
-                        t1, t2, t3 = rows[i][1].split('-')
-                        hdr = vhd.query_constraints(TYC1=t1, TYC2=t2, TYC3=t3)
-                        if len(hdr) > 0 and not np.ma.is_masked(hdr[0]['HD'][0]):
-                            hd = 'HD%06d' % hdr[0]['HD'][0]
-                            r = v2.query_constraints(ID=hd)
-#                    if len(r) == 0:
-#                        r = v2.query_constraints(RAJ2000=rows[i][2], DEJ2000=rows[i][3])
-                    if len(r) > 0:
-                        t_eff = np.mean(r[0]['Teff'])
-                        insert.append("(%d, %.1f, 0,0,0,0,0,0,0)" % (rows[i][0], float(t_eff)))
+                r = v2.query_constraints(Name='=,' + ','.join([
+                    ('HD%06d' % int(rows[i][f_hd])) for i, s in ids.values() if rows[i][f_hd] is not None
+                ]))
+                time.sleep(2)
+                if len(r) > 0:
+                    r = r[0]
+                    r.add_index('Name')
+                    for id, (i, src) in ids.copy().items():
+                        dr = get(r, 'HD%06d' % int(rows[i][f_hd])) if rows[i][f_hd] else None
+                        if dr is not None:
+                            t_eff, log_g, fe_h = median(dr, ('Teff', 'log_g_', '__Fe_H_'), null='null')
+                            src = src[0:3] + ''.join([('_' if v == 'null' else Stars.SOURCE_WU) for v in (t_eff, log_g, fe_h)])
+                            insert[id] = [t_eff, log_g, fe_h, src]
+                            if '_' not in src[3:5]:
+                                ids.pop(rows[i][f_id])
+                            else:
+                                ids[rows[i][f_id]][1] = src
+
+            if len(ids) > 0:
+                # try using other catalog
+                r = v3.query_constraints(HIP='=,' + ','.join([str(rows[i][f_hip]) for i, s in ids.values()]))[0]
+                r.add_index('HIP')
+                for id, (i, src) in ids.copy().items():
+                    dr = get(r, int(rows[i][f_hip]))
+                    if dr is not None:
+                        t_eff, log_g = median(dr, ('Teff', 'log_g_'), null='null')
+                        src = src[0:3] + ''.join([('_' if v == 'null' else Stars.SOURCE_GAIA1) for v in (t_eff, log_g)]) + src[5]
+                        insert[id] = [t_eff, log_g, insert[id][2] if id in insert else 'null', src]
+                        # if '_' not in src[3:5]:
+                        #     ids.pop(rows[i][f_id])
+                        # else:
+                        #     ids[rows[i][f_id]][1] = src
 
             if len(insert) > 0:
+                values = ["(%d, %s, %s, %s, '%s', 0,0,0,0,0,0)" % (
+                                id, t_eff, log_g, fe_h, src)
+                            for id, (t_eff, log_g, fe_h, src) in insert.items()]
                 cursor_w.execute("""
-                INSERT INTO deep_sky_objects (id, t_eff, ra, dec, x, y, z, mag_b, mag_v) VALUES """ + ','.join(insert) + """
-                ON CONFLICT(id) DO UPDATE SET t_eff = excluded.t_eff
+                    INSERT INTO deep_sky_objects (id, t_eff, log_g, fe_h, src, ra, dec, x, y, z, mag_v) VALUES """ + ','.join(values) + """
+                    ON CONFLICT(id) DO UPDATE SET 
+                        t_eff = excluded.t_eff, 
+                        log_g = excluded.log_g, 
+                        fe_h = excluded.fe_h,
+                        src = excluded.src
                 """)
                 conn.commit()
+        conn.close()
 
     @staticmethod
     def correct_supplement_data():
@@ -347,9 +559,11 @@ class Stars:
     @staticmethod
     def get_hip_mag_bv(hip, v=None):
         from astroquery.vizier import Vizier
+        Vizier.ROW_LIMIT = -1
+
         hips = [hip] if isinstance(hip, str) else hip
 
-        v = Vizier(columns=["HIP", "Vmag", "B-V"], catalog="I/239/hip_main")
+        v = Vizier(columns=["HIP", "Vmag", "B-V"], catalog="I/239/hip_main", row_limit=-1)
         r = v.query_constraints(HIP='=,'+','.join(hips))
 
         results = {}
@@ -386,12 +600,31 @@ class Stars:
         conn.close()
 
 
+def get(r, k, d=None):
+    if k is None or r is None:
+        return d
+    try:
+        return r.loc[k]
+    except:
+        return d
+
+def median(dr, fields, null='null'):
+    try:
+        values = [np.ma.median(dr[f]) for f in fields]
+        values = [(null if np.ma.is_masked(v) else v) for v in values]
+    except:
+        values = [null if np.ma.is_masked(dr[f]) or np.isnan(dr[f]) else dr[f] for f in fields]
+    return values
+
+
 if __name__ == '__main__':
     if 0:
-        Stars.import_stars()
+        Stars.import_stars_hip()
         quit()
-    elif 1:
-        Stars.override_betelgeuse()
+    elif 0:
+        Stars.add_simbad_col()
+        #Stars.override_rho_ori_b()
+        #Stars.override_delta_ori_b()
         quit()
     elif 0:
         Stars.query_t_eff()
@@ -400,6 +633,46 @@ if __name__ == '__main__':
         img = np.zeros((1024, 1024), dtype=np.uint8)
         for i in range(1000):
             Stars.plot_stars(img, tools.rand_q(math.radians(180)), cam, exposure=5, gain=1)
+        quit()
+    elif 1:
+        conn = sqlite3.connect(Stars.STARDB)
+        cursor = conn.cursor()
+        f_id, f_hip, f_sim, f_hd, f_magv, f_magb, f_teff, f_logg, f_feh, f_src = range(10)
+        r = cursor.execute("""
+            SELECT id, hip, simbad, hd, mag_v, mag_b, t_eff, log_g, fe_h, src
+            FROM deep_sky_objects
+            WHERE hd in (48915,34085,61421,39801,35468,37128,37742,37743,44743,38771,36486,48737,36861)
+            ORDER BY mag_v
+        """)
+        rows = r.fetchall()
+        stars = {}
+        print('id\thip\tsim\thd\tmag_v\tmag_b\tt_eff\tlog_g\tfe_h\tsrc')
+        for row in rows:
+            stars[row[f_hd]] = row
+            print('\t'.join([str(c) for c in row]))
+        conn.close()
+
+        from astropy.io import fits
+        import matplotlib.pyplot as plt
+
+        def testf(fdat, teff, logg, feh):
+            sp = S.Icat('k93models', float(teff), float(feh), float(logg))\
+                  .renorm(0, 'vegamag', S.ObsBandpass('johnson,v'))
+            sp_real = S.ArraySpectrum(wave=fdat[0][0], flux=fdat[0][1], fluxunits='flam')\
+                       .renorm(0, 'vegamag', S.ObsBandpass('johnson,v'))
+            plt.plot(sp_real.wave, sp_real.flux)
+            plt.plot(sp.wave, sp.flux)
+            plt.xlim(3000, 10000)
+            plt.show()
+
+        for hd in (48737, 35468, 39801):  # Lambda Orionis (HD36861) Teff too high for model (37689K)
+            fname = r'C:\projects\s100imgs\spectra\%s.fits' % hd
+            fdat = fits.getdata(fname)
+            teff, logg, feh = [stars[hd][f] for f in (f_teff, f_logg, f_feh)]
+            if teff > 30000:
+                logg = max(logg, 4.0)
+            testf(fdat, teff, logg, feh or 0)
+
         quit()
 
 #    cam = RosettaSystemModel(focused_attenuated=False).cam

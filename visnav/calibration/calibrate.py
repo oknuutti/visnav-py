@@ -1,4 +1,6 @@
 import configparser
+import pickle
+from abc import ABC
 from functools import lru_cache
 
 import math
@@ -32,18 +34,59 @@ from visnav.render.sun import Sun
 
 DEBUG_EXTRACTION = 0
 DEBUG_CHANNELS = 0
-DEBUG_MATCHING = 0  # show 1=tycho, 2=t_eff
+DEBUG_MATCHING = 0  # show 1=tycho, 2=t_eff, 3=mag_v
 DEBUG_MEASURES = 0
 MANUAL_ATTITUDE = 0
 PLOT_INITIAL_QEFF_FN = 0
-SHOW_MEASURES = 0
-OPTIMIZER_START_N = 1
-STAR_CALIB_PRIOR_WEIGHT = 1.6e2  # 1.6
-STAR_CALIB_HUBER_COEF = 1.5e2    # 1.5
-STAR_GAIN_ADJUSTMENT = 0.621   # 0.673, 1.0   # 40.0, 1.6   # 53, 1.7
-STAR_ADJUSTMENT_GAMMA = 1.0
-STAR_GAIN_ADJUSTMENT_TN = 2.4   # 4.6, 1.7
-STAR_ADJUSTMENT_GAMMA_TN = 1.5
+SHOW_MEASURES = 1
+
+# for moon
+MOON_GAIN_ADJ = 567/1023   #  was: 506/1023
+
+STAR_GAIN_ADJUSTMENT_TN = 0.7           #
+STAR_PSF_COEF_TN = (0.22, 0.15, 0.12)   #
+
+STAR_LAB_DATAPOINT_WEIGHT = 0.3
+STAR_CALIB_PRIOR_WEIGHT = 0.1     # 0.5: high, 0.3: med, 0.1: low
+STAR_CALIB_HUBER_COEF = 0.3       # %: err_dus/measured_du      # best: 0.3
+STAR_GAIN_ADJUSTMENT = 567/1023   #                             # was 608/1023
+STAR_PSF_COEF = (150, 95, 90)     # bgr                         # best: (105, 70, 65)
+INIT_QEFF_ADJ = (1.0, 1.0, 1.0)   # bgr                         # best: (1.0, 0.95, 0.8)
+
+USE_ESTIMATED_QEC = 0             # use estimated qec instead of initial one
+STAR_IGNORE_MOON_CH = (2,)      # cam channels
+STAR_OPT_WEIGHTING = 1
+STAR_USE_CACHED_MEAS = 1
+OPTIMIZER_START_N = 1          # set to zero for skipping optimizing and just show result for the initial solution
+
+(FRAME_GAIN_NONE, FRAME_GAIN_SAME, FRAME_GAIN_STATIC, FRAME_GAIN_INDIVIDUAL) = range(4)
+FRAME_GAINS = FRAME_GAIN_STATIC    # 0: dont use, 1: same gain for all, 2: static gains, 3: individual gains
+GENERAL_GAIN_ADJUSTMENT = False   # 1.0       #
+
+STAR_IGNORE_IDS = (
+        32263,  # Sirius        # brightest star, too distorted
+#        27919,  # Betelgeuse    # highly variable, was experiencing severe dimming
+        26142,  # Meissa        # the neck/head, bright open cluster too near
+#        25865,  # Mintaka       # eastern star of belt, very blue, could try still (!)
+        26176,  # Hatysa        # the sword, orion nebula and lesser stars too near
+    ) if 1 else tuple()
+
+OVERRIDE_STAR_DATA = {
+    # Betelgeuse: CTOA observations on 2018-12-07 and 18-12-22, accessed through https://www.aavso.org database
+#    27919: {'mag_v': 0.8680, 'mag_b': 2.6745, 't_eff': 3546},  # estimated based on b-v: 3546K
+
+    # Betelgeuse: CTOA observation on 2018-12-22, accessed through https://www.aavso.org database
+    27919: {'mag_v': 0.882, 'mag_b': 2.680}, #, 't_eff': 3550},  # estimated based on b-v:
+
+    # 37173: {'t_eff': 6500, },
+    # 25273: {'t_eff': 18000, },
+    # 26246: {'t_eff': 24670, },
+    # 30251: {'t_eff': 26630, 'log_g': 3.89, },
+    # 27298: {'t_eff': 26500, 'log_g': 2.7, },
+    # 25865: {'t_eff': 30100, 'log_g': 3.31, },
+    # 23820: {'t_eff': 8000, },
+    # 36087: {'t_eff': 13100, 'log_g': 3.611, },
+}
 
 # for lab images
 SHOW_LAB_MEASURES = 0
@@ -55,8 +98,6 @@ GAMMA_BREAK_OVERRIDE = 0.1  # 0.072094  # 0.10
 GAMMA_ADJUSTMENT = None    # TODO: remove
 MISSING_BG_REMOVE_STRIPES = 1
 
-# for moon
-MOON_GAIN_ADJ = 0.717
 
 # NANOCAM_GAINS = 65535: x128, 32768: x64, 16384: x32, 2048: x4, 64: x0.125
 
@@ -161,11 +202,11 @@ def use_aurora_img(img_file):
 def use_moon_img(img_file):
     debug = 1
     override = {
-        'exposure': 0.01,
-        'gamma_break': 0.1,
+        #'exposure': 0.01,
+#        'gamma_break': 0.1,
         # 'phase_angle': 2,
         # 'sun_moon_lon': 2,
-        'gain': NANOCAM_GAINS[64],  # x4
+#        'gain': NANOCAM_GAINS[64],  # x0.125
     }
     Frame.MISSING_BG_REMOVE_STRIPES = 0   # force to false
 
@@ -179,7 +220,7 @@ def use_moon_img(img_file):
 
     measures = f.detect_moon()
     md = [m.du_count for m in measures]
-    ed = [m.expected_du(gain_adj=MOON_GAIN_ADJ) for m in measures]
+    ed = [m.expected_du(post_sat_gain=MOON_GAIN_ADJ, plot=debug) for m in measures]
     print('Measured DUs (B, G, R): %s => [G/B=%d%%, R/G=%d%%]\nExpected DUs (B, G, R): %s => [G/B=%d%%, R/G=%d%%]' % (
             [round(m) for m in md], md[1]/md[0]*100, md[2]/md[1]*100,
             [round(m) for m in ed], ed[1]/ed[0]*100, ed[2]/ed[1]*100,
@@ -203,61 +244,103 @@ def use_stars(folder, thumbnail=True):
     if GAMMA_BREAK_OVERRIDE:
         override['gamma_break'] = GAMMA_BREAK_OVERRIDE
 
-    bgr_cam = get_bgr_cam(thumbnail=thumbnail)
-    s_frames = []
-    if os.path.isdir(folder):
-        for file in os.listdir(folder):
-            if file[-4:].lower() in ('.png', '.jpg'):
-                fullpath = os.path.join(folder, file)
-                f = Frame.from_file(bgr_cam, fullpath, fullpath[:-4]+'.lbl', override=override, bg_offset=21, debug=debug)
-                if 0:
-                    f.show_image()
-                s_frames.append(f)
+    bgr_cam = get_bgr_cam(thumbnail=thumbnail, estimated=USE_ESTIMATED_QEC)
+    cache_file = '../%s_meas_cache.pickle' % ('th' if thumbnail else ('sm' if len(sys.argv) > 3 else 's'))
+
+    if not STAR_USE_CACHED_MEAS or not os.path.exists(cache_file):
+        s_frames = []
+        if os.path.isdir(folder):
+            for file in os.listdir(folder):
+                if file[-4:].lower() in ('.png', '.jpg'):
+                    fullpath = os.path.join(folder, file)
+                    f = Frame.from_file(bgr_cam, fullpath, fullpath[:-4]+'.lbl', override=override, bg_offset=21, debug=debug)
+                    if 0:
+                        f.show_image()
+                    s_frames.append(f)
+        else:
+            f = Frame.from_file(bgr_cam, folder, folder[:-4] + '.lbl', override=override, bg_offset=21, debug=debug)
+            s_frames.append(f)
+
+        if 0 and not thumbnail:
+            f.show_image(processed=True, median_filter=False, zero_bg=30, gain=4, save_as='c:/projects/s100imgs/processed-stars-mf.png')
+
+        measures = []
+        stars = {}
+        for f in s_frames:
+            m_tmp, m_str = f.detect_stars(thumbnail=thumbnail)
+            measures.extend(m_tmp)
+            merge(stars, m_str)
+
+        if len(sys.argv) > 3:
+            override, Frame.MISSING_BG_REMOVE_STRIPES = {}, False
+            m_folder = sys.argv[3]
+            m_frames = []
+            if os.path.isdir(m_folder):
+                for file in os.listdir(m_folder):
+                    if file[-4:].lower() in ('.png', '.jpg'):
+                        fullpath = os.path.join(m_folder, file)
+                        m_frames.append(Frame.from_file(bgr_cam, fullpath, fullpath[:-4] + '.lbl', override=override, debug=debug))
+            else:
+                m_frames.append(Frame.from_file(bgr_cam, m_folder, m_folder[:-4] + '.lbl', override=override, debug=debug))
+
+            for f in m_frames:
+                f.detect_moon()
+                measures.extend(f.measures)
+
+        with open(cache_file, 'wb') as fh:
+            pickle.dump((measures, stars), fh)
     else:
-        f = Frame.from_file(bgr_cam, folder, folder[:-4] + '.lbl', override=override, bg_offset=21, debug=debug)
-        s_frames.append(f)
-
-    if 1 and not thumbnail:
-        f.show_image(processed=True, median_filter=3, zero_bg=60, save_as='c:/projects/s100imgs/processed-stars-mf.png')
-
-    measures = []
-    stars = {}
-    for f in s_frames:
-        m_tmp, m_str = f.detect_stars(thumbnail=thumbnail)
-        measures.extend(m_tmp)
-        merge(stars, m_str)
-
-    if len(sys.argv) > 3:
-        m_folder = sys.argv[3]
-        m_frames = []
-        for file in os.listdir(m_folder):
-            if file[-4:].lower() in ('.png', '.jpg'):
-                fullpath = os.path.join(m_folder, file)
-                m_frames.append(Frame.from_file(bgr_cam, fullpath, fullpath[:-4] + '.lbl', override=override, debug=debug))
-
-        for f in m_frames:
-            f.detect_moon()
-            measures.extend(f.measures)
-
-    if 1:
-        # set different weights to measures so that various star temperatures equally represented
-        temps = np.unique([m.t_eff for m in measures])
-        len_sc = np.log(1.5)**2
-        summed_weights = {temp: np.sum([np.exp(-(np.log(temp) - np.log(m.t_eff))**2/len_sc) for m in measures]) for temp in temps}
+        with open(cache_file, 'rb') as fh:
+            measures, stars = pickle.load(fh)
         for m in measures:
-            m.weight = 1/summed_weights[m.t_eff]
+            m.frame.cam = bgr_cam
+
+    # maybe filter out measures of certain stars
+    measures = [m for m in measures if m.obj_id[0] not in STAR_IGNORE_IDS]
+
+    # override star params again in case they were changed after caching
+    for m in measures:
+        if m.obj_id[0] in OVERRIDE_STAR_DATA:
+            for f in ('mag_v', 'mag_b', 't_eff', 'log_g', 'fe_h'):
+                od = OVERRIDE_STAR_DATA[m.obj_id[0]]
+                if f in od:
+                    stars[m.obj_id][0][f] = od[f]
+                    if getattr(m, f, None) is not None:
+                        setattr(m, f, od[f])
+
+    if STAR_OPT_WEIGHTING:
+        # set different weights to measures so that various star temperatures equally represented
+        star_meas = [m for m in measures if m.obj_id[0] != 'moon']
+        temps = np.unique([m.t_eff for m in star_meas])
+        len_sc = np.log(1.5)**2  # np.log(1.5)**2
+        summed_weights = {temp: np.sum([np.exp(-(np.log(temp) - np.log(m.t_eff))**2/len_sc) for m in star_meas]) for temp in temps}
+
+        # also weight by magnitude
+#        mim = np.max([m.mag_v for m in star_meas]) + 1
+
+        for m in star_meas:
+            m.weight = 1/summed_weights[m.t_eff] #* (mim - m.mag_v)   # weight by magnitude
+
+        # give the moon the same weight as the median star
+        moon_weight = np.median([m.weight for m in star_meas])
+        for m in measures:
+            if m.obj_id[0] == 'moon':
+                m.weight = moon_weight
 
     opt = Optimizer()
-    qeff_coefs, f_gains, gain_adj, gamma, err, measured, expected = opt.optimize(measures)
+    qeff_coefs, f_gains, gain_adj, psf_coef, err, measured, expected = opt.optimize(measures)
 
     for i, qec in enumerate(qeff_coefs):
         bgr_cam[i].qeff_coefs = qec
 
     print('err: %.3f' % np.mean(err))
+    target = np.array((24.75, 22.50))
+    print('r/g, b/g @ 557.7nm: (%.2f%%, %.2f%%), target = (%.2f%%, %.2f%%)' % (
+        *(np.sqrt(err[0:2])/STAR_LAB_DATAPOINT_WEIGHT*100 + target), *target))
     print('queff_coefs: %s' % (qeff_coefs,))
     print('frame gains: %s' % (f_gains,))
     print('gain_adj: %s' % (gain_adj,))
-    print('thumbnailing gamma: %s' % (gamma,))
+    print('psf_coefs: %s' % (psf_coef,))
 
     ## star measurement table
     ##
@@ -269,19 +352,19 @@ def use_stars(folder, thumbnail=True):
     # i.e. wrong results if different exposure time across different measurements of the same star
     star_exp_dus = {}
     for m in measures:
-        if m.star_id not in star_exp_dus:
-            star_exp_dus[m.star_id] = [0]*3
-        star_exp_dus[m.star_id][m.cam_i] = m.expected_du
+        if m.obj_id not in star_exp_dus:
+            star_exp_dus[m.obj_id] = [0]*3
+        star_exp_dus[m.obj_id][m.cam_i] = m.c_expected_du
 
     tot_std = 0
     tot_std_n = 0
-    print('Tycho ID\tVmag\tTeff\tModel Red\tModel Green\tModel Blue\tSamples\tRed\tGreen\tBlue\tRed SD\tGreen SD\tBlue SD')
+    print('HIP\tVhat\tVmag\tTeff\tModel Red\tModel Green\tModel Blue\tSamples\tRed\tGreen\tBlue\tRed SD\tGreen SD\tBlue SD')
     for id in s_by[idxs, 0]:
         st = stars[id]
-        s = {'meas': np.array([s['meas'] for s in st]), 'mag_v': st[0]['mag_v'], 't_eff': st[0]['t_eff'],
-             'expected': star_exp_dus[id]}
+        s = {'meas': np.array([s['meas'] for s in st]), 'm_mag_v': st[0]['m_mag_v'], 'mag_v': st[0]['mag_v'],
+             't_eff': st[0]['t_eff'], 'expected': star_exp_dus[id] if id in star_exp_dus else (0, 0, 0)}
         stars[id] = s
-        tyc = Stars.get_tycho_id(id)
+        tyc = '&'.join([Stars.get_catalog_id(i) for i in id])
         modeled = np.flip(s['expected'])
         means = np.flip(np.mean(s['meas'], axis=0))
         std = np.flip(np.std(s['meas'], axis=0))
@@ -290,14 +373,24 @@ def use_stars(folder, thumbnail=True):
         tot_std_n += 3*(n-1)
         #both = np.vstack((means, std)).T.flatten()
 #        print('%s\t%.2f\t%.0f\t%d\t%.1f ± %.1f\t%.1f ± %.1f\t%.1f ± %.1f' % (
-        print('%s\t%.2f\t%.0f\t%.1f\t%.1f\t%.1f\t%d\t%.1f\t%.1f\t%.1f\t%.1f\t%.1f\t%.1f' % (
-                tyc, s['mag_v'], s['t_eff'], *modeled, n, *means, *std))
-    print('\ntotal std: %.2f' % (tot_std/tot_std_n))  # v0: 26.12, v1:
+        print('%s\t%.2f\t%.2f\t%s\t%.0f\t%.0f\t%.0f\t%d\t%.0f\t%.0f\t%.0f\t%.1f\t%.1f\t%.1f' % (
+                tyc, s['m_mag_v'], s['mag_v'], s['t_eff'], *modeled, n, *means, *std))
+    #print('\ntotal std: %.2f' % (tot_std/tot_std_n))  # v0: 26.12, v1:
     ##
 
-    if SHOW_MEASURES:
-        x = np.array([(stars[int(id)]['t_eff'] + np.random.uniform(-30, 30, size=None),) + tuple(stars[int(id)]['meas'][j, :])
-                    for id in s_by[idxs, 0] for j in range(len(stars[int(id)]['meas']))])
+    moon_bgr = {}
+    for m in measures:
+        if m.obj_id[0] == 'moon':
+            moon_bgr[m.cam_i] = m
+    if len(moon_bgr) == 3:
+        print('Moon\t\t\t\t%.0f\t%.0f\t%.0f\t1\t%.0f\t%.0f\t%.0f\t0\t0\t0' % (
+            moon_bgr[2].c_expected_du, moon_bgr[1].c_expected_du, moon_bgr[0].c_expected_du,
+            moon_bgr[2].du_count, moon_bgr[1].du_count, moon_bgr[0].du_count,
+        ))
+
+    if SHOW_MEASURES and False:
+        x = np.array([(stars[id]['t_eff'] + np.random.uniform(-30, 30, size=None),) + tuple(stars[id]['meas'][j, :])
+                    for id in s_by[idxs, 0] for j in range(len(stars[id]['meas']))])
 
         plt.plot(x[:, 0], x[:, 1], 'bo', fillstyle='none')
         plt.plot(x[:, 0], x[:, 2], 'gx')
@@ -623,11 +716,12 @@ class Frame:
 
         return frame
 
-    def show_image(self, processed=False, compare=False, median_filter=False, zero_bg=False, save_as=None):
+    def show_image(self, gain=1, processed=False, compare=False, median_filter=False, zero_bg=False, save_as=None):
         if processed:
             img = self.image.astype('float')
             if zero_bg:
                 img = np.clip(img - np.min(img) - (0 if zero_bg is True else zero_bg), 0, np.inf)
+            img *= gain
             if median_filter:
                 img = cv2.medianBlur(img.astype('uint16'), median_filter)
             img = ImageProc.color_correct(img, self.applied_bgr_mx, max_val=self.max_val)
@@ -695,28 +789,42 @@ class Frame:
         # use ICP-like algorithm
         matches = []
         for i in range(iterations):
-            matches, cols = self._match_stars(stars, mag_cutoff=3.0 if thumbnail else 4.0)
+            matches, cols = self._match_stars(stars, max_dist=max(0.02, 0.05-i*0.01), mag_cutoff=3.0 if thumbnail else 3.0)
             if np.sum([j is not None for j in matches]) < MIN_MATCHES:
                 break
             if self._update_ori(matches, cols, stars):
                 break   # if update small enough, stop iterating
+        matches, cols = self._match_stars(stars, max_dist=0.02, mag_cutoff=3.0 if thumbnail else 3.0, plot=SHOW_MEASURES)
+
+        def ifna(v, d):
+            return d if v is None or np.isnan(v) else v
 
         measures = []
         star_meas = {}
+        mag_adj = np.median([stars[i]['mag'] - m[cols['mag_v']] for i, m in enumerate(matches) if m is not None])
         for i, m in enumerate(matches):
             if m is not None:
-                tycho = Stars.get_tycho_id(m[cols['id']])
-                if 0 and tycho in ('5949-02777-1'):
-                    continue  #  exclude Sirius as pixels saturated
+                cid = '&'.join([Stars.get_catalog_id(id) for id in m[cols['id']]])
                 for band, j in enumerate(('b', 'g', 'r') if len(self.cam) == 3 else ('v',)):
-                    t_eff = float(m[cols['t_eff']] or -1)
+                    t_eff = float(ifna(m[cols['t_eff']], -1))
+                    fe_h = float(ifna(m[cols['fe_h']], Sun.METALLICITY))
+                    log_g = float(ifna(m[cols['log_g']], Sun.LOG_SURFACE_G))
+                    t_est = 0
                     if t_eff < 0:
-                        t_eff = Stars.effective_temp(m[cols['mag_b']] - m[cols['mag_v']])
-                        print('star %s, missing t_eff, estimated as %.1f' % (tycho, t_eff))
-                    measures.append(StarMeasure(self, band, m[cols['id']], stars[i]['du_' + j], t_eff, m[cols['mag_v']]))
+                        t_est = 1
+                        mag_v, mag_b = m[cols['mag_v']], m[cols['mag_b']]
+                        if mag_b is None or np.isnan(mag_b):
+                            print('Both t_eff AND mag_b missing! ID=%s' % (m[cols['id']],))
+                            mag_b = mag_v
+                        t_eff = Stars.effective_temp(mag_b - mag_v, fe_h, log_g)
+                        print('star %s, missing t_eff, estimated as %.1f' % (cid, t_eff))
+                    measures.append(StarMeasure(self, band, m[cols['id']], stars[i]['du_' + j],
+                                                t_eff, fe_h, log_g, m[cols['mag_v']]))
                 merge(star_meas, {m[cols['id']]: [{'meas': (stars[i]['du_b'], stars[i]['du_g'], stars[i]['du_r']),
-                                                  't_eff': t_eff,
-                                                  'mag_v': m[cols['mag_v']]}]})
+                                                   'm_mag_v': stars[i]['mag'] - mag_adj,
+                                                   't_eff': ('(%.0f)' if t_est else '%.0f') % t_eff,
+                                                   'fe_h': m[cols['fe_h']], 'log_g': m[cols['log_g']],
+                                                   'mag_v': m[cols['mag_v']]}]})
 
         return measures, star_meas
 
@@ -727,13 +835,13 @@ class Frame:
 
         mean, median, std = sigma_clipped_stats(data, sigma=3.0)
 
-        if self.image.shape[1] == 128:
+        thumbnail = self.image.shape[1] == 128
+        bsize = 4 if thumbnail else 20
+        assert self.image.shape[1] in (128, 2048), 'unsupported image size'
+        if thumbnail:
             daofind = DAOStarFinder(fwhm=3.5, threshold=5.*std, sharplo=.3, sharphi=1.3, roundlo=-.8, roundhi=1.3)
-            size = 4
         else:
-            assert self.image.shape[1] == 2048, 'unsupported image size'
-            size = 36
-            daofind = DAOStarFinder(fwhm=size, threshold=10.*std, sharplo=-3.0, sharphi=3.0, roundlo=-3.0, roundhi=3.0)
+            daofind = DAOStarFinder(fwhm=28, threshold=12.*std, sharplo=-3.0, sharphi=3.0, roundlo=-3.0, roundhi=3.0)
 
         sources = daofind(data - median)
         positions = np.transpose((sources['xcentroid'], sources['ycentroid']))
@@ -764,14 +872,25 @@ class Frame:
 
             else:
                 plt.imshow(data, cmap='Greys', norm=norm)
-                apertures = CircularAperture(positions, r=size)
+                apertures = CircularAperture(positions, r=bsize)
                 apertures.plot(color='blue', lw=1.5, alpha=0.5)
                 plt.show()
 
         stars = []
         img_median = np.median(self.image.reshape((-1, 3)), axis=0)
-        for x, y in positions:
-            (b, b0), (g, g0), (r, r0) = self._count_du(x, y, size=size+1, bg=img_median)
+        for i, (x, y) in enumerate(positions):
+            if thumbnail:
+                size = 4
+            elif sources[i]['flux'] > 16:
+                size = 30
+            elif sources[i]['flux'] > 6:
+                size = 25
+            elif sources[i]['flux'] > 2:
+                size = 20
+            else:
+                size = 17
+
+            (b, b0), (g, g0), (r, r0) = self._count_du(x, y, size=2*size+1, bg=img_median)
             if b is not None and (b-b0 > 0 or g-g0 > 0 or r-r0 > 0):
                 # TODO: add black level remove level to .lbl files?
                 #   - unknown black level was removed in sensor, from param tables: 168, but that doesnt work for all images
@@ -779,27 +898,35 @@ class Frame:
                 #bg = 168/8  # 168
                 #b0, g0, r0 = b0 + bg, g0 + bg, r0 + bg
                 mag = -2.5 * math.log10((b+b0) * (g+g0) * (r+r0) / b0 / g0 / r0) / 3
-                stars.append({"du_b": b, "du_g": g, "du_r": r, "x": x, "y": y, "mag": mag})
+                stars.append({"du_b": b, "du_g": g, "du_r": r, "x": x, "y": y, "mag": mag, "size": size})
+            else:
+                print('discarded [%d, %d]' % (x, y))
 
         return stars
 
     def _count_du(self, x, y, size=5, bg=None):
-        mrg = 1 if bg is None else 0
-        mask = ImageProc.bsphkern(size + 2*mrg)
+        wmrg = size//4
+        mmrg = 1 if bg is None else 0
+        mask = ImageProc.bsphkern(size + 2*mmrg)
         if bg is None:
             mask[0, :] = 0
             mask[-1, :] = 0
             mask[:, 0] = 0
             mask[:, -1] = 0
-        mask = mask.astype(np.bool).flatten()
+        mask = mask.astype(np.bool)
+        mr = size//2 + mmrg
+        mn = size + 2*mmrg
 
         h, w, _ = self.image.shape
-        mr = size//2 + mrg
         x, y = int(round(x)), int(round(y))
-        if h-y <= mr or w-x <= mr or x < mr or y < mr:
+        if h-y+wmrg <= mr or w-x+wmrg <= mr or x+wmrg < mr or y+wmrg < mr:
             return zip([None] * 3, [None] * 3)
 
-        win = self.image[y-mr:y+mr+1, x-mr:x+mr+1, :].reshape((-1, 3))
+        win = self.image[max(0, y-mr):min(h, y+mr+1), max(0, x-mr):min(w, x+mr+1), :].reshape((-1, 3))
+        mx0, mx1 = -min(0, x-mr), mn - (max(w, x+mr+1) - w)
+        my0, my1 = -min(0, y-mr), mn - (max(h, y+mr+1) - h)
+
+        mask = mask[my0:my1, mx0:mx1].flatten()
         bg = np.mean(win[np.logical_not(mask), :], axis=0) if bg is None else bg
 
         if False:
@@ -825,23 +952,64 @@ class Frame:
 
         return zip(signal, bg)
 
-    def _match_stars(self, stars, max_dist=0.05, max_mag_diff=1.5, mag_cutoff=3.0):
+    def _match_stars(self, stars, max_dist=0.05, max_mag_diff=2.0, mag_cutoff=3.0, plot=False):
         """ match stars based on proximity """
-        db_stars, cols = Stars.flux_density(self.q, self.cam[0], array=True, undistorted=True, mag_cutoff=mag_cutoff)
+        merge_lim = 4
+        all_stars, cols = Stars.flux_density(self.q, self.cam[0], array=True, undistorted=True,
+                                             mag_cutoff=mag_cutoff+merge_lim, order_by='mag_v')
         if self.debug:
             db_img = np.sqrt(Stars.flux_density(self.q, self.cam[0], mag_cutoff=10.0))
 
-        img_st = np.array([(s['x'], s['y'], s['mag']) for s in stars])
+        # override some star data, change None => nan
+        for i, st in enumerate(all_stars):
+            for j in range(len(st)):
+                st[j] = np.nan if st[j] is None else st[j]
+            if st[cols['id']] in OVERRIDE_STAR_DATA:
+                for f in ('mag_v', 'mag_b', 't_eff', 'log_g', 'fe_h'):
+                    od = OVERRIDE_STAR_DATA[st[cols['id']]]
+                    if f in od:
+                        all_stars[i][cols[f]] = od[f]
+
+        # merge close stars
+        all_stars = np.array(all_stars)
+        points = np.array([(s[cols['ix']], s[cols['iy']]) for s in all_stars])
+        D = tools.distance_mx(points, points)
+        radius = 10 if self.cam[0].width > 300 else 2
+        db_stars = []
+        added = set()
+        for i, s in enumerate(all_stars):
+            if i in added:
+                continue
+            I = tuple(set(np.where(
+                    np.logical_and(D[i, :] < radius, all_stars[:, cols['mag_v']]-merge_lim < s[cols['mag_v']])
+                )[0]) - added)
+            cluster = [None]*(max(cols.values())+1)
+            cluster[cols['id']] = tuple(all_stars[I, cols['id']].astype(np.int))
+            amag_v = 10**(-all_stars[I, cols['mag_v']]/2.5)
+            amag_b = 10**(-all_stars[I, cols['mag_b']]/2.5)
+            cluster[cols['mag_v']] = -2.5*np.log10(np.sum(amag_v))
+            cluster[cols['mag_b']] = -2.5*np.log10(np.sum(amag_b))
+            for c in ('ix', 'iy', 'dec', 'ra', 't_eff', 'fe_h', 'log_g'):
+                E = np.where(all_stars[I, cols[c]] != None)[0]
+                cluster[cols[c]] = np.sum(amag_v[E] * all_stars[I, cols[c]][E])/np.sum(amag_v[E]) if len(E) else None
+            if cluster[cols['mag_v']] < mag_cutoff:
+                added.update(I)
+                db_stars.append(cluster)
+
+        img_st = np.array([(s['x'], s['y'], s['mag'], s['size']) for s in stars])
         db_st = np.array([(s[cols['ix']], s[cols['iy']], s[cols['mag_v']]) for s in db_stars])
 
         # adjust mags to match, not easy to make match directly as unknown variable black level removed in image sensor
-        b0, b1 = np.min(img_st[:, 2]), np.min(db_st[:, 2])
-        d0, d1 = np.max(img_st[:, 2]), np.max(db_st[:, 2])
-        img_st[:, 2] = (img_st[:, 2] - b0) * (d1-b1)/(d0-b0) + b1
+        #b0, b1 = np.min(img_st[:, 2]), np.min(db_st[:, 2])
+        #d0, d1 = np.max(img_st[:, 2]), np.max(db_st[:, 2])
+        #img_st[:, 2] = (img_st[:, 2] - b0) * (d1-b1)/(d0-b0) + b1
+        #img_st[:, 2] = np.log10((10**img_st[:, 2] - 10**b0) * (10**d1-10**b1)/(10**d0-10**b0) + 10**b1)
+        img_st[:, 2] = img_st[:, 2] - np.median(img_st[:, 2]) + np.median(db_st[:, 2])
 
-        db_st[:, :2] = Camera.distort(db_st[:, :2], self.cam[0].dist_coefs,
-                               self.cam[0].intrinsic_camera_mx(legacy=False),
-                               self.cam[0].inv_intrinsic_camera_mx(legacy=False))
+        if self.cam[0].dist_coefs is not None:
+            db_st[:, :2] = Camera.distort(db_st[:, :2], self.cam[0].dist_coefs,
+                                   self.cam[0].intrinsic_camera_mx(legacy=False),
+                                   self.cam[0].inv_intrinsic_camera_mx(legacy=False))
 
         M = (np.abs(np.repeat(np.expand_dims(img_st[:, 2:3], axis=0), len(db_st), axis=0) \
             - np.repeat(np.expand_dims(db_st[:, 2:3], axis=1), len(img_st), axis=1))).squeeze()
@@ -866,48 +1034,75 @@ class Frame:
         for j, i in m_idxs.items():
             matches[i] = db_stars[j]
 
-        if self.debug and DEBUG_MATCHING or SHOW_MEASURES:
-            dec, ra, pa = map(math.degrees, tools.q_to_ypr(self.q))
-            print('ra: %.1f, dec: %.1f, pa: %.1f' % (ra, dec, pa))
+        if self.debug and DEBUG_MATCHING or plot:
+            if plot:
+                norm = ImageNormalize(stretch=SqrtStretch())
+                size = np.median(img_st[:, 3].astype('int'))
+                data = np.mean(self.image.astype(np.float64) / (2 ** self.bits - 1), axis=2)
 
-            sc = 1 #1024 / (self.image.shape[1] * 2)
+                ud_I = set(range(len(db_st))) - set(m_idxs.keys())
+                d_I = set(range(len(img_st))) - set(m_idxs.values())
+                # detected_pos = img_st[tuple(d_I), :2].astype('int')
+                # matched_pos = img_st[tuple(m_idxs.values()), :2].astype('int')
+                # undetected_pos = db_st[tuple(ud_I), :2].astype('int')
 
-            img = np.sqrt(self.image)
-            img = ((img / np.max(img)) * 255).astype('uint8')
-            img = cv2.resize(img, None, fx=sc, fy=sc, interpolation=cv2.INTER_AREA)
-            cv2.drawKeypoints(img, [cv2.KeyPoint(x*sc, y*sc, 60*sc) for x, y in db_st[:, :2]], img, [0, 255, 0], cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
-            cv2.drawKeypoints(img, [cv2.KeyPoint(x*sc, y*sc, 60*sc) for x, y in img_st[:, :2]], img, [255, 0, 0], cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
-            for j, i in m_idxs.items():
-                cv2.line(img, tuple(np.round(img_st[i, :2]*sc).astype('int')),
-                              tuple(np.round(db_st[j, :2]*sc).astype('int')), [0, 255, 0])
-            for j, pt in enumerate(db_st[:, :2]):
-                cv2.putText(img, str(j), tuple(np.round(pt*sc).astype('int')), cv2.FONT_HERSHEY_SIMPLEX, 3*sc, [0, 255, 0])
-            if 0:
-                for i, pt in enumerate(img_st[:, :2]):
-                    cv2.putText(img, str(i), tuple(np.round(pt*sc).astype('int')), cv2.FONT_HERSHEY_SIMPLEX, 3*sc, [0, 0, 255])
+                plt.imshow(data, cmap='Greys', norm=norm)
+                for i in d_I:   # detected
+                    CircularAperture(img_st[i, :2].astype('int'), r=img_st[i, 3].astype('int')).plot(color='blue', lw=1.5, alpha=0.5)
+                for i in m_idxs.values():   # matched
+                    CircularAperture(img_st[i, :2].astype('int'), r=img_st[i, 3].astype('int')).plot(color='green', lw=1.5, alpha=0.5)
+                for i in ud_I:   # undetected
+                    CircularAperture(db_st[i, :2].astype('int'), r=size).plot(color='red', lw=1.5, alpha=0.5)
+                plt.show()
 
-            db_img = np.repeat(np.expand_dims(db_img, axis=2), self.image.shape[2], axis=2)
-            db_img = ((db_img / np.max(db_img)) * 255).astype('uint8')
-            db_img = cv2.resize(db_img, None, fx=sc, fy=sc, interpolation=cv2.INTER_AREA)
+            else:
+                dec, ra, pa = map(math.degrees, tools.q_to_ypr(self.q))
+                print('ra: %.1f, dec: %.1f, pa: %.1f' % (ra, dec, pa))
 
-            for j, pt in enumerate(db_st[:, :2]):
-                if DEBUG_MATCHING != 2:
-                    text = Stars.get_tycho_id(db_stars[j][cols['id']])
+                sc, isc = 1, (1024 if 0 else 2800) / (self.image.shape[1] * 2)
+                img = np.sqrt(self.image)
+                img = ((img / np.max(img)) * 255).astype('uint8')
+                img = cv2.resize(img, None, fx=isc, fy=isc, interpolation=cv2.INTER_AREA)
+                cv2.drawKeypoints(img, [cv2.KeyPoint(x*isc, y*isc, 60*sc) for x, y in db_st[:, :2]], img, [0, 255, 0], cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
+                cv2.drawKeypoints(img, [cv2.KeyPoint(x*isc, y*isc, 60*sc) for x, y in img_st[:, :2]], img, [255, 0, 0], cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
+                for j, i in m_idxs.items():
+                    cv2.line(img, tuple(np.round(img_st[i, :2]*isc).astype('int')),
+                                  tuple(np.round(db_st[j, :2]*isc).astype('int')), [0, 255, 0])
+                if DEBUG_MATCHING != 3:
+                    for j, pt in enumerate(db_st[:, :2]):
+                        cv2.putText(img, str(j), tuple(np.round(pt*isc).astype('int')), cv2.FONT_HERSHEY_SIMPLEX, 3*sc, [0, 255, 0])
                 else:
-                    t_eff = db_stars[j][cols['t_eff']]
-                    t_eff2 = Stars.effective_temp(db_stars[j][cols['mag_b']] - db_stars[j][cols['mag_v']])
-                    #if 1:
-                    #    print('%s Teff: %s (%.1f)' % (Stars.get_tycho_id(db_stars[j][cols['id']]), t_eff, t_eff2))
-                    text = ('%dK' % t_eff) if t_eff else ('(%dK)' % t_eff2)
-                cv2.putText(db_img, text, tuple(np.round(pt*sc+np.array([5, -5])).astype('int')), cv2.FONT_HERSHEY_SIMPLEX, 1.6*sc, [255, 0, 0])
+                    for i, pt in enumerate(img_st[:, :2]):
+                        text = '%.2f' % img_st[i, 2]
+                        #text = str(i)
+                        cv2.putText(img, text, tuple(np.round(pt*isc).astype('int')), cv2.FONT_HERSHEY_SIMPLEX, 1.6*sc, [0, 0, 255])
 
-            cv2.drawKeypoints(db_img, [cv2.KeyPoint(x*sc, y*sc, 60*sc) for x, y in db_st[:, :2]], db_img, [0, 255, 0], cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
+                db_img = np.repeat(np.expand_dims(db_img, axis=2), self.image.shape[2], axis=2)
+                db_img = ((db_img / np.max(db_img)) * 255).astype('uint8')
+                db_img = cv2.resize(db_img, None, fx=isc, fy=isc, interpolation=cv2.INTER_AREA)
 
-            img = np.hstack((db_img, np.ones((img.shape[0], 1, img.shape[2]), dtype='uint8')*255, img))
-            # cv2.imshow('test', img)
-            # cv2.waitKey()
-            plt.imshow(np.flip(img, axis=2))
-            plt.show()
+                for j, pt in enumerate(db_st[:, :2]):
+                    if DEBUG_MATCHING == 1:
+                        text = '&'.join([Stars.get_catalog_id(id) for id in db_stars[j][cols['id']]])
+                    elif DEBUG_MATCHING == 2:
+                        t_eff = db_stars[j][cols['t_eff']]
+                        t_eff2 = Stars.effective_temp(db_stars[j][cols['mag_b']] - db_stars[j][cols['mag_v']])
+                        #if 1:
+                        #    print('%s Teff: %s (%.1f)' % (Stars.get_catalog_id(db_stars[j][cols['id']]), t_eff, t_eff2))
+                        text = ('%dK' % t_eff) if t_eff else ('(%dK)' % t_eff2)
+                    elif DEBUG_MATCHING == 3:
+                        text = '%.2f' % db_stars[j][cols['mag_v']]
+                    cv2.putText(db_img, text, tuple(np.round(pt*isc+np.array([5, -5])).astype('int')), cv2.FONT_HERSHEY_SIMPLEX, 1.6*sc, [255, 0, 0])
+
+                cv2.drawKeypoints(db_img, [cv2.KeyPoint(x*isc, y*isc, 60*sc) for x, y in db_st[:, :2]], db_img, [0, 255, 0], cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
+
+                img = np.hstack((db_img, np.ones((img.shape[0], 1, img.shape[2]), dtype='uint8')*255, img))
+                cv2.imshow('test', img)
+                cv2.waitKey()
+    #            plt.figure(1, (16, 12))
+    #            plt.imshow(np.flip(img, axis=2))
+    #            plt.tight_layout()
+    #            plt.show()
 
         return matches, cols
 
@@ -1066,20 +1261,52 @@ class Frame:
         return LabMeasure(self, mean, std, n)
 
 
-class StarMeasure:
-    def __init__(self, frame, cam_i, star_id, du_count, t_eff, mag_v, weight=1):
+class Measure(ABC):
+    def __init__(self, frame, cam_i, obj_id, du_count, weight=1):
         self.frame = frame
         self.cam_i = cam_i
+        self.obj_id = obj_id
         self.du_count = du_count
-        self.star_id = star_id
-        self.t_eff = t_eff
-        self.mag_v = mag_v
         self.weight = weight
 
-        self.expected_du = None
+        # cached value for expected du
+        self.c_expected_du = None
+
+    def expected_du(self, pre_sat_gain=1, post_sat_gain=1, qeff_coefs=None, psf_coef=(1, 1, 1)):
+        assert False, 'not implemented'
 
 
-class MoonMeasure:
+class StarMeasure(Measure):
+    def __init__(self, frame, cam_i, obj_id, du_count, t_eff, fe_h, log_g, mag_v, weight=1):
+        super(StarMeasure, self).__init__(frame, cam_i, obj_id, du_count, weight=weight)
+        self.t_eff = t_eff
+        self.fe_h = fe_h
+        self.log_g = log_g
+        self.mag_v = mag_v
+
+    def expected_du(self, pre_sat_gain=1, post_sat_gain=1, qeff_coefs=None, psf_coef=(1, 1, 1)):
+        cam = self.frame.cam[self.cam_i]
+        cgain = cam.gain * cam.aperture_area * cam.emp_coef
+        fgain = self.frame.gain * self.frame.exposure
+        queff_coefs = tuple(cam.qeff_coefs if qeff_coefs is None else qeff_coefs[self.cam_i])
+        electrons, _ = Camera.electron_flux_in_sensed_spectrum(queff_coefs, self.t_eff, self.fe_h, self.log_g,
+                                                               self.mag_v, cam.lambda_min, cam.lambda_max)
+
+        saturation_val = pre_sat_gain * self.frame.max_val     # would normally be self.frame.max_val, however there's some earlier saturation value
+        du = saturation_val * fgain * cgain * electrons
+        center_px_val = du / psf_coef[self.cam_i]
+
+        if center_px_val < saturation_val:
+            du = post_sat_gain * psf_coef[self.cam_i] * center_px_val
+        else:
+            du = post_sat_gain * psf_coef[self.cam_i] * saturation_val * (1 + np.log(center_px_val / saturation_val))
+        # du = du ** (1 / gamma) * gain_adj
+
+        self.c_expected_du = du
+        return du
+
+
+class MoonMeasure(Measure):
     """
     Expected measures based on
     [1] "THE SPECTRAL IRRADIANCE OF THE MOON", Hugh H. Kieffer and Thomas C. Stone, The Astronomical Journal, 2005
@@ -1124,10 +1351,7 @@ class MoonMeasure:
     ROLO_P = (0.00066229, 4.06054, 12.8802, -30.5858, 16.7498)
 
     def __init__(self, frame, cam_i, du_count, weight=1):
-        self.frame = frame
-        self.cam_i = cam_i
-        self.du_count = du_count
-        self.weight = weight
+        super(MoonMeasure, self).__init__(frame, cam_i, ('moon',), du_count, weight=weight)
 
     @staticmethod
     def _lunar_disk_refl(wlen, g, clat, clon, slon):
@@ -1161,13 +1385,13 @@ class MoonMeasure:
         fn = lambda lam: lunar_disk_refl_fn(lam) * moon_solid_angle * Sun.ssr(lam) * sun_solid_angle / math.pi
         return fn
 
-    def expected_du(self, gain_adj=1):
+    def expected_du(self, pre_sat_gain=1, post_sat_gain=1, qeff_coefs=None, psf_coef=(1, 1, 1), plot=False):
         f, c = self.frame, self.frame.cam[self.cam_i]
         g, clat, clon, slon = f.phase_angle, f.cam_moon_lat, f.cam_moon_lon, f.sun_moon_lon
         smd, cmd = f.sun_moon_dist, f.cam_moon_dist
         spectrum_fn = MoonMeasure.lunar_disk_irr_fn(MoonMeasure.lunar_disk_refl_fn(g, clat, clon, slon), smd, cmd)
 
-        if f.debug and self.cam_i == 0:
+        if plot and self.cam_i == 0:
             lam = np.linspace(c.lambda_min, c.lambda_max, 100)
             plt.plot(lam*1e9, spectrum_fn(lam) * 1e-9)  # [W/m2/nm]
             plt.xlabel('Wave Length [nm]')
@@ -1177,8 +1401,10 @@ class MoonMeasure:
 
         cgain = c.gain * c.aperture_area * c.emp_coef
         fgain = f.gain * f.exposure
-        electrons, _ = Camera.electron_flux_in_sensed_spectrum_fn(tuple(c.qeff_coefs), spectrum_fn, c.lambda_min, c.lambda_max)
-        du = f.max_val * gain_adj * fgain * cgain * electrons
+        queff_coefs = tuple(c.qeff_coefs if qeff_coefs is None else qeff_coefs[self.cam_i])
+        electrons, _ = Camera.electron_flux_in_sensed_spectrum_fn(queff_coefs, spectrum_fn, c.lambda_min, c.lambda_max)
+        du = f.max_val * pre_sat_gain * post_sat_gain * fgain * cgain * electrons
+        self.c_expected_du = du
         return du
 
 
@@ -1198,10 +1424,27 @@ class Optimizer:
         cams = measures[0].frame.cam
         cn = len(cams)
         qn = [len(cams[i].qeff_coefs) for i in range(cn)]
+        fn = {
+            FRAME_GAIN_NONE: 0,
+            FRAME_GAIN_SAME: 1,
+            FRAME_GAIN_STATIC: 0,
+            FRAME_GAIN_INDIVIDUAL: np.max([m.frame.id for m in measures]) + 1,
+        }[FRAME_GAINS]
+        gn = 1 if GENERAL_GAIN_ADJUSTMENT is not False else 0
 
-        def encode(cams, f_gains, gain_adj, gamma):
+        f_gains = np.ones(fn)
+        for m in measures:
+            if FRAME_GAINS == FRAME_GAIN_SAME:
+                f_gains[0] = STAR_GAIN_ADJUSTMENT
+            elif FRAME_GAINS == FRAME_GAIN_INDIVIDUAL:
+                if m.obj_id[0] == 'moon':
+                    f_gains[m.frame.id] = MOON_GAIN_ADJ
+                else:
+                    f_gains[m.frame.id] = STAR_GAIN_ADJUSTMENT if m.frame.cam[0].emp_coef >= 1 else STAR_GAIN_ADJUSTMENT_TN
+
+        def encode(cams, f_gains, gain_adj, psf_coef):
             # parameterize cam spectral responsivity, frame specific exposure correction
-            return (*[qec for c in cams for qec in c.qeff_coefs], *f_gains, gain_adj, gamma)
+            return (*[qec for c in cams for qec in c.qeff_coefs], *f_gains, *((gain_adj,) if gn else tuple()), *psf_coef)
 
         def decode(x):
             x = np.abs(x)
@@ -1212,51 +1455,77 @@ class Optimizer:
                 qeff_coefss.append(x[k:k+qn[i]])
                 k += qn[i]
 
-            return (qeff_coefss, x[k:len(x)-2], *x[-2:])
+            off0, off1 = (4 if gn else 3), 3
+            return (qeff_coefss, x[k:len(x)-off0], (x[-off0] if gn else 1), x[-off1:])
 
         def cost_fun(x, measures, x0, return_details=False, plot=False):
-            c_qeff_coefs, f_gains, gain_adj, gamma = decode(x)
+            c_qeff_coefs, f_gains, gain_adj, psf_coef = decode(x)
 
+            band = []
+            obj_ids = []
             measured_du = []
             expected_du = []
             weights = []
             for m in measures:
-                cam = m.frame.cam[m.cam_i]
-                cgain = cam.gain * cam.aperture_area * cam.emp_coef
-                fgain = m.frame.gain * m.frame.exposure * (f_gains[m.frame.id] if len(f_gains) > m.frame.id+1 else 1)
-                electrons, _ = Camera.electron_flux_in_sensed_spectrum(tuple(c_qeff_coefs[m.cam_i]), m.t_eff, m.mag_v,
-                                                                       cam.lambda_min, cam.lambda_max)
-                du = m.frame.max_val * fgain * cgain * electrons
-                du = du ** (1 / gamma) * gain_adj
-                expected_du.append(du)
-                measured_du.append(m.du_count)
-                weights.append(m.weight)
+                if FRAME_GAINS == FRAME_GAIN_SAME:
+                    pre_sat_gain = f_gains[0]
+                elif FRAME_GAINS == FRAME_GAIN_INDIVIDUAL:
+                    pre_sat_gain = f_gains[m.frame.id]
+                elif FRAME_GAINS == FRAME_GAIN_STATIC:
+                    if m.obj_id[0] == 'moon':
+                        pre_sat_gain = MOON_GAIN_ADJ
+                    else:
+                        pre_sat_gain = STAR_GAIN_ADJUSTMENT if m.frame.cam[0].emp_coef >= 1 else STAR_GAIN_ADJUSTMENT_TN
+                else:
+                    pre_sat_gain = 1
 
-            measured_du, expected_du = np.array(measured_du), np.array(expected_du)
+                edu = m.expected_du(pre_sat_gain=pre_sat_gain, post_sat_gain=gain_adj, qeff_coefs=c_qeff_coefs, psf_coef=psf_coef)
+
+                if return_details or m.obj_id[0] != 'moon' or m.cam_i not in STAR_IGNORE_MOON_CH:
+                    expected_du.append(edu)
+                    measured_du.append(m.du_count)
+                    weights.append(m.weight)
+                    band.append(m.cam_i)
+                    obj_ids.append(m.obj_id)
+
+            measured_du, expected_du, band = map(np.array, (measured_du, expected_du, band))
 
             if plot:
-                plt.plot(expected_du, measured_du, 'x')
+                fig, ax = plt.subplots(1, 1)
+                sb, = ax.plot(expected_du[band == 0], measured_du[band == 0], 'bx')
+                sg, = ax.plot(expected_du[band == 1], measured_du[band == 1], 'gx')
+                sr, = ax.plot(expected_du[band == 2], measured_du[band == 2], 'rx')
                 line = np.linspace(0, np.max(expected_du))
-                plt.plot(line, line)
+                ax.plot(line, line, 'k--', linewidth=0.5)
+                ax.set_xlabel('expected [du]')
+                ax.set_ylabel('measured [du]')
+                names = Stars.get_catalog_id(np.unique(list(s[0] for s in obj_ids if s[0] != 'moon')), 'simbad')
+                names['moon'] = 'moon'
+                labels = np.array([names[id[0]] for id in obj_ids])
+                tools.hover_annotate(fig, ax, sb, labels[band == 0])
+                tools.hover_annotate(fig, ax, sg, labels[band == 1])
+                tools.hover_annotate(fig, ax, sr, labels[band == 2])
                 plt.show()
 
-            for i, m in enumerate(measures):
-                m.expected_du = expected_du[i]
-
             _, _, gain_adj0, _ = decode(x0)
-            err = tuple(tools.pseudo_huber_loss(STAR_CALIB_HUBER_COEF * gain_adj0, measured_du - expected_du) * np.array(weights))
+            err = tuple(tools.pseudo_huber_loss(STAR_CALIB_HUBER_COEF, (measured_du - expected_du) * 2 / (expected_du + measured_du)) * np.array(weights))
             n = 3*len(c_qeff_coefs[0])
-            prior = tuple(STAR_CALIB_PRIOR_WEIGHT**2 * gain_adj0**2 * (np.array(x[:n]) - np.array(x0[:n]))**2) \
+
+            lab_dp = tuple()
+            if STAR_LAB_DATAPOINT_WEIGHT > 0:
+                c, lam = m.frame.cam, 557.7e-9
+                g = Camera.sample_qeff(c_qeff_coefs[1], c[1].lambda_min, c[1].lambda_max, lam)
+                r_g = Camera.sample_qeff(c_qeff_coefs[2], c[2].lambda_min, c[2].lambda_max, lam) / g
+                b_g = Camera.sample_qeff(c_qeff_coefs[0], c[0].lambda_min, c[0].lambda_max, lam) / g
+                lab_dp = tuple(STAR_LAB_DATAPOINT_WEIGHT**2 * (np.array((r_g, b_g)) - np.array((0.2475, 0.2250)))**2)
+
+            prior = tuple(STAR_CALIB_PRIOR_WEIGHT**2 * (np.array(x[:n]) - np.array(x0[:n]))**2) \
                 if STAR_CALIB_PRIOR_WEIGHT > 0 else tuple()
-            return (err + prior, measured_du, expected_du) if return_details else (err + prior)
 
-        FRAME_GAIN = 0
-        nf = np.max([m.frame.id for m in measures]) if FRAME_GAIN else 0
+            err_tuple = lab_dp + err + prior
+            return (err_tuple, measured_du, expected_du) if return_details else err_tuple
 
-        if cams[0].emp_coef < 1:
-            x0b = encode(cams, np.ones(nf), STAR_GAIN_ADJUSTMENT_TN, STAR_ADJUSTMENT_GAMMA_TN)
-        else:
-            x0b = encode(cams, np.ones(nf), STAR_GAIN_ADJUSTMENT, STAR_ADJUSTMENT_GAMMA)
+        x0b = encode(cams, f_gains, GENERAL_GAIN_ADJUSTMENT, STAR_PSF_COEF_TN if cams[0].emp_coef < 1 else STAR_PSF_COEF)
 
         if DEBUG_MEASURES:
             cost_fun(x0b, measures, x0b, plot=True)
@@ -1285,9 +1554,9 @@ class Optimizer:
         else:
             res = x0b
 
-        qeff_coefs, f_gains, gain_adj, gamma = decode(res)
+        qeff_coefs, f_gains, gain_adj, psf_coef = decode(res)
         err, measured, expected = cost_fun(res, measures, x0b, return_details=True, plot=True)
-        return qeff_coefs, f_gains, gain_adj, gamma, err, measured, expected
+        return qeff_coefs, f_gains, gain_adj, psf_coef, err, measured, expected
 
 
 def plot_rgb_qeff(cams):
@@ -1369,24 +1638,29 @@ def get_bgr_cam(thumbnail=False, estimated=False):
     elif estimated:
         array = tuple
         if 1:
-            # based on star thumbnails
-            tmp = [array([0.09272966, 0.18312718, 0.35957762, 0.25324188, 0.10847794,
-       0.08683725, 0.0748219 , 0.08100397, 0.07505023, 0.06477193,
-       0.0494465 , 0.03709407, 0.02787109, 0.02000899]), array([0.0600824 , 0.06667134, 0.08467792, 0.2536974 , 0.3653715 ,
-       0.19617101, 0.08910892, 0.10362767, 0.09810273, 0.02419049,
-       0.01932385, 0.0170538 , 0.01359036, 0.01748234]), array([8.47596719e-02, 9.16792949e-02, 4.89258337e-02, 5.72624633e-02,
-       1.74606485e-02, 2.91107410e-01, 2.83816756e-01, 2.02812035e-01,
-       1.61190842e-01, 1.06526939e-01, 5.49821164e-02, 1.80374246e-02,
-       1.33953355e-08, 6.26982112e-03])]
+            # based on stars, no weighting
+            tmp = [array([1.00949635e-01, 1.76934488e-01, 3.38551293e-01, 2.31775035e-01,
+       7.99141313e-02, 5.46092392e-02, 4.66594391e-02, 5.18066641e-02,
+       4.11171594e-02, 3.70608157e-02, 3.12479764e-02, 1.21138157e-02,
+       4.73964730e-05, 4.86865574e-05]), array([4.46894316e-02, 5.90382511e-02, 7.90086734e-02, 2.51110984e-01,
+       3.59016557e-01, 1.76510942e-01, 7.26250533e-02, 1.01331750e-01,
+       8.59078480e-02, 4.60624884e-03, 1.05239457e-05, 9.74745415e-06,
+       1.90127180e-05, 4.65480417e-05]), array([4.71102593e-02, 6.24064929e-02, 1.94491986e-02, 3.66104712e-02,
+       4.82813107e-02, 3.22430197e-01, 3.12204729e-01, 2.19048667e-01,
+       1.52486245e-01, 6.72934957e-02, 2.77443987e-05, 4.62390147e-05,
+       5.71367704e-05, 1.69477734e-04])]
         else:
-            # based on single star image
-            tmp = [array([0.04489955, 0.13497988, 0.31352381, 0.20892896, 0.06638465,
-                    0.04719419, 0.03744176, 0.04677032, 0.04656029, 0.0452011,
-                    0.04363437, 0.04342965, 0.04174971, 0.03801686]), array([0.01670025, 0.02273135, 0.04525516, 0.21850678, 0.33209688,
-                    0.16050585, 0.06569068, 0.10393313, 0.11358294, 0.04503967,
-                    0.04368473, 0.04421985, 0.04272394, 0.04063471]), array([0.00186153, 0.00615282, 0.0021114, 0.01052139, 0.02531468,
-                    0.33179529, 0.30946771, 0.24840768, 0.21343242, 0.1920259,
-                    0.09876133, 0.09301682, 0.0519301, 0.08433158])]
+            # based on stars, teff based weighting
+            tmp = [array([8.94290274e-02, 1.67909392e-01, 2.99128113e-01, 1.97634109e-01,
+       5.72193313e-02, 2.88243251e-02, 6.30241143e-03, 1.14497415e-04,
+       9.77582881e-03, 1.48148313e-02, 1.43845189e-02, 1.20971757e-02,
+       1.93605985e-03, 5.95808649e-02]), array([1.28027188e-04, 6.81901818e-02, 7.25542690e-02, 2.22804129e-01,
+       3.12559848e-01, 1.34514090e-01, 3.36494058e-02, 5.80130821e-02,
+       4.94028186e-02, 1.64882729e-04, 1.03730253e-03, 1.07695031e-03,
+       1.15575562e-03, 1.87461779e-03]), array([5.19578516e-02, 6.26687643e-02, 2.77121734e-02, 4.97510361e-02,
+       4.75843848e-02, 2.60893460e-01, 2.41618357e-01, 1.57117995e-01,
+       7.63064815e-02, 9.15206306e-03, 1.22063619e-04, 1.64422073e-04,
+       1.05564525e-04, 2.30244743e-04])]
 
         bgr = (
             {'qeff_coefs': tmp[0], 'lambda_min': 350e-9, 'lambda_eff': 465e-9, 'lambda_max': 1000e-9},
@@ -1404,17 +1678,17 @@ def get_bgr_cam(thumbnail=False, estimated=False):
         )
     elif 1:
         bgr = (
-            {'qeff_coefs': list(
-                [.05 * .9, .15 * .9, .33 * .95, .22 * .95, .07 * .95, .05 * .95, .04 * .95, .05 * .95, .05 * .95, .05 * .925,
-                           .05 * .9, .05 * .9, .05 * .875, .05 * .85]),
+            {'qeff_coefs': np.array(
+                [.05 * .05, .15 * .9, .33 * .95, .22 * .95, .07 * .95, .05 * .95, .04 * .95, .05 * .95, .05 * .95, .05 * .925,
+                           .05 * .9, .05 * .9, .05 * .875, .05 * .85]) * INIT_QEFF_ADJ[0],
              'lambda_min': 350e-9, 'lambda_eff': 465e-9, 'lambda_max': 1000e-9},
-            {'qeff_coefs': list(
-                [.03 * .9, .03 * .9, .05 * .95, .23 * .95, .35 * .95, .17 * .95, .07 * .95, .11 * .95, .12 * .95, .05 * .925,
-                           .05 * .9, .05 * .9, .05 * .875, .05 * .85]),
+            {'qeff_coefs': np.array(
+                [.03 * .05, .03 * .9, .05 * .95, .23 * .95, .35 * .95, .17 * .95, .07 * .95, .11 * .95, .12 * .95, .05 * .925,
+                           .05 * .9, .05 * .9, .05 * .875, .05 * .85]) * INIT_QEFF_ADJ[1],
              'lambda_min': 350e-9, 'lambda_eff': 540e-9, 'lambda_max': 1000e-9},
-            {'qeff_coefs': list(
-                [.05 * .9, .05 * .9, .01 * .95, .03 * .95, .05 * .95, .35 * .95, .35 * .95, .27 * .95, .23 * .95, .18 * .925,
-                           .13 * .9, .09 * .9, .05 * .875, .05 * .85]),
+            {'qeff_coefs': np.array(
+                [.05 * .05, .05 * .9, .01 * .95, .03 * .95, .05 * .95, .35 * .95, .35 * .95, .27 * .95, .23 * .95, .18 * .925,
+                           .13 * .9, .09 * .9, .05 * .875, .05 * .85]) * INIT_QEFF_ADJ[2],
              'lambda_min': 350e-9, 'lambda_eff': 650e-9, 'lambda_max': 1000e-9},
         )
     else:

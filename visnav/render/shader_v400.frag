@@ -73,7 +73,7 @@ void main()
                 }
 
                 // model_coefs[6] is a scaling coef, reflectance can theoretically go to negative => clamp from below
-                radiance *= scaling*clamp((2*L*cos_incidence / (cos_incidence + cos_emission) + (1-L)*cos_incidence), 0, 1e99);
+                radiance *= scaling*clamp((2*L*cos_incidence / (cos_incidence + cos_emission) + (1-L)*cos_incidence), 0, 1e19);
             }
             else if(reflection_model == 2) {
                 // Hapke params & exact variation from article:

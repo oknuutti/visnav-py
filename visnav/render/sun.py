@@ -21,6 +21,9 @@ class Sun:
     SOLID_ANGLE_AT_1AU = 6.807e-5   # in steradians
     AU = 1.496e11   # in meters
     TEMPERATURE = 5778  # in K
+    METALLICITY = 0.012
+    LOG_SURFACE_G = 4.43
+    MAG_V = -26.7
 
     _DIFFRACTION_INTERPOLATION_N = 400
     _diffraction_relative_intensity_fun = {}
@@ -49,6 +52,11 @@ class Sun:
         flux_density = np.zeros((cam.height, cam.width), dtype=np.float32)
         sun_dist = np.linalg.norm(sun_cf)
         sun_cf_n = sun_cf/sun_dist
+        lat, lon, _ = tools.cartesian2spherical(*sun_cf_n)
+
+        if abs(tools.wrap_rads(lon)) > math.radians(cam.exclusion_angle_x) or abs(lat) > math.radians(cam.exclusion_angle_y):
+            # baffle protected from all effects
+            return flux_density
 
         visible_ratio, theta = Sun.direct(flux_density, cam, sun_cf, mask)
         Sun.diffraction(flux_density, cam, sun_cf, mask, visible_ratio, theta)
@@ -68,10 +76,11 @@ class Sun:
         lon = tools.wrap_rads(lon)
         hfx, hfy = math.radians(cam.x_fov / 2), math.radians(cam.y_fov / 2)
 
-        lats, lons, rs = np.meshgrid(np.linspace(hfy, -hfy, cam.height), np.linspace(hfx, -hfx, cam.width), 1)
-        px_v_s = np.stack((lats.squeeze().T, lons.squeeze().T, rs.squeeze().T), axis=2)
-        px_v_c = tools.spherical2cartesian_arr(px_v_s.reshape((-1, 3)))
-        theta = tools.angle_between_v_mx(sun_cf/sun_dist, px_v_c).reshape((cam.height, cam.width))
+        lats, lons = np.meshgrid(np.linspace(hfy, -hfy, cam.height), np.linspace(hfx, -hfx, cam.width))
+        px_v_s = np.stack((lats.squeeze().T, lons.squeeze().T), axis=2)
+        px_v_c = tools.spherical2cartesian_arr(px_v_s.reshape((-1, 2)), r=1)  # expensive
+        theta = tools.angle_between_v_mx(sun_cf.reshape((-1, 1))/sun_dist, px_v_c, normalize=False) \
+                     .reshape((cam.height, cam.width))  # expensive
 
         direct = (theta < sun_rad).astype(np.float32)
         full = np.sum(direct)
@@ -121,12 +130,6 @@ class Sun:
     @staticmethod
     def scattering(flux_density, cam, sun_cf_n, visible_ratio, theta):
         # Using Rayleigh scattering, https://en.wikipedia.org/wiki/Rayleigh_scattering
-
-        lat, lon, _ = tools.cartesian2spherical(*sun_cf_n)
-        if abs(tools.wrap_rads(lon)) > math.radians(cam.exclusion_angle_x) or abs(lat) > math.radians(cam.exclusion_angle_y):
-            # baffle protected from scattering effects
-            return
-
         # ~ 1+cos(theta)**2 * "some coef"
         scattering = cam.scattering_coef * (1 + np.cos(theta)**2) * visible_ratio
         flux_density += scattering
