@@ -50,7 +50,7 @@ STAR_LAB_DATAPOINT_WEIGHT = 0.3
 STAR_CALIB_PRIOR_WEIGHT = 0.1     # 0.5: high, 0.3: med, 0.1: low
 STAR_CALIB_HUBER_COEF = 0.3       # %: err_dus/measured_du      # best: 0.3
 STAR_GAIN_ADJUSTMENT = 567/1023   #                             # was 608/1023
-STAR_PSF_COEF = (150, 95, 90)     # bgr                         # best: (105, 70, 65)
+STAR_PSF_COEF = (150, 95, 85)     # bgr                         # best: (105, 70, 65)
 INIT_QEFF_ADJ = (1.0, 1.0, 1.0)   # bgr                         # best: (1.0, 0.95, 0.8)
 
 USE_ESTIMATED_QEC = 0             # use estimated qec instead of initial one

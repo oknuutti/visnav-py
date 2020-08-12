@@ -23,10 +23,14 @@ import warnings
 with warnings.catch_warnings():
     warnings.simplefilter("ignore")
     import importlib
-    root = importlib.util.find_spec('pysynphot').submodule_search_locations[0]
-    os.environ['PYSYN_CDBS'] = os.path.join(root, 'data', 'cdbs')  # http://ssb.stsci.edu/cdbs/tarfiles/synphot1.tar.gz
-    import pysynphot as S                                          # http://ssb.stsci.edu/cdbs/tarfiles/synphot2.tar.gz
-                                                                   # http://ssb.stsci.edu/cdbs/tarfiles/synphot3.tar.gz
+    mod = importlib.util.find_spec('pysynphot')
+    if mod is not None:
+        root = mod.submodule_search_locations[0]
+        os.environ['PYSYN_CDBS'] = os.path.join(root, 'data', 'cdbs')  # http://ssb.stsci.edu/cdbs/tarfiles/synphot1.tar.gz
+        import pysynphot as S                                          # http://ssb.stsci.edu/cdbs/tarfiles/synphot2.tar.gz
+                                                                       # http://ssb.stsci.edu/cdbs/tarfiles/synphot3.tar.gz
+    else:
+        print('warning: module pysynphot not found')
 
 
 class Stars:

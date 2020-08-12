@@ -396,7 +396,7 @@ class ApiServer:
         # current0, peak0 = tracemalloc.get_traced_memory()
         # print("before: %.0fMB" % (current0/1024/1024))
         if session not in self._odometry:
-            self._odometry[session] = VisualOdometry(self._sm, self._sm.view_width*2, verbose=1,
+            self._odometry[session] = VisualOdometry(self._sm.cam, self._sm.view_width*2, verbose=1,
                                                      use_scale_correction=False, est_cam_pose=VO_EST_CAM_POSE)
         post, bias_sds, scale_sd = self._odometry[session].process(img, time, prior, sc_q)
         # current, peak = tracemalloc.get_traced_memory()

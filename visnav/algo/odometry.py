@@ -20,7 +20,6 @@ from visnav.algo import tools
 from visnav.algo.bundleadj import bundle_adj
 from visnav.algo.image import ImageProc
 from visnav.algo.model import SystemModel, Asteroid
-from visnav.iotools.objloader import ShapeModel
 
 
 class Pose:
@@ -206,12 +205,12 @@ class VisualOdometry:
     # TODO: (3) get better distributed keypoints by using grids
     # TODO: (3) detect eclipses (based on appearance?) for faster recovery and false estimate suppression
 
-    def __init__(self, sm, img_width=None, verbose=0, pause=0, **kwargs):
-        self.sm = sm
+    def __init__(self, cam, img_width=None, verbose=0, pause=0, **kwargs):
+        self.cam = cam
         self.img_width = img_width
         self.verbose = verbose
         self.pause = pause
-        self.cam_mx = self.sm.cam.intrinsic_camera_mx()
+        self.cam_mx = cam.intrinsic_camera_mx()
 
         # set params
         for attr in dir(VisualOdometry):
@@ -1027,10 +1026,6 @@ class VisualOdometry:
 
 if __name__ == '__main__':
     import math
-    import cv2
-
-    import matplotlib.pyplot as plt
-    from mpl_toolkits.mplot3d import Axes3D  # noqa: F401 unused import
 
     from visnav.missions.didymos import DidymosSystemModel
     from visnav.render.render import RenderEngine
@@ -1049,7 +1044,7 @@ if __name__ == '__main__':
     # obj_idx = re.load_object(sm.asteroid.hires_target_model_file)
     t0 = datetime.now().timestamp()
 
-    odo = VisualOdometry(sm, sm.cam.width/4, verbose=True, pause=False)
+    odo = VisualOdometry(sm.cam, sm.cam.width/4, verbose=True, pause=False)
     ast_q = quaternion.one
 
     for t in range(120):

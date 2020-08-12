@@ -49,6 +49,7 @@ class TestLoop:
                  operation_zone_only=False, state_generator=None, cache_path=None,
                  sm_noise=0, sm_noise_len_sc=SHAPE_MODEL_NOISE_LEN_SC,
                  navcam_cache_id='', save_depth=False,
+                 traj_len=1, traj_prop_dt=60, only_populate_cache=ONLY_POPULATE_CACHE,
                  real_sm_noise=0, real_sm_noise_len_sc=SHAPE_MODEL_NOISE_LEN_SC,
                  real_tx_noise=0, real_tx_noise_len_sc=SHAPE_MODEL_NOISE_LEN_SC,
                  haze=0, jets=0, jet_int_mode=0.2, jet_int_conc=10,
@@ -56,10 +57,14 @@ class TestLoop:
                  hapke_th_sd=None, hapke_w_sd=None,
                  hapke_b_sd=None, hapke_c_sd=None,
                  hapke_shoe=None, hapke_shoe_w=None,
-                 hapke_cboe=None, hapke_cboe_w=None):
+                 hapke_cboe=None, hapke_cboe_w=None,
+                 noise_time=0, noise_ast_rot_axis=0, noise_ast_phase_shift=0, noise_sco_lat=0,
+                 noise_sco_lon=0, noise_sco_rot=0, noise_lateral=0, noise_altitude=0
+                 ):
 
         self.system_model = system_model
         self.est_real_ast_orient = est_real_ast_orient
+        self.only_populate_cache = only_populate_cache
 
         self.exit = False
         self._algorithm_finished = None
@@ -92,6 +97,9 @@ class TestLoop:
         self.hapke_cboe_w = hapke_cboe_w
         self.save_depth = save_depth
 
+        self.traj_len = traj_len
+        self.traj_prop_dt = traj_prop_dt
+
         self.file_prefix = system_model.mission_id+'_'+file_prefix_mod
         self.noisy_sm_prefix = system_model.mission_id
         self.cache_path = cache_path if cache_path else os.path.join(CACHE_DIR, system_model.mission_id)
@@ -113,32 +121,22 @@ class TestLoop:
         self._hires_obj_idx = None
 
         # gaussian sd in seconds
-        self._noise_time = 0     # disabled as _noise_ast_phase_shift does same thing, was 95% within +-30s
+        self._noise_time = noise_time     # _noise_ast_phase_shift does practically same thing
         
         # uniform, max dev in deg
-        self._noise_ast_rot_axis = 10       # 0 - 10 deg uniform
-        self._noise_ast_phase_shift = 10/2  # 95% within 10 deg
+        self._noise_ast_rot_axis = noise_ast_rot_axis        # in deg, uniform
+        self._noise_ast_phase_shift = noise_ast_phase_shift  # in deg, 95% within 2x this
 
         # s/c orientation noise, gaussian sd in deg
-        self._noise_sco_lat = 2/2   # 95% within 2 deg
-        self._noise_sco_lon = 2/2   # 95% within 2 deg
-        self._noise_sco_rot = 2/2   # 95% within 2 deg
+        self._noise_sco_lat = noise_sco_lat   # in deg, 95% within 2x this
+        self._noise_sco_lon = noise_sco_lon   # in deg, 95% within 2x this
+        self._noise_sco_rot = noise_sco_rot   # in deg, 95% within 2x this
 
         # s/c position noise, gaussian sd in km per km of distance
         self.enable_initial_location = True
         self._unknown_sc_pos = (0, 0, -self.system_model.min_med_distance)
-        self._noise_lateral = 0.3     # sd in deg, 0.298 calculated using centroid algo AND 5 deg fov
-        self._noise_altitude = 0.10   # 0.131 when calculated using centroid algo AND 5 deg fov
-
-        if self._opzone_only:
-            # uniform, max dev in deg
-            self._noise_ast_rot_axis = 5         # 0 - 5 deg uniform
-            self._noise_ast_phase_shift = 5 / 2  # 95% within 5 deg
-
-            # s/c orientation noise, gaussian sd in deg
-            self._noise_sco_lat = 1 / 2  # 95% within 1 deg
-            self._noise_sco_lon = 1 / 2  # 95% within 1 deg
-            self._noise_sco_rot = 1 / 2  # 95% within 1 deg
+        self._noise_lateral = noise_lateral    # sd in deg, 0.298 calculated using centroid algo AND 5 deg fov
+        self._noise_altitude = noise_altitude   # 0.131 when calculated using centroid algo AND 5 deg fov
 
         # transients
         self._smn_cache_id = ''
@@ -233,7 +231,7 @@ class TestLoop:
 
                 # save state to lbl file
                 if self._rotation_noise:
-                    sm.save_state(self.cache_file(i))
+                    sm.save_state(self.cache_file(i, skip_cache_id=True))
             
             # maybe new system state or no previous image, if so, render
             if imgfile is None:
@@ -241,7 +239,12 @@ class TestLoop:
                     print('generating new navcam image')
 
                 # snapshot1 = tracemalloc.take_snapshot()
-                imgfile = self.render_navcam_image(sm, i)
+                imgfile = self.render_navcam_image(sm, i, traj_len=self.traj_len, dt=self.traj_prop_dt)
+
+                if self.traj_len > 1:
+                    # run current selection of absolute navigation algos with first image only
+                    imgfile = imgfile[0]
+
                 # snapshot2 = tracemalloc.take_snapshot()
                 # top_stats = snapshot2.compare_to(snapshot1, 'lineno')
                 # print("[ Top 10 differences ]")
@@ -250,9 +253,8 @@ class TestLoop:
                 # input("Press Enter to continue...")
                 self._maybe_exit()
 
-            if ONLY_POPULATE_CACHE:
+            if self.only_populate_cache:
                 continue
-
 
             # run algorithm
             #tracemalloc.start()
@@ -337,8 +339,8 @@ class TestLoop:
             return None
 
         try:
-            sm.load_state(self.cache_file(i) + '.lbl', sc_ast_vertices=True)
-            self._fill_or_censor_init_sc_pos(sm, self.cache_file(i) + '.lbl')
+            sm.load_state(self.cache_file(i, skip_cache_id=True) + '.lbl', sc_ast_vertices=True)
+            self._fill_or_censor_init_sc_pos(sm, self.cache_file(i, skip_cache_id=True) + '.lbl')
             initial = self._initial_state(sm)
         except FileNotFoundError:
             initial = None
@@ -440,7 +442,7 @@ class TestLoop:
             sun_lf = - tools.q_times_v(SystemModel.sc2gl_q, sun_sc_distance * light_v)
             # TODO: investigate if need *cam.px_sr or something else!!
             downsample = 2
-            lens_effect = Sun.flux_density(cam, sun_lf, mask) if lens_effects else 0
+            lens_effect = Sun.flux_density(cam, sun_lf, mask) if lens_effects else np.array([0])
 
             # radiance given in W/(m2*sr) => needed in W/m2
             object_flux *= cam.px_sr
@@ -449,7 +451,7 @@ class TestLoop:
             lens_effect = np.array([0])
 
         # add flux density of stars from Tycho-2 catalog
-        star_flux = Stars.flux_density(sc_q, cam, mask=mask) if stars else 0
+        star_flux = Stars.flux_density(sc_q, cam, mask=mask) if stars else np.array([0])
 
         total_flux = object_flux.astype(np.float64) + lens_effect.astype(np.float64) + star_flux.astype(np.float64)
         if fluxes_only:
@@ -471,7 +473,7 @@ class TestLoop:
             return img, depth
         return img
 
-    def render_navcam_image(self, sm, i):
+    def render_navcam_image(self, sm, i, traj_len=1, dt=60):
         use_textures = sm.asteroid.hires_target_model_file_textures or self.real_tx_noise > 0
         tx_randomize = self.real_tx_noise > 0
         update_model = False
@@ -509,64 +511,100 @@ class TestLoop:
             self._hires_obj_idx = self._synth_navcam.load_object(model, self._hires_obj_idx)
 
         reflmod_params = self.randomized_hapke_params(sm)
-        sm.swap_values_with_real_vals()
-        img, depth = TestLoop.render_navcam_image_static(sm, self._synth_navcam, self._hires_obj_idx,
-                                                         use_textures=use_textures, reflmod_params=reflmod_params,
-                                                         return_depth=True)
 
-        if self.jets > 0:
-            img = TestLoop.generate_jets(sm, img, depth, self.jets, self.jet_int_mode, self.jet_int_conc)
-        if self.haze > 0:
-            min_d = np.min(depth)
-            hz = (sm.min_distance / min_d)**2 * self.haze
-            img = ImageProc.add_haze(img, depth < sm.max_distance * 0.99, np.random.uniform(0, hz))
+        j_cache, h_cache = None, None
+        cache_files = []
+        single = traj_len == 1
 
-        sm.swap_values_with_real_vals()
+        for j in range(traj_len):
+            sm.swap_values_with_real_vals()
+            img, depth = TestLoop.render_navcam_image_static(sm, self._synth_navcam, self._hires_obj_idx,
+                                                             use_textures=use_textures, reflmod_params=reflmod_params,
+                                                             return_depth=True)
 
-        cache_file = self.cache_file(i, postfix=self.navcam_cache_id) + '.png'
-        cv2.imwrite(cache_file, img, [cv2.IMWRITE_PNG_COMPRESSION, 9])
-        if self.save_depth:
-            cv2.imwrite(cache_file[:-4]+'_d.exr', depth.astype(np.float32), (cv2.IMWRITE_EXR_TYPE, cv2.IMWRITE_EXR_TYPE_FLOAT))
+            if self.jets > 0:
+                img, j_cache = TestLoop.generate_jets(sm, img, depth, self.jets, self.jet_int_mode, self.jet_int_conc,
+                                                      cached=j_cache)
+            if self.haze > 0:
+                min_d = np.min(depth)
+                hz = (sm.min_distance / min_d)**2 * self.haze
+                h_cache = h_cache or np.random.uniform(0, hz)
+                img = ImageProc.add_haze(img, depth < sm.max_distance * 0.99, h_cache)
 
-        return cache_file
+            sm.swap_values_with_real_vals()
+
+            cache_files.append(self.cache_file(i, postfix=('' if single else ('%d' % j))) + '.png')
+            cv2.imwrite(cache_files[j], img, [cv2.IMWRITE_PNG_COMPRESSION, 9])
+            if self.save_depth:
+                cv2.imwrite(cache_files[j][:-4]+'_d.exr', depth.astype(np.float32), (cv2.IMWRITE_EXR_TYPE, cv2.IMWRITE_EXR_TYPE_FLOAT))
+
+            if not single:
+                sm.save_state(self.cache_file(i, skip_cache_id=True, postfix=str(j)))
+
+                if j+1 < traj_len:
+                    # propagate if not last state
+                    sm.propagate(dt)
+
+                    # TODO: remove following when propagate() does more than just save current state
+                    if 1:
+                        tmp = sm.get_vals(real=True)     # save current real values
+                        self.add_noise(sm)               # add noise on top of current real values
+                        sm.swap_values_with_real_vals()  # make new real values be the noisy values
+                        sm.set_vals(tmp, real=False)     # set noisy values to previous real values
+
+        return cache_files[0] if single else cache_files
 
     @staticmethod
     def generate_jets(sm, img, dist, jets, jet_int_mode, jet_int_conc, trunc_len_m=0.1, trunc_len_sd=0.2,
-                      ang_rad_m=np.pi/30, ang_rad_sd=0.3):
-        n = int(np.random.exponential(jets))
-        if n == 0:
-            return img
+                      ang_rad_m=np.pi/30, ang_rad_sd=0.3, cached=False):
 
-        mask = dist < sm.max_distance*0.99
-        fg_yx = np.vstack(np.where(np.logical_and(mask, img > 50))).T
-        bg_yx = np.vstack(np.where(mask)).T
+        mask = dist < sm.max_distance * 0.99
 
-        base_locs, trunc_lens, phase_angles, directions, intensities, angular_radii = [], [], [], [], [], []
-        for i in range(n):
-            pa = np.random.uniform(0, np.pi)
-            if pa < np.pi/2 and len(bg_yx) > 0:
-                yi, xi = random.choice(bg_yx)
-            elif len(fg_yx) > 0:
-                yi, xi = random.choice(fg_yx)
-            else:
-                continue
-            z = -dist[yi, xi]
-            x, y = sm.cam.calc_xy(xi, yi, z)
-            base_locs.append(np.array((x, y, z)))
+        if cached is None or cached is False:
+            n = int(np.random.exponential(jets))
+            if n == 0:
+                return img if cached is False else (img, cached)
 
-            alpha = jet_int_mode * (jet_int_conc - 2) + 1
-            beta = (1 - jet_int_mode) * (jet_int_conc - 2) + 1
-            intensities.append(np.random.beta(alpha, beta))
+            fg_yx = np.vstack(np.where(np.logical_and(mask, img > 50))).T
+            bg_yx = np.vstack(np.where(mask)).T
 
-            phase_angles.append(pa)
-            directions.append(np.random.uniform(-np.pi, np.pi))
-            trunc_lens.append(sm.asteroid.max_radius * 1e-3 * trunc_len_m * np.random.lognormal(0, trunc_len_sd))
-            angular_radii.append(ang_rad_m * np.random.lognormal(0, ang_rad_sd))
+            base_locs, trunc_lens, phase_angles, directions, intensities, angular_radii = [], [], [], [], [], []
+            for i in range(n):
+                pa = np.random.uniform(0, np.pi)
+                if pa < np.pi/2 and len(bg_yx) > 0:
+                    yi, xi = random.choice(bg_yx)
+                elif len(fg_yx) > 0:
+                    yi, xi = random.choice(fg_yx)
+                else:
+                    continue
+                z = -dist[yi, xi]
+                x, y = sm.cam.calc_xy(xi, yi, z)
+                base_locs.append(np.array((x, y, z)))
 
-        img = ImageProc.add_jets(sm.cam, img, mask, base_locs=tuple(base_locs), trunc_lens=trunc_lens,
+                alpha = jet_int_mode * (jet_int_conc - 2) + 1
+                beta = (1 - jet_int_mode) * (jet_int_conc - 2) + 1
+                intensities.append(np.random.beta(alpha, beta))
+
+                phase_angles.append(pa)
+                directions.append(np.random.uniform(-np.pi, np.pi))
+                trunc_lens.append(sm.asteroid.max_radius * 1e-3 * trunc_len_m * np.random.lognormal(0, trunc_len_sd))
+                angular_radii.append(ang_rad_m * np.random.lognormal(0, ang_rad_sd))
+
+            base_locs = tuple(base_locs)
+            if cached is None:
+                nv, nq = -sm.spacecraft_pos, sm.real_sc_asteroid_rel_q()
+                cached = base_locs, trunc_lens, phase_angles, directions, intensities, angular_radii, nv, nq
+        else:
+            base_locs, trunc_lens, phase_angles, directions, intensities, angular_radii, ov, oq = cached
+            nv, nq = -sm.spacecraft_pos, sm.real_sc_asteroid_rel_q()
+            # TODO: transform base_locs, phase_angles and directions from previous asteroid pose to the current one
+            pass
+
+        img = ImageProc.add_jets(sm.cam, img, mask, base_locs=base_locs, trunc_lens=trunc_lens,
                                  phase_angles=phase_angles, directions=directions, intensities=intensities,
                                  angular_radii=angular_radii, down_scaling=6)
-        return img
+
+        return img if cached is False else (img, cached)
 
     def randomized_hapke_params(self, sm):
         reflmod_params = list(sm.asteroid.reflmod_params[RenderEngine.REFLMOD_HAPKE])
@@ -594,7 +632,7 @@ class TestLoop:
 
     def load_navcam_image(self, i):
         if self._state_list is None or self._resynth_cam_image:
-            fname = self.cache_file(i, postfix=self.navcam_cache_id) + '.png'
+            fname = self.cache_file(i) + '.png'
         else:
             fname = os.path.join(self._state_db_path, self._state_list[i]+'_P.png')
         return fname if os.path.isfile(fname) else None
@@ -890,14 +928,17 @@ class TestLoop:
         return os.path.normpath(
                 os.path.join(self._iter_dir, prefix+'%04d'%i))
     
-    def cache_file(self, i, prefix=None, postfix=None):
+    def cache_file(self, i, prefix=None, postfix=None, skip_cache_id=False):
         if prefix is None:
             prefix = self.file_prefix
+
+        full_prefix = prefix + ('' if skip_cache_id or not self.navcam_cache_id else '%s_' % self.navcam_cache_id)
+        postfix = ('' if not postfix else '_%s' % postfix)
+
         return os.path.normpath(
             os.path.join(self.cache_path,
-                         (prefix+'%04d'%i) if self._state_list is None
-                                           else self._state_list[i])) \
-            + ('' if not postfix else '_%s' % postfix)
+                         (full_prefix + '%04d' % i) if self._state_list is None
+                         else self._state_list[i])) + postfix
 
     def _maybe_exit(self):
         if self.exit:

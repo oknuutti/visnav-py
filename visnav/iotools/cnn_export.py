@@ -16,7 +16,7 @@ from visnav.render.render import RenderEngine
 from visnav.settings import *
 
 
-def export(sm, dst_path, src_path=None, src_imgs=None, trg_shape=(224, 224), debug=False, img_postfix="", title=""):
+def export(sm, dst_path, src_path=None, src_imgs=None, trg_shape=(224, 224), debug=False, img_prefix="", title=""):
     trg_w, trg_h = trg_shape
     assert (src_path is not None) + (src_imgs is not None) == 1, 'give either src_path or src_imgs, not both'
 
@@ -40,15 +40,16 @@ def export(sm, dst_path, src_path=None, src_imgs=None, trg_shape=(224, 224), deb
 
             # read system state, write out as relative to s/c
             fname = os.path.basename(fn)
-            base_path = fn[:-4-len(img_postfix)]
             if src_imgs is None:
-                base_path = os.path.join(src_path, base_path)
-            sm.load_state(base_path + '.lbl')
+                fn = os.path.join(src_path, fn)
+            lbl_fn = re.sub(r'_%s(\d{4})' % img_prefix, r'_\1', fn[:-4]) + '.lbl'
+
+            sm.load_state(lbl_fn)
             sm.swap_values_with_real_vals()
 
             # read image, detect box, resize, adjust relative pose
-            img = cv2.imread(base_path + img_postfix + '.png', cv2.IMREAD_GRAYSCALE)
-            assert img is not None, 'image file %s not found' % (base_path + img_postfix + '.png')
+            img = cv2.imread(fn, cv2.IMREAD_GRAYSCALE)
+            assert img is not None, 'image file %s not found' % fn
 
             # detect target, get bounds
             x, y, w, h = ImageProc.single_object_bounds(img, threshold=AbsoluteNavigationNN.DEF_LUMINOSITY_THRESHOLD,
@@ -66,8 +67,8 @@ def export(sm, dst_path, src_path=None, src_imgs=None, trg_shape=(224, 224), deb
                     + tuple(ast_sun_lf_u)))) + '\n')
 
             depth = None
-            if os.path.exists(base_path + img_postfix + '_d.exr'):
-                depth = cv2.imread(base_path + img_postfix + '_d.exr', cv2.IMREAD_UNCHANGED)
+            if os.path.exists(fn[:-4] + '_d.exr'):
+                depth = cv2.imread(fn[:-4] + '_d.exr', cv2.IMREAD_UNCHANGED)
 
             # crop & resize image, write it
             cropped = ImageProc.crop_and_zoom_image(img, x, y, w, h, None, (trg_w, trg_h), depth=depth)
@@ -86,7 +87,7 @@ def export(sm, dst_path, src_path=None, src_imgs=None, trg_shape=(224, 224), deb
                 #sm.set_cropped_system_scf(x, y, w, h, sc_ast_lf_r, sc_ast_lf_q)
 
                 if False:
-                    sm.load_state(base_path + '.lbl')
+                    sm.load_state(lbl_fn)
                     sm.swap_values_with_real_vals()
                     imgd = cv2.resize(img, (trg_h, trg_w))
 
@@ -104,13 +105,62 @@ def export(sm, dst_path, src_path=None, src_imgs=None, trg_shape=(224, 224), deb
                     quit()
 
 
-def get_files_with_metadata(dst_path):
+def export_relative(sm, dst_path, src_path=None, src_imgs=None, debug=False, img_prefix="", title=""):
+    assert (src_path is not None) + (src_imgs is not None) == 1, 'give either src_path or src_imgs, not both'
+    import shutil
+
+    metadatafile = os.path.join(dst_path, 'dataset_all.txt')
+    if not os.path.exists(metadatafile):
+        with open(metadatafile, 'w') as f:
+            f.write('\n'.join(['%s, camera centric coordinate frame used' % title,
+                               'Trajectory ID, Frame Number, Image File, Pose [X Y Z W P Q R], Sun Vector [X Y Z]', '', '']))
+
+    files = list(os.listdir(src_path)) if src_imgs is None else src_imgs
+    data = []
+    for i, fn in enumerate(files):
+        m = re.search(r'(?<!far_)%s(\d{4})_(\d+)\.(png|jpg)$' % img_prefix, fn)
+        if m:
+            # read system state, write out as relative to s/c
+            fname = os.path.basename(fn)
+            if src_imgs is None:
+                fn = os.path.join(src_path, fn)
+            lbl_fn = re.sub(r'_%s(\d{4})' % img_prefix, r'_\1', fn[:-4]) + '.lbl'
+
+            sm.load_state(lbl_fn)
+            sm.swap_values_with_real_vals()
+            sc_ast_lf_r, sc_ast_lf_q, ast_sun_lf_u = sm.get_system_scf()
+            data.append((fn, int(m[1]), int(m[2]), fname, sc_ast_lf_r, sc_ast_lf_q.components, ast_sun_lf_u))
+
+    data = sorted(data, key=lambda r: (r[1], r[2]))
+    for i, row in enumerate(data):
+        tools.show_progress(len(data), i)
+        with open(metadatafile, 'a') as f:
+            f.write(' '.join(['%d' % c for c in row[1:3]]) + (' %s ' % row[3]) + (' '.join('%f' % f for f in (
+                tuple(row[4]) + tuple(row[5]) + tuple(row[6])))) + '\n')
+
+        src_file = row[0]
+        dst_file = os.path.join(dst_path, row[3])
+
+        # copy depth file
+        shutil.copyfile(src_file[:-4] + '_d.exr', dst_file[:-4] + '_d.exr')
+
+        # copy img file
+        shutil.copyfile(src_file, dst_file)
+
+
+def get_files_with_metadata(dst_path, traj_len=1):
     files = set()
     metadatafile = os.path.join(dst_path, 'dataset_all.txt')
     if os.path.exists(metadatafile):
         with open(metadatafile, 'r') as f:
             for line in f:
-                files.add(line.split(' ')[0].strip())
+                cells = line.split(' ')
+                if len(cells) < 5:
+                    pass
+                elif traj_len == 1:
+                    files.add(cells[0].strip())
+                else:
+                    files.add(cells[2].strip())
 
     return files
 

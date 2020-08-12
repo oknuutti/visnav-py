@@ -177,6 +177,9 @@ class SystemModel(ABC):
             self.min_time.unix + self.asteroid.rotation_period,
             estimate=False
         )
+
+        # history of states accumulated by using propagate()
+        self.state_history = []
         
         # override any default params
         for n, v in kwargs.items():
@@ -398,11 +401,17 @@ class SystemModel(ABC):
         new_q = q * self.asteroid.rotation_q(self.time.value)
         self.asteroid_q = new_q
 
+    def get_vals(self, real=False):
+        return {n: (p.real_value if real else p.value) for n, p in self.get_params(True)}
+
+    def set_vals(self, vals, real=False):
+        for n, v in vals.items():
+            setattr(getattr(self, n), 'real_value' if real else 'value', v)
+
     def reset_to_real_vals(self):
         for n, p in self.get_params(True):
             assert p.real_value is not None, 'real value missing for %s'%n
             p.value = p.real_value
-
 
     def swap_values_with_real_vals(self):
         for n, p in self.get_params(True):
@@ -513,10 +522,14 @@ class SystemModel(ABC):
 
         return visib if return_array else visib[0]
 
-    def get_cropped_system_scf(self, x, y, w, h):
+    def get_system_scf(self):
         sc_ast_lf_r = tools.q_times_v(SystemModel.sc2gl_q, self.spacecraft_pos)
         sc_ast_lf_q = self.spacecraft_q.conj() * self.asteroid.rotation_q(self.time.value)
         ast_sun_lf_u = tools.q_times_v(self.spacecraft_q.conj(), -tools.normalize_v(self.asteroid.position(self.time.value)))
+        return sc_ast_lf_r, sc_ast_lf_q, ast_sun_lf_u
+
+    def get_cropped_system_scf(self, x, y, w, h):
+        sc_ast_lf_r, sc_ast_lf_q, ast_sun_lf_u = self.get_system_scf()
         sc, dq = self.cropped_system_tf(x, y, w, h)
 
         # adjust position
@@ -684,6 +697,13 @@ class SystemModel(ABC):
         with open(filename, 'w') as f:
             f.write('\n'.join(['\t'.join(l) for l in lines]))
 
+    def propagate(self, dt):
+        # save current state to past states list before propagating
+        self.state_history.append({n: p.real_value for n, p in self.get_params(all=True)})
+
+        # TODO: propagate system state based on current parameters, currently pose change done elsewhere (testloop.py)
+        self.time.real_value += dt
+        pass
 
     def save_state(self, filename, printout=False):
         config = configparser.ConfigParser()

@@ -168,11 +168,42 @@ def run_batch(mission, full_method, count, est_real_ast_orient=False):
         kwargs['state_db_path'] = sm.asteroid.image_db_path
         kwargs['resynth_cam_image'] = True
 
+    # noise settings
+    ini_kwargs = {
+        # gaussian sd in seconds
+        'noise_time': 0,  # disabled as _noise_ast_phase_shift does same thing, was 95% within +-30s,
+
+        # uniform, max dev in deg
+        'noise_ast_rot_axis': 10,  # 0 - 10 deg uniform
+        'noise_ast_phase_shift': 10 / 2,  # 95% within 10 deg,
+
+        # s/c orientation noise, gaussian sd in deg
+        'noise_sco_lat': 2 / 2,  # 95% within 2 deg
+        'noise_sco_lon': 2 / 2,  # 95% within 2 deg
+        'noise_sco_rot': 2 / 2,  # 95% within 2 deg,
+
+        # s/c position noise, gaussian sd in km per km of distance
+        'noise_lateral': 0.3,  # 0.298 calculated using centroid algo AND 5 deg fov
+        'noise_altitude': 0.10,  # 0.131 when calculated using centroid algo AND 5 deg fov
+    }
+
+    if 'didy' in mission:
+        ini_kwargs.update({
+            # operation zone only (i.e. less noise),
+            # uniform, max dev in deg
+            'noise_ast_rot_axis': 5,  # 0 - 5 deg uniform
+            'noise_ast_phase_shift': 5 / 2,  # 95% within 5 deg,
+
+            # s/c orientation noise, gaussian sd in deg
+            'noise_sco_lat': 1 / 2,  # 95% within 1 deg
+            'noise_sco_lon': 1 / 2,  # 95% within 1 deg
+            'noise_sco_rot': 1 / 2,  # 95% within 1 deg
+        })
 
     tl = TestLoop(sm, file_prefix_mod=file_prefix_mod,
                   est_real_ast_orient=est_real_ast_orient, operation_zone_only=('didy' in mission),
                   sm_noise=sm_noise, sm_noise_len_sc=SHAPE_MODEL_NOISE_LEN_SC,
-                  state_generator=sg)
+                  state_generator=sg, **ini_kwargs)
 
     if sm.mission_id == 'rose':
         tl.enable_initial_location = False
