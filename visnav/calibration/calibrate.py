@@ -46,6 +46,7 @@ MOON_GAIN_ADJ = 567/1023   #  was: 506/1023
 STAR_GAIN_ADJUSTMENT_TN = 0.7           #
 STAR_PSF_COEF_TN = (0.22, 0.15, 0.12)   #
 
+STAR_SATURATION_MODELING = True
 STAR_LAB_DATAPOINT_WEIGHT = 0.3
 STAR_CALIB_PRIOR_WEIGHT = 0.1     # 0.5: high, 0.3: med, 0.1: low
 STAR_CALIB_HUBER_COEF = 0.3       # %: err_dus/measured_du      # best: 0.3
@@ -64,11 +65,14 @@ FRAME_GAINS = FRAME_GAIN_STATIC    # 0: dont use, 1: same gain for all, 2: stati
 GENERAL_GAIN_ADJUSTMENT = False   # 1.0       #
 
 STAR_IGNORE_IDS = (
-        32263,  # Sirius        # brightest star, too distorted
-#        27919,  # Betelgeuse    # highly variable, was experiencing severe dimming
-        26142,  # Meissa        # the neck/head, bright open cluster too near
-#        25865,  # Mintaka       # eastern star of belt, very blue, could try still (!)
-        26176,  # Hatysa        # the sword, orion nebula and lesser stars too near
+        32263,  # Sirius      # brightest star, very saturated
+#        24378,  # Rigel       # saturated
+#        37173,  # Procyon     # saturated
+#        27919,  # Betelgeuse  # saturated, highly variable, was experiencing severe dimming
+
+        26142,  # Meissa      # the neck/head, bright open cluster too near (too dim to detect with current threashold)
+#        25865,  # Mintaka     # eastern star of belt, very blue, could try still (!)
+        26176,  # Hatysa      # the sword, orion nebula and lesser stars too near
     ) if 1 else tuple()
 
 OVERRIDE_STAR_DATA = {
@@ -358,11 +362,11 @@ def use_stars(folder, thumbnail=True):
 
     tot_std = 0
     tot_std_n = 0
-    print('HIP\tVhat\tVmag\tTeff\tModel Red\tModel Green\tModel Blue\tSamples\tRed\tGreen\tBlue\tRed SD\tGreen SD\tBlue SD')
+    print('HIP\tVhat\tVmag\tTeff\tlog(g)\tFe/H\tModel Red\tModel Green\tModel Blue\tSamples\tRed\tGreen\tBlue\tRed SD\tGreen SD\tBlue SD')
     for id in s_by[idxs, 0]:
         st = stars[id]
         s = {'meas': np.array([s['meas'] for s in st]), 'm_mag_v': st[0]['m_mag_v'], 'mag_v': st[0]['mag_v'],
-             't_eff': st[0]['t_eff'], 'expected': star_exp_dus[id] if id in star_exp_dus else (0, 0, 0)}
+             't_eff': st[0]['t_eff'], 'log_g': st[0]['log_g'], 'fe_h': st[0]['fe_h'], 'expected': star_exp_dus[id] if id in star_exp_dus else (0, 0, 0)}
         stars[id] = s
         tyc = '&'.join([Stars.get_catalog_id(i) for i in id])
         modeled = np.flip(s['expected'])
@@ -373,8 +377,8 @@ def use_stars(folder, thumbnail=True):
         tot_std_n += 3*(n-1)
         #both = np.vstack((means, std)).T.flatten()
 #        print('%s\t%.2f\t%.0f\t%d\t%.1f ± %.1f\t%.1f ± %.1f\t%.1f ± %.1f' % (
-        print('%s\t%.2f\t%.2f\t%s\t%.0f\t%.0f\t%.0f\t%d\t%.0f\t%.0f\t%.0f\t%.1f\t%.1f\t%.1f' % (
-                tyc, s['m_mag_v'], s['mag_v'], s['t_eff'], *modeled, n, *means, *std))
+        print('%s\t%.2f\t%.2f\t%s\t%.3f\t%.3f\t%.0f\t%.0f\t%.0f\t%d\t%.0f\t%.0f\t%.0f\t%.1f\t%.1f\t%.1f' % (
+                tyc, s['m_mag_v'], s['mag_v'], s['t_eff'], s['log_g'], s['fe_h'], *modeled, n, *means, *std))
     #print('\ntotal std: %.2f' % (tot_std/tot_std_n))  # v0: 26.12, v1:
     ##
 
@@ -383,7 +387,7 @@ def use_stars(folder, thumbnail=True):
         if m.obj_id[0] == 'moon':
             moon_bgr[m.cam_i] = m
     if len(moon_bgr) == 3:
-        print('Moon\t\t\t\t%.0f\t%.0f\t%.0f\t1\t%.0f\t%.0f\t%.0f\t0\t0\t0' % (
+        print('Moon\t\t\t\t\t\t%.0f\t%.0f\t%.0f\t1\t%.0f\t%.0f\t%.0f\t0\t0\t0' % (
             moon_bgr[2].c_expected_du, moon_bgr[1].c_expected_du, moon_bgr[0].c_expected_du,
             moon_bgr[2].du_count, moon_bgr[1].du_count, moon_bgr[0].du_count,
         ))
@@ -1296,7 +1300,7 @@ class StarMeasure(Measure):
         du = saturation_val * fgain * cgain * electrons
         center_px_val = du / psf_coef[self.cam_i]
 
-        if center_px_val < saturation_val:
+        if center_px_val < saturation_val or not STAR_SATURATION_MODELING:
             du = post_sat_gain * psf_coef[self.cam_i] * center_px_val
         else:
             du = post_sat_gain * psf_coef[self.cam_i] * saturation_val * (1 + np.log(center_px_val / saturation_val))
@@ -1456,7 +1460,7 @@ class Optimizer:
                 k += qn[i]
 
             off0, off1 = (4 if gn else 3), 3
-            return (qeff_coefss, x[k:len(x)-off0], (x[-off0] if gn else 1), x[-off1:])
+            return (qeff_coefss, x[k:len(x)-off0], (x[-off0] if gn else 1), (x[-off1:] if STAR_SATURATION_MODELING else (1, 1, 1)))
 
         def cost_fun(x, measures, x0, return_details=False, plot=False):
             c_qeff_coefs, f_gains, gain_adj, psf_coef = decode(x)
@@ -1525,7 +1529,12 @@ class Optimizer:
             err_tuple = lab_dp + err + prior
             return (err_tuple, measured_du, expected_du) if return_details else err_tuple
 
-        x0b = encode(cams, f_gains, GENERAL_GAIN_ADJUSTMENT, STAR_PSF_COEF_TN if cams[0].emp_coef < 1 else STAR_PSF_COEF)
+        if STAR_SATURATION_MODELING:
+            psf_coef = STAR_PSF_COEF_TN if cams[0].emp_coef < 1 else STAR_PSF_COEF
+        else:
+            psf_coef = tuple()
+
+        x0b = encode(cams, f_gains, GENERAL_GAIN_ADJUSTMENT, psf_coef)
 
         if DEBUG_MEASURES:
             cost_fun(x0b, measures, x0b, plot=True)

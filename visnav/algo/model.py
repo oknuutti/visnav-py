@@ -855,6 +855,57 @@ class Camera:
                 self.f_stop = self.focal_length / aperture
                 self.aperture = aperture
 
+    def pixel_solid_angle(self, x, y):
+        # Using pinhole camera model and
+        # Mazonka, Oleg (2012). "Solid Angle of Conical Surfaces, Polyhedral Cones, and Intersecting Spherical Caps",
+        # https://arxiv.org/abs/1205.1396
+        # ignoring identity (23): "sum(arg(z_j)) == arg(prod(z_j)"
+
+        # in latex:
+        #   \Omega=2\pi- \sum_{j=1}^{n} \arg [&(\vec{s}_{j-1} \cdot \vec{s}_{j})(\vec{s}_{j} \cdot \vec{s}_{j+1})
+        #   -(\vec{s}_{j-1} \cdot \vec{s}_{j+1})+i(\vec{s}_{j-1} \cdot (\vec{s}_{j} \times \vec{s}_{j+1}))]
+
+        x0 = self.width/2
+        y0 = self.height/2
+        pw = self.sensor_width/self.width
+        ph = self.sensor_height/self.height
+
+        # distance of image plane from projection point
+        dz = self.sensor_width/2 / math.tan(math.radians(self.x_fov/2))
+
+        # edges of the projected pixel onto the unit circle, distances in mm
+        # counter clockwise order, otherwise get whole sphere with px area removed
+        edges = np.array([
+            tools.normalize_v([pw * (x - x0 + 0.5), ph * (y - y0 - 0.5), dz]),  # 1
+            tools.normalize_v([pw * (x - x0 + 0.5), ph * (y - y0 + 0.5), dz]),  # 4
+            tools.normalize_v([pw * (x - x0 - 0.5), ph * (y - y0 + 0.5), dz]),  # 3
+            tools.normalize_v([pw * (x - x0 - 0.5), ph * (y - y0 - 0.5), dz]),  # 2
+        ])
+        n = len(edges)
+
+        # rotate index so that -1 is n-1
+        s = lambda j: edges[(j + n) % n]
+
+        # calculations inside the product operator
+        tmp = [s(j-1).dot(s(j)) * s(j).dot(s(j+1))
+               - s(j-1).dot(s(j+1))
+               + 1j * s(j-1).dot(np.cross(s(j), s(j+1)))
+               for j in range(n)]
+
+        if 1:
+            # Original from paper:
+            # Omega = 2*np.pi - np.angle(np.prod(tmp))
+
+            # in Mazonka 2012 the identity (23) "sum(arg(z_j)) == arg(prod(z_j)" seems flawed,
+            # at least could not make it work on numpy as the different sides give different answers,
+            # if skip the identity (23), then all seems to work fine
+            Omega = 2*np.pi - np.sum(np.angle(tmp))
+        else:
+            # Curiously, seems that at least sometimes sum(arg(z_j)) == arg(prod(z_j) + 2*pi
+            Omega = - np.angle(np.prod(tmp))
+
+        return Omega
+
     @property
     def aperture_area(self):
         return np.pi * (self.aperture*1e-3/2)**2
@@ -900,7 +951,7 @@ class Camera:
 
     @staticmethod
     @lru_cache(maxsize=100)
-    def qeff_fn(qeff_coefs, lambda_min, lambda_max, method='gp', debug=False):
+    def qeff_fn(qeff_coefs, lambda_min, lambda_max, method='sinc', debug=False):
         assert lambda_min < lambda_max, 'f_min is greater than f_max'
 
         n = len(qeff_coefs)
@@ -939,8 +990,24 @@ class Camera:
             # likelihood (~smoothness) of qeff_coefs, used for qeff_coefs estimation from data
             lml = model.log_marginal_likelihood()
         elif method == 'sinc':
-            len_sc = (lambda_max - lambda_min) / (n - 1)
-            qeff_fn = lambda lam: np.sinc((np.repeat(lam.reshape((-1, 1)), len(x_tr), axis=1) - np.repeat(x_tr.reshape((1, -1)), len(lam), axis=0)) / len_sc).dot(y_tr)
+            # NOTE: this method got best results!
+            def qeff_fn(lam):
+                X = np.array(lam).reshape((-1, 1))
+                len_sc = (lambda_max - lambda_min) / (n - 1)
+                y = np.sinc((np.repeat(X, len(x_tr), axis=1) - np.repeat(x_tr.reshape((1, -1)), len(X), axis=0)) / len_sc).dot(y_tr)
+                return np.clip(y.flatten(), 0, np.inf)
+
+            lml = -(np.mean(y_tr) + np.mean(np.abs(np.diff(y_tr)))) * 10
+
+        elif method == 'gaussian':
+            def qeff_fn(lam):
+                X = np.array(lam).reshape((-1, 1))
+                len_sc = (lambda_max - lambda_min) / (n - 1) * 0.5
+                d = (np.repeat(X, len(x_tr), axis=1) - np.repeat(x_tr.reshape((1, -1)), len(X), axis=0))
+                w = np.exp(-0.5*(d/len_sc)**2)
+                y = (w/np.sum(w, axis=1).reshape((-1, 1))).dot(y_tr)
+                return np.clip(y.flatten(), 0, np.inf)
+
             lml = -(np.mean(y_tr) + np.mean(np.abs(np.diff(y_tr)))) * 10
         else:
             from scipy.interpolate import interp1d

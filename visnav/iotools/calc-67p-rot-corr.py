@@ -47,11 +47,11 @@ if __name__ == '__main__':
         quit()
 
     # *-fvals.log file generated when batch1.py called with "ear", e.g. `python batch1.py rose006 akaze+real 1000 ear`
-    fname = sys.argv[1] if len(sys.argv)>1 else 'rose026-akaze+real-20190307-161859-fvals.log'
+    fname = sys.argv[1] if len(sys.argv)>1 else 'rose018-akaze+real-20200816-191725-fvals.log'
     with open(os.path.join(LOG_DIR, fname)) as fh:
         data = np.array([line.split('\t') for line in fh.readlines()]).astype('float')
 
-    sm = RosettaSystemModel(rosetta_batch='mtp026')
+    sm = RosettaSystemModel(rosetta_batch='mtp018')
     Y = quaternion.from_float_array(data[:, 1:5])
     T = data[:, 5]
 

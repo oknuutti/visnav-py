@@ -23,7 +23,7 @@ class DidymosSystemModel(SystemModel):
             min_time = Time('2023-01-01 00:00:00', scale='utc', format='iso')
 
         common_kwargs_worst = {
-            'sensor_size': (2048 * 0.0022, 1944 * 0.0022),
+            'sensor_size': (2048 * 0.0022, 1944 * 0.0022),                       # diagonal: 6.2mm
             'quantum_eff': 0.30,
             'px_saturation_e': 2200,                                             # snr_max = 20*log10(sqrt(sat_e)) dB
             'lambda_min': 350e-9, 'lambda_eff': 580e-9, 'lambda_max': 800e-9,

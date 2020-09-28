@@ -7,6 +7,14 @@
 #
 # Note: check ATON (DLR project) for references of using 3d-3d correspondences for absolute navigation
 
+# TODO IDEAS:
+#   - use a prior in bundle adjustment that is updated with discarded keyframes
+#   - use s/c state (pose, dot-pose, dot-dot-pose?) and covariance in ba optimization cost function
+#   - option to use reduced frame ba for pose estimation instead of 3d-2d ransac from previous keyframe
+#   - use miniSAM or GTSAM for optimization?
+#       - https://github.com/dongjing3309/minisam
+#       - https://gtsam.org/docs/
+
 import copy
 from datetime import datetime
 

@@ -44,23 +44,23 @@ if __name__ == '__main__':
         ## PRELANDING
         'mtp003': (30, 2141, 146),    # done
         'mtp006': (63, 6971, 770),    # done
-        'mtp007': (62, 7561, 527),    #
+        'mtp007': (62, 7561, 527),    # done
 
         ## COMET ESCORT 2
-        'mtp015': (119, 28703, 438),
-        'mtp016': (140, 31996, 277),
+        'mtp015': (119, 28703, 438),  #
+        'mtp016': (140, 31996, 277),  #
         'mtp017': (139, 32273, 404),  # done
 
         ## COMET ESCORT 3
-        'mtp018': (167, 38173, 320),
+        'mtp018': (167, 38173, 320),  #
 
         ## COMET ESCORT 4
-        'mtp023': (275, 66085, 397),
-        'mtp024': (236, 55132, 452),  #
+        'mtp023': (275, 66085, 397),  #
+        'mtp024': (236, 55132, 452),  # done
 
         ## ROSETTA EXTENSION 1
         'mtp025': (237, 55584, 532),  # done
-        'mtp026': (238, 56116, 819),  #
+        'mtp026': (238, 56116, 819),  # done
     }
     cid, pid_s, pn = ids[batch]
 
@@ -70,10 +70,10 @@ if __name__ == '__main__':
 
     print('000', end='', flush=True)
     for pid in range(pid_s, pid_s+pn):
-        page = requests.get(base+'/picture.php?/'+str(pid)+'/category/'+str(cid), verify=False)
+        page = requests.get(base+'/picture.php?/'+str(pid)+'/category/'+str(cid)) #, verify=False)
         soup = BeautifulSoup(page.content, 'html.parser')
         imgele = soup.find(id="theMainImage")
-        imgurl = base+imgele['visnav'][7:-7]+'.png'
+        imgurl = base+imgele['src'][7:-7]+'.png'
         imgname = imgele['alt'].replace('F._P.', '_P.')
         get_file(imgurl, os.path.join(save_dir, imgname))
 

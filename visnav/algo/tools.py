@@ -9,12 +9,10 @@ import sys
 
 import scipy
 from astropy.coordinates import SkyCoord
-from numba.cgutils import printf
 from scipy.interpolate import RectBivariateSpline
 from scipy.interpolate import NearestNDInterpolator
-from scipy.spatial.ckdtree import cKDTree
+# from scipy.spatial.ckdtree import cKDTree
 
-from visnav.iotools import objloader
 from visnav.settings import *
 
 
@@ -156,6 +154,11 @@ def surf_normal(x1, x2, x3):
     return _surf_normal(a, b, c)
 #    return normalize_v_f8(cross3d(b-a, c-a))
 
+def vector_projection(a, b):
+    return a.dot(b)/b.dot(b)*b
+
+def vector_rejection(a, b):
+    return a - vector_projection(a, b)
 
 def angle_between_v(v1, v2):
     # Notice: only returns angles between 0 and 180 deg
@@ -279,7 +282,20 @@ def ypr_to_q(lat, lon, roll):
         * np.quaternion(math.cos(-lat/2), 0, math.sin(-lat/2), 0)
         * np.quaternion(math.cos(roll/2), math.sin(roll/2), 0, 0)
     )
-    
+
+
+def eul_to_q(angles, order='xyz', reverse=False):
+    assert len(angles) == len(order), 'len(angles) != len(order)'
+    q = quaternion.one
+    idx = {'x': 0, 'y': 1, 'z': 2}
+    for angle, axis in zip(angles, order):
+        w = math.cos(angle/2)
+        v = [0, 0, 0]
+        v[idx[axis]] = math.sin(angle/2)
+        dq = np.quaternion(w, *v)
+        q = (dq * q) if reverse else (q * dq)
+    return q
+
     
 def q_to_ypr(q):
     # from https://math.stackexchange.com/questions/687964/getting-euler-tait-bryan-angles-from-quaternion-representation

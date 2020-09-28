@@ -215,12 +215,13 @@ def load_image_meta(src, sm):
         
         sm.save_state('none',printout=True)
     #quit()
+
+    return locals()
     
     ## Impossible to calculate asteroid rotation axis based on given data!!
     ## TODO: Or is it? Can use some help data from model.AsteroidModel?
     ## These should be used: ast_sc_lat, ast_sc_lon
-    
-    
+
 #FOR TARGET_IMAGE = 'ROS_CAM1_20150720T113057', this seems to be a perfect match:
 #system state:
 #        ast_x_rot = -74.81 in [-90.00, 90.00]
@@ -254,3 +255,47 @@ def load_image_meta(src, sm):
 #x_off = 0.545467755596
 #y_off = 2.48761450039
 #z_off = -170.626950251
+
+
+if __name__ == '__main__':
+    from visnav.batch1 import get_system_model
+    # sm = get_system_model('rose024', False)
+    # params = load_image_meta(r'C:\projects\visnav\data\rosetta-mtp024\ROS_CAM1_20151223T145135.LBL', sm)
+    sm = get_system_model('rose018', False)
+    params = load_image_meta(r'C:\projects\visnav\data\rosetta-mtp018\ROS_CAM1_20150710T074301.LBL', sm)
+
+    sun_ast_igrf_r = sm.asteroid.real_position
+    sun_sc_igrf_r = params['sun_sc_ec_p']
+    ast_sc_igrf_r = -params['sc_ast_ec_p']
+
+    ast_igrf_q = sm.asteroid.rotation_q(sm.time.real_value)
+    z_axis = np.array([0, 0, 1])
+    x_axis = np.array([1, 0, 0])
+    ast_axis_u = tools.q_times_v(ast_igrf_q, z_axis)
+    ast_zlon_u = tools.q_times_v(ast_igrf_q, x_axis)
+    ast_axis_dec, ast_axis_ra, _ = tools.cartesian2spherical(*ast_axis_u)
+    ast_zlon_ra = sm.asteroid.rotation_theta(sm.time.real_value)
+
+    arr2str = lambda arr: '[%s]' % ', '.join(['%f' % v for v in arr])
+
+    print('sun_ast_igrf_r [m]: %s' % arr2str(sun_ast_igrf_r * 1e3))
+    print('sun_sc_igrf_r [m]: %s' % arr2str(sun_sc_igrf_r * 1e3))
+    print('ast_sc_igrf_r [m]: %s' % arr2str(ast_sc_igrf_r * 1e3))
+    print('ast_axis_ra [deg]: %f' % math.degrees(ast_axis_ra))
+    print('ast_axis_dec [deg]: %f' % math.degrees(ast_axis_dec))
+    print('ast_zlon_ra [deg]: %f' % math.degrees(ast_zlon_ra))
+
+    aa = quaternion.as_rotation_vector(sm.spacecraft_q)
+    angle = np.linalg.norm(aa)
+    sc_angleaxis = [angle] + list(aa/angle)
+    print('sc_angleaxis [rad]: %s' % arr2str(sc_angleaxis))
+    print('sc_q: %s' % arr2str(quaternion.as_float_array(sm.spacecraft_q)))
+
+
+    # ##
+    # axis_q = tools.ypr_to_q(-(np.pi / 2 - sm.asteroid.axis_latitude), sm.asteroid.axis_longitude, 0)
+    # roll_q = tools.ypr_to_q(0, sm.asteroid.rotation_theta(sm.time.real_value), 0)
+    # ast_zlon0_u = tools.q_times_v(axis_q, x_axis)
+    # ast_zlon_ra = tools.angle_between_v(ast_zlon0_u, ast_zlon_u)
+    # ast_zlon_ra *= 1 if np.cross(ast_zlon0_u, ast_zlon_u).dot(ast_axis_u) > 0 else -1
+    # ##
