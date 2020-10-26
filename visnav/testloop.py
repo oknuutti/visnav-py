@@ -20,6 +20,7 @@ from visnav.algo.model import SystemModel
 from visnav.algo.phasecorr import PhaseCorrelationAlgo
 from visnav.missions.didymos import DidymosSystemModel
 from visnav.missions.rosetta import RosettaSystemModel
+from visnav.render.particles import Particles
 from visnav.render.render import RenderEngine
 from visnav.iotools import objloader, lblloader
 import visnav.algo.tools as tools
@@ -52,7 +53,7 @@ class TestLoop:
                  traj_len=1, traj_prop_dt=60, only_populate_cache=ONLY_POPULATE_CACHE,
                  real_sm_noise=0, real_sm_noise_len_sc=SHAPE_MODEL_NOISE_LEN_SC,
                  real_tx_noise=0, real_tx_noise_len_sc=SHAPE_MODEL_NOISE_LEN_SC,
-                 haze=0, jets=0, jet_int_mode=0.2, jet_int_conc=10,
+                 haze=0, jets=0, jet_int_mode=0.001, jet_int_conc=10,
                  hapke_noise=0,
                  hapke_th_sd=None, hapke_w_sd=None,
                  hapke_b_sd=None, hapke_c_sd=None,
@@ -398,7 +399,7 @@ class TestLoop:
     def render_navcam_image_static(sm, renderer, obj_idxs, rel_pos_v=None, rel_rot_q=None, light_v=None, sc_q=None,
                                    sun_distance=None, exposure=None, gain=None, gamma=1.8, auto_gain=True,
                                    use_shadows=True, use_textures=False, reflmod_params=None, cam=None, fluxes_only=False,
-                                   stars=True, lens_effects=True, star_db=None, return_depth=False):
+                                   stars=True, lens_effects=True, star_db=None, particles=None, return_depth=False):
 
         if rel_pos_v is None:
             rel_pos_v = sm.spacecraft_pos
@@ -412,22 +413,21 @@ class TestLoop:
             Stars.STARDB = star_db
 
         light_v = tools.normalize_v(light_v)
-        sun_sc_distance = sun_distance or (np.linalg.norm(sm.asteroid.position(sm.time.value)) * 1e3)  # in meters
+        sun_sc_distance = sun_distance or np.linalg.norm(sm.asteroid.position(sm.time.value))  # in meters
 
         model = RenderEngine.REFLMOD_HAPKE
         RenderEngine.REFLMOD_PARAMS[model] = sm.asteroid.reflmod_params[model] if reflmod_params is None else reflmod_params
 
-        if not auto_gain:
-            dist_au = sun_sc_distance / 1.496e+11  # in au
-            solar_flux_density = 1360.8 / dist_au**2
-        else:
+        dist_au = sun_sc_distance / 1.496e+11  # in au
+        solar_flux_density = 1360.8 / dist_au**2
+
+        if auto_gain:
             # don't use K correction factor if use automatically scaled image
             RenderEngine.REFLMOD_PARAMS[model][9] = 0
-            solar_flux_density = False
 
         object_flux, depth = renderer.render(obj_idxs, rel_pos_v, rel_rot_q, light_v, get_depth=True,
                                              shadows=use_shadows, textures=use_textures, reflection=model,
-                                             gamma=1.0, flux_density=solar_flux_density)
+                                             gamma=1.0, flux_density=False if auto_gain else solar_flux_density)
 
         if np.any(np.isnan(object_flux)):
             print('NaN(s) encountered in rendered image!')
@@ -453,7 +453,17 @@ class TestLoop:
         # add flux density of stars from Tycho-2 catalog
         star_flux = Stars.flux_density(sc_q, cam, mask=mask) if stars else np.array([0])
 
-        total_flux = object_flux.astype(np.float64) + lens_effect.astype(np.float64) + star_flux.astype(np.float64)
+        # render particle effects such as jets and haze
+        if particles is not None:
+            particles.cam = cam or sm.cam
+            particle_flux = particles.flux_density(object_flux, depth, np.logical_not(mask), rel_pos_v, rel_rot_q,
+                                                   light_v, solar_flux_density)
+        else:
+            particle_flux = np.array([0])
+
+        total_flux = object_flux.astype(np.float64) + lens_effect.astype(np.float64) + \
+                     star_flux.astype(np.float64) + particle_flux.astype(np.float64)
+
         if fluxes_only:
             return total_flux
 
@@ -512,24 +522,33 @@ class TestLoop:
 
         reflmod_params = self.randomized_hapke_params(sm)
 
-        j_cache, h_cache = None, None
+        particles = None
         cache_files = []
         single = traj_len == 1
 
         for j in range(traj_len):
             sm.swap_values_with_real_vals()
+
+            if particles is None and (self.haze > 0 or self.jets > 0):
+                haze = 0
+                if self.haze > 0:
+                    dist = np.linalg.norm(sm.spacecraft_pos)
+                    haze = np.random.uniform(0, (sm.min_distance / dist)**2 * self.haze)
+
+                cones = None
+                if self.jets > 0:
+                    cones = {
+                        'n': int(np.random.exponential(self.jets)) if self.jets > 0 else 0,
+                        'trunc_len_m': sm.asteroid.max_radius * 0.1,
+                        'jet_int_mode': self.jet_int_mode,
+                        'jet_int_conc': self.jet_int_conc,
+                    }
+
+                particles = Particles(sm.cam, None, None, cones=cones, haze=haze)
+
             img, depth = TestLoop.render_navcam_image_static(sm, self._synth_navcam, self._hires_obj_idx,
                                                              use_textures=use_textures, reflmod_params=reflmod_params,
-                                                             return_depth=True)
-
-            if self.jets > 0:
-                img, j_cache = TestLoop.generate_jets(sm, img, depth, self.jets, self.jet_int_mode, self.jet_int_conc,
-                                                      cached=j_cache)
-            if self.haze > 0:
-                min_d = np.min(depth)
-                hz = (sm.min_distance / min_d)**2 * self.haze
-                h_cache = h_cache or np.random.uniform(0, hz)
-                img = ImageProc.add_haze(img, depth < sm.max_distance * 0.99, h_cache)
+                                                             particles=particles, return_depth=True)
 
             sm.swap_values_with_real_vals()
 
@@ -553,58 +572,6 @@ class TestLoop:
                         sm.set_vals(tmp, real=False)     # set noisy values to previous real values
 
         return cache_files[0] if single else cache_files
-
-    @staticmethod
-    def generate_jets(sm, img, dist, jets, jet_int_mode, jet_int_conc, trunc_len_m=0.1, trunc_len_sd=0.2,
-                      ang_rad_m=np.pi/30, ang_rad_sd=0.3, cached=False):
-
-        mask = dist < sm.max_distance * 0.99
-
-        if cached is None or cached is False:
-            n = int(np.random.exponential(jets))
-            if n == 0:
-                return img if cached is False else (img, cached)
-
-            fg_yx = np.vstack(np.where(np.logical_and(mask, img > 50))).T
-            bg_yx = np.vstack(np.where(mask)).T
-
-            base_locs, trunc_lens, phase_angles, directions, intensities, angular_radii = [], [], [], [], [], []
-            for i in range(n):
-                pa = np.random.uniform(0, np.pi)
-                if pa < np.pi/2 and len(bg_yx) > 0:
-                    yi, xi = random.choice(bg_yx)
-                elif len(fg_yx) > 0:
-                    yi, xi = random.choice(fg_yx)
-                else:
-                    continue
-                z = -dist[yi, xi]
-                x, y = sm.cam.calc_xy(xi, yi, z)
-                base_locs.append(np.array((x, y, z)))
-
-                alpha = jet_int_mode * (jet_int_conc - 2) + 1
-                beta = (1 - jet_int_mode) * (jet_int_conc - 2) + 1
-                intensities.append(np.random.beta(alpha, beta))
-
-                phase_angles.append(pa)
-                directions.append(np.random.uniform(-np.pi, np.pi))
-                trunc_lens.append(sm.asteroid.max_radius * 1e-3 * trunc_len_m * np.random.lognormal(0, trunc_len_sd))
-                angular_radii.append(ang_rad_m * np.random.lognormal(0, ang_rad_sd))
-
-            base_locs = tuple(base_locs)
-            if cached is None:
-                nv, nq = -sm.spacecraft_pos, sm.real_sc_asteroid_rel_q()
-                cached = base_locs, trunc_lens, phase_angles, directions, intensities, angular_radii, nv, nq
-        else:
-            base_locs, trunc_lens, phase_angles, directions, intensities, angular_radii, ov, oq = cached
-            nv, nq = -sm.spacecraft_pos, sm.real_sc_asteroid_rel_q()
-            # TODO: transform base_locs, phase_angles and directions from previous asteroid pose to the current one
-            pass
-
-        img = ImageProc.add_jets(sm.cam, img, mask, base_locs=base_locs, trunc_lens=trunc_lens,
-                                 phase_angles=phase_angles, directions=directions, intensities=intensities,
-                                 angular_radii=angular_radii, down_scaling=6)
-
-        return img if cached is False else (img, cached)
 
     def randomized_hapke_params(self, sm):
         reflmod_params = list(sm.asteroid.reflmod_params[RenderEngine.REFLMOD_HAPKE])

@@ -27,7 +27,7 @@ from visnav.algo.image import ImageProc
 from visnav.algo.model import Camera
 from visnav.algo.tools import find_nearest_arr
 from visnav.render.stars import Stars
-
+from visnav.calibration import ssi_table
 
 # for star images
 from visnav.render.sun import Sun
@@ -47,15 +47,16 @@ STAR_GAIN_ADJUSTMENT_TN = 0.7           #
 STAR_PSF_COEF_TN = (0.22, 0.15, 0.12)   #
 
 STAR_SATURATION_MODELING = True
-STAR_LAB_DATAPOINT_WEIGHT = 0.3
-STAR_CALIB_PRIOR_WEIGHT = 0.1     # 0.5: high, 0.3: med, 0.1: low
-STAR_CALIB_HUBER_COEF = 0.3       # %: err_dus/measured_du      # best: 0.3
+STAR_LAB_DATAPOINT_WEIGHT = 1.0
+STAR_MOON_WEIGHT = 1.0
+STAR_IGNORE_MOON_CH = (2,)        # cam channels
+STAR_CALIB_PRIOR_WEIGHT = 0.0001   # 0.5: high, 0.3: med, 0.1: low          # first, 0.1, then 0.0001
+STAR_CALIB_HUBER_COEF = np.log10(1 + 0.1)       # %: err_dus/measured_du    # first: 0.25, then 0.10
 STAR_GAIN_ADJUSTMENT = 567/1023   #                             # was 608/1023
-STAR_PSF_COEF = (150, 95, 85)     # bgr                         # best: (105, 70, 65)
-INIT_QEFF_ADJ = (1.0, 1.0, 1.0)   # bgr                         # best: (1.0, 0.95, 0.8)
+STAR_PSF_COEF = (145, 95, 70)     # bgr                         # best: (180, 100, 65), (150, 95, 80)
+INIT_QEFF_ADJ = (1.0, 1.0, 1.0)   # bgr                         # best: (1.0, 0.95, 0.8),
 
-USE_ESTIMATED_QEC = 0             # use estimated qec instead of initial one
-STAR_IGNORE_MOON_CH = (2,)      # cam channels
+USE_ESTIMATED_QEC = 1             # use estimated qec instead of initial one
 STAR_OPT_WEIGHTING = 1
 STAR_USE_CACHED_MEAS = 1
 OPTIMIZER_START_N = 1          # set to zero for skipping optimizing and just show result for the initial solution
@@ -219,7 +220,7 @@ def use_moon_img(img_file):
     if GAMMA_BREAK_OVERRIDE:
         override['gamma_break'] = GAMMA_BREAK_OVERRIDE
 
-    bgr_cam = get_bgr_cam(thumbnail=False, estimated=1)
+    bgr_cam = get_bgr_cam(thumbnail=False, estimated=0)
     f = Frame.from_file(bgr_cam, img_file, img_file[:-4]+'.lbl', override=override, debug=debug)
 
     measures = f.detect_moon()
@@ -316,17 +317,24 @@ def use_stars(folder, thumbnail=True):
         # set different weights to measures so that various star temperatures equally represented
         star_meas = [m for m in measures if m.obj_id[0] != 'moon']
         temps = np.unique([m.t_eff for m in star_meas])
-        len_sc = np.log(1.5)**2  # np.log(1.5)**2
-        summed_weights = {temp: np.sum([np.exp(-(np.log(temp) - np.log(m.t_eff))**2/len_sc) for m in star_meas]) for temp in temps}
+
+        if 1:
+            b = 2.897771955e-3
+            len_sc = 2 * (100e-9 / b) ** 2  # 100 nm
+            summed_weights = {temp: np.sum([np.exp(-(1/temp - 1/m.t_eff) ** 2 / len_sc) for m in star_meas]) for temp in temps}
+        else:
+            len_sc = 2 * np.log10(1.33)**2  # np.log(1.5)**2
+            summed_weights = {temp: np.sum([np.exp(-(np.log10(temp) - np.log10(m.t_eff))**2/len_sc) for m in star_meas]) for temp in temps}
 
         # also weight by magnitude
 #        mim = np.max([m.mag_v for m in star_meas]) + 1
 
         for m in star_meas:
-            m.weight = 1/summed_weights[m.t_eff] #* (mim - m.mag_v)   # weight by magnitude
+            m.weight = 1/summed_weights[m.t_eff]  #* (mim - m.mag_v)   # weight by magnitude
 
         # give the moon the same weight as the median star
-        moon_weight = np.median([m.weight for m in star_meas])
+        # moon_weight = np.median([m.weight for m in star_meas])
+        moon_weight = STAR_MOON_WEIGHT
         for m in measures:
             if m.obj_id[0] == 'moon':
                 m.weight = moon_weight
@@ -401,7 +409,7 @@ def use_stars(folder, thumbnail=True):
         plt.plot(x[:, 0], x[:, 3], 'r+')
         plt.show()
 
-    plot_rgb_qeff(bgr_cam)
+    plot_bgr_qeff(bgr_cam)
 
 
 def use_lab_bg_imgs(folder):
@@ -1382,11 +1390,16 @@ class MoonMeasure(Measure):
 
     @staticmethod
     def lunar_disk_irr_fn(lunar_disk_refl_fn, sun_moon_dist, cam_moon_dist):
-        moon_solid_angle = 6.4177e-5 * (cam_moon_dist / 384.4e6)**2
-        sun_solid_angle = Sun.SOLID_ANGLE_AT_1AU * (sun_moon_dist / Sun.AU)**2
+        if 1:
+            moon_solid_angle = 6.4177e-5 * (384.4e6 / cam_moon_dist) ** 2
+        else:
+            moon_r = 3474200 / 2
+            moon_solid_angle = np.pi * moon_r ** 2 / cam_moon_dist ** 2
+        sun_solid_angle = Sun.SOLID_ANGLE_AT_1AU * (Sun.AU / sun_moon_dist)**2
 
         # eq (8) from [1]
-        fn = lambda lam: lunar_disk_refl_fn(lam) * moon_solid_angle * Sun.ssr(lam) * sun_solid_angle / math.pi
+        fn = lambda lam: moon_solid_angle * lunar_disk_refl_fn(lam) / math.pi \
+                         * sun_solid_angle * Sun.ssr(lam, ssi_table.SSI_2018_12_14)
         return fn
 
     def expected_du(self, pre_sat_gain=1, post_sat_gain=1, qeff_coefs=None, psf_coef=(1, 1, 1), plot=False):
@@ -1396,12 +1409,49 @@ class MoonMeasure(Measure):
         spectrum_fn = MoonMeasure.lunar_disk_irr_fn(MoonMeasure.lunar_disk_refl_fn(g, clat, clon, slon), smd, cmd)
 
         if plot and self.cam_i == 0:
-            lam = np.linspace(c.lambda_min, c.lambda_max, 100)
-            plt.plot(lam*1e9, spectrum_fn(lam) * 1e-9)  # [W/m2/nm]
-            plt.xlabel('Wave Length [nm]')
-            plt.ylabel('Spectral Irradiance [W/m2/nm]')
-            plt.title('Moonlight on 2018-12-15 18:00:00 UTC, ROLO-model + 2000-ASTM-E-490-00 SSI-model')
-            plt.show()
+            lam = np.linspace(c.lambda_min, c.lambda_max, 1000)
+            albedo_fn = MoonMeasure.lunar_disk_refl_fn(g, clat, clon, slon)
+            moon_sr = 6.4177e-5 * (384.4e6 / cmd) ** 2
+            ssi_fn = lambda lam: spectrum_fn(lam)/albedo_fn(lam)/moon_sr * np.pi
+
+            one_fig = False
+            plt.rcParams.update({'font.size': 16})
+
+            for i in range(1 if one_fig else 2):
+                fig = plt.figure(figsize=[6.4, 4.8])
+                if one_fig:
+                    axs = fig.subplots(1, 2)
+                else:
+                    axs = [None]*2
+                    axs[i] = fig.subplots(1, 1)
+
+                if i == 0 or one_fig:
+                    ax_da = axs[0].twinx()
+                    ax_da.plot(lam * 1e9, albedo_fn(lam), color='orange')
+                    ax_da.set_ylabel('Disk equivalent albedo', color='orange')
+                    ax_da.tick_params(axis='y', labelcolor='orange')
+        #            ax_da.title('ROLO-model 2018-12-14 19:00 UTC')
+
+                    axs[0].plot(lam * 1e9, ssi_fn(lam) * 1e-9, color='tab:blue')  # [W/m2/nm]
+                    axs[0].set_xlabel('Wave Length [nm]')
+                    axs[0].set_ylabel('Spectral Irradiance [W/m2/nm]', color='tab:blue')
+                    axs[0].tick_params(axis='y', labelcolor='tab:blue')
+        #            axs[0].title('Sunlight SI on 2018-12-14')
+
+                if i == 1 or one_fig:
+                    ax_qe = axs[1].twinx()
+                    ax_qe.set_ylim([None, 45])
+                    ax_qe.set_ylabel('Quantum efficiency [%]')
+                    plot_bgr_qeff(self.frame.cam, ax=ax_qe, color=('lightblue', 'lightgreen', 'pink'),
+                                  linestyle='dashed', linewidth=1, marker="")
+                    axs[1].plot(lam * 1e9, spectrum_fn(lam) * 1e-9, color='tab:blue')  # [W/m2/nm]
+                    axs[1].set_xlabel('Wave Length [nm]')
+                    axs[1].set_ylabel('Spectral Irradiance [W/m2/nm]', color='tab:blue')
+                    axs[1].tick_params(axis='y', labelcolor='tab:blue')
+        #            axs[1].title('Moonlight SI on 2018-12-14 19:00 UTC, ROLO-model + SSI')
+
+                plt.tight_layout()
+                plt.show()
 
         cgain = c.gain * c.aperture_area * c.emp_coef
         fgain = f.gain * f.exposure
@@ -1512,16 +1562,20 @@ class Optimizer:
                 plt.show()
 
             _, _, gain_adj0, _ = decode(x0)
-            err = tuple(tools.pseudo_huber_loss(STAR_CALIB_HUBER_COEF, (measured_du - expected_du) * 2 / (expected_du + measured_du)) * np.array(weights))
+#            err = tuple(tools.pseudo_huber_loss(STAR_CALIB_HUBER_COEF, (measured_du - expected_du) * 2 / (expected_du + measured_du)) * np.array(weights))
+            err = tuple(tools.pseudo_huber_loss(STAR_CALIB_HUBER_COEF, np.log10(expected_du) - np.log10(measured_du)) * np.array(weights))
+
             n = 3*len(c_qeff_coefs[0])
 
             lab_dp = tuple()
             if STAR_LAB_DATAPOINT_WEIGHT > 0:
                 c, lam = m.frame.cam, 557.7e-9
                 g = Camera.sample_qeff(c_qeff_coefs[1], c[1].lambda_min, c[1].lambda_max, lam)
-                r_g = Camera.sample_qeff(c_qeff_coefs[2], c[2].lambda_min, c[2].lambda_max, lam) / g
-                b_g = Camera.sample_qeff(c_qeff_coefs[0], c[0].lambda_min, c[0].lambda_max, lam) / g
-                lab_dp = tuple(STAR_LAB_DATAPOINT_WEIGHT**2 * (np.array((r_g, b_g)) - np.array((0.2475, 0.2250)))**2)
+                eps = 1e-10
+                r_g = (Camera.sample_qeff(c_qeff_coefs[2], c[2].lambda_min, c[2].lambda_max, lam) + eps) / (g + eps)
+                b_g = (Camera.sample_qeff(c_qeff_coefs[0], c[0].lambda_min, c[0].lambda_max, lam) + eps) / (g + eps)
+                lab_dp = tuple(STAR_LAB_DATAPOINT_WEIGHT * (np.log10(r_g) - np.log10(np.array((0.26, 0.25, 0.24, 0.24))))**2) \
+                        +tuple(STAR_LAB_DATAPOINT_WEIGHT * (np.log10(b_g) - np.log10(np.array((0.23, 0.24, 0.21, 0.22))))**2)
 
             prior = tuple(STAR_CALIB_PRIOR_WEIGHT**2 * (np.array(x[:n]) - np.array(x0[:n]))**2) \
                 if STAR_CALIB_PRIOR_WEIGHT > 0 else tuple()
@@ -1568,12 +1622,13 @@ class Optimizer:
         return qeff_coefs, f_gains, gain_adj, psf_coef, err, measured, expected
 
 
-def plot_rgb_qeff(cams):
-    col = {0: 'b', 1: 'g', 2: 'r'}
-    for i, cam in enumerate(cams):
-        cam.plot_qeff_fn(color=col[i])
-    plt.tight_layout()
-    plt.show()
+def plot_bgr_qeff(cams, ax=None, color=None, **kwargs):
+    color = color or ('b', 'g', 'r')
+    for col, cam in zip(color, cams):
+        cam.plot_qeff_fn(ax=ax, color=col, **kwargs)
+    if ax is None:
+        plt.tight_layout()
+        plt.show()
     # while not plt.waitforbuttonpress():
     #    pass
 
@@ -1648,16 +1703,15 @@ def get_bgr_cam(thumbnail=False, estimated=False):
         array = tuple
         if 1:
             # based on stars, no weighting
-            tmp = [array([1.00949635e-01, 1.76934488e-01, 3.38551293e-01, 2.31775035e-01,
-       7.99141313e-02, 5.46092392e-02, 4.66594391e-02, 5.18066641e-02,
-       4.11171594e-02, 3.70608157e-02, 3.12479764e-02, 1.21138157e-02,
-       4.73964730e-05, 4.86865574e-05]), array([4.46894316e-02, 5.90382511e-02, 7.90086734e-02, 2.51110984e-01,
-       3.59016557e-01, 1.76510942e-01, 7.26250533e-02, 1.01331750e-01,
-       8.59078480e-02, 4.60624884e-03, 1.05239457e-05, 9.74745415e-06,
-       1.90127180e-05, 4.65480417e-05]), array([4.71102593e-02, 6.24064929e-02, 1.94491986e-02, 3.66104712e-02,
-       4.82813107e-02, 3.22430197e-01, 3.12204729e-01, 2.19048667e-01,
-       1.52486245e-01, 6.72934957e-02, 2.77443987e-05, 4.62390147e-05,
-       5.71367704e-05, 1.69477734e-04])]
+            tmp = [array([4.24493739e-02, 1.47335623e-01, 3.40773426e-01, 2.07252471e-01,
+       6.74203914e-02, 5.38111110e-02, 3.61301608e-02, 7.89194073e-02,
+       3.80751330e-02, 7.42875400e-02, 4.32062302e-03, 1.56921402e-08,
+       4.92643131e-09, 1.19116641e-03]), array([0.02268899, 0.15809817, 0.11325005, 0.27037449, 0.32800305,
+       0.13028288, 0.05137687, 0.0009704 , 0.00501966, 0.01213003,
+       0.04284525, 0.04597516, 0.00989027, 0.03579103]), array([4.59842181e-02, 9.39455055e-02, 1.58438456e-03, 3.65986600e-02,
+       4.66162686e-02, 3.25682937e-01, 3.28939163e-01, 2.10404115e-01,
+       1.48812737e-01, 7.44198447e-02, 2.83898152e-02, 3.58536901e-04,
+       9.55504696e-07, 3.19725342e-04])]
         else:
             # based on stars, teff based weighting
             tmp = [array([8.94290274e-02, 1.67909392e-01, 2.99128113e-01, 1.97634109e-01,
@@ -1725,7 +1779,7 @@ def get_bgr_cam(thumbnail=False, estimated=False):
                               readout_noise_sd=15, point_spread_fn=0.5, scattering_coef=5e-9, **bgr[i]))
 
     if PLOT_INITIAL_QEFF_FN:
-        plot_rgb_qeff(bgr_cam)
+        plot_bgr_qeff(bgr_cam)
 
     return bgr_cam
 

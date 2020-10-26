@@ -19,7 +19,7 @@ class Sun:
     RADIUS = 695510e3   # in meters
     FLUX_DENSITY_AT_1AU = 1360.8    # in W/m2
     SOLID_ANGLE_AT_1AU = 6.807e-5   # in steradians
-    AU = 1.496e11   # in meters
+    AU = 1.495978707e11   # in meters
     TEMPERATURE = 5778  # in K
     METALLICITY = 0.012
     LOG_SURFACE_G = 4.43
@@ -189,10 +189,12 @@ class Sun:
         return tint[0]/Sun._tot_ssr_simple
 
     @staticmethod
-    def ssr(lam):
+    def ssr(lam, ssi_table=None):
         """ solar spectral radiance in W/m3/sr """
+        if ssi_table is None:
+            ssi_table = SOLAR_SPECTRAL_IRRADIANCE
         if Sun._ssi_interp is None:
-            Sun._ssi_interp = interp1d(SOLAR_SPECTRAL_IRRADIANCE[:, 0], SOLAR_SPECTRAL_IRRADIANCE[:, 1], kind='linear')
+            Sun._ssi_interp = interp1d(ssi_table[:, 0], ssi_table[:, 1], kind='linear')
         return Sun._ssi_interp(lam) / Sun.SOLID_ANGLE_AT_1AU
 
     @staticmethod
@@ -200,7 +202,7 @@ class Sun:
         """ Approximation of solar spectral radiance [W/m3/sr] using planck's law of black body radiation """
         return Stars.black_body_radiation(Sun.TEMPERATURE, lam)
 
-# 2000 ASTM Standard Extraterrestrial Spectrum Reference E-490-00
+# 2000 ASTM Standard Extraterrestrial Spectrum Reference E-490-00   ([m], [W m-2 m-1])
 # E490_00a_AM0.xls, https://rredc.nrel.gov/solar//spectra/am0/ASTM2000.html,
 # @article{astm490,
 #   title={490. 2000 American Society for Testing \& Materials (ASTM) standard extraterrestrial solar spec-trum reference E-490-00 (2000)},

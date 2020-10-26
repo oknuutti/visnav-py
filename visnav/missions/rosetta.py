@@ -14,7 +14,7 @@ from visnav.algo.model import SystemModel, Asteroid, Camera
 
 
 class RosettaSystemModel(SystemModel):
-    def __init__(self, hi_res_shape_model=False, rosetta_batch='mtp006', focused_attenuated=True):
+    def __init__(self, hi_res_shape_model=False, rosetta_batch='mtp006', focused_attenuated=True, res_mult=1.0):
         # gives some unnecessary warning about "dubious year" even when trying to ignore it
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
@@ -26,8 +26,8 @@ class RosettaSystemModel(SystemModel):
 
             # see https://pds-smallbodies.astro.umd.edu/holdings/ro-c-navcam-2-esc4-mtp023-v1.0/document/ro-sgs-if-0001.pdf
             camera=Camera(
-                1024,       # width in pixels
-                1024,       # height in pixels
+                int(1024*res_mult),       # width in pixels
+                int(1024*res_mult),       # height in pixels
                 5,          # x fov in degrees
                 5,          # y fov in degrees
                 focal_length=152.5,  # in mm

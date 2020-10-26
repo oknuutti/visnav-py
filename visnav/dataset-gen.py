@@ -39,6 +39,7 @@ def parse_arguments():
     parser.add_argument('--max-rot-err', default=10, type=float, metavar='A',
                         help='Max rotation error (in deg) allowed when determining pose with AKAZE-PnP-RANSAC (default: %f)' % 10)
 
+    parser.add_argument('--sm-lores', default=False, help="use low resolution shape model", action='store_true')
     parser.add_argument('--sm-noise', default=0, type=float, metavar='SD',
                         help='Shape model noise level (default: %f)' % 0)
     parser.add_argument('--sm-noise-len-sc', default=SHAPE_MODEL_NOISE_LEN_SC, type=float, metavar='SC',
@@ -54,8 +55,8 @@ def parse_arguments():
 
     parser.add_argument('--jets', default=0.0, type=float, metavar='JN',
                         help='Average jet count (exp-distr) (default: %f)' % 0.0)
-    parser.add_argument('--jet-int-mode', '--jm', default=0.2, type=float, metavar='JM',
-                        help='Jet intensity mode [0, 1], beta-distributed, (default: %f)' % 0.2)
+    parser.add_argument('--jet-int-mode', '--jm', default=0.001, type=float, metavar='JM',
+                        help='Jet intensity mode [0, 1], beta-distributed, (default: %f)' % 0.001)
     parser.add_argument('--jet-int-conc', '--jc', default=10, type=float, metavar='JC',
                         help='Jet intensity concentration [1, 1000] (default: %f)' % 10)
 
@@ -104,7 +105,7 @@ def parse_arguments():
 def main():
     args = parse_arguments()
 
-    sm = get_system_model(args.mission, hi_res_shape_model=1)
+    sm = get_system_model(args.mission, hi_res_shape_model=not args.sm_lores)
     file_prefix_mod = ''
     img_file_prefix = 'cm' if args.sm_noise > 0 else ''
     log_prefix = ('r-' if args.relative else '')+'dsg-'+args.mission+'-'+args.id+'-'

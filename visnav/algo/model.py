@@ -785,7 +785,7 @@ class SystemModel(ABC):
         
 
 class Camera:
-    def __init__(self, width, height, x_fov, y_fov,
+    def __init__(self, width, height, x_fov=None, y_fov=None,
                  sensor_size=None, focal_length=None, f_stop=None, aperture=None, dist_coefs=None,
                  quantum_eff=None, qeff_coefs=None, px_saturation_e=None, emp_coef=1,
                  lambda_min=None, lambda_eff=None, lambda_max=None,
@@ -920,11 +920,11 @@ class Camera:
 
     @property
     def def_exposure(self):
-        return min(5e-9/self.sensitivity, 5)
+        return min(2e5/self.sensitivity, 5)
 
     @property
     def def_gain(self):
-        return 5e-9/(self.def_exposure * self.sensitivity)
+        return 2e5/(self.def_exposure * self.sensitivity)
 
     @property
     def electrons_per_solar_irradiance(self):
@@ -1027,7 +1027,7 @@ class Camera:
 
         return qeff_fn, lml
 
-    def plot_qeff_fn(self, ax=None, color=None, marker="x", label=None):
+    def plot_qeff_fn(self, ax=None, marker="x", label=None, **kwargs):
         import matplotlib.pyplot as plt
         qeff_fn, _ = Camera.qeff_fn(tuple(self.qeff_coefs), self.lambda_min, self.lambda_max)
 
@@ -1037,9 +1037,9 @@ class Camera:
         y = qeff_fn(x)
 
         ax = ax or plt
-        ax.plot(x*1e9, y*100, color=color, label=label)
+        ax.plot(x*1e9, y*100, label=label, **kwargs)
         if marker:
-            ax.plot(x_tr*1e9, y_tr*100, linestyle='none', fillstyle='none', marker=marker, color=color)
+            ax.plot(x_tr*1e9, y_tr*100, linestyle='none', fillstyle='none', marker=marker, **kwargs)
 
     @staticmethod
     @lru_cache(maxsize=10)
