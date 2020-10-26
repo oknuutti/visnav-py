@@ -456,6 +456,10 @@ class TestLoop:
         # render particle effects such as jets and haze
         if particles is not None:
             particles.cam = cam or sm.cam
+            try:
+                rel_rot_q, rel_pos_v = rel_rot_q[0], rel_pos_v[0]
+            except:
+                pass
             particle_flux = particles.flux_density(object_flux, depth, np.logical_not(mask), rel_pos_v, rel_rot_q,
                                                    light_v, solar_flux_density)
         else:

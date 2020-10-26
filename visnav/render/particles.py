@@ -70,6 +70,8 @@ class Particles:
         return tools.q_times_mx(dq.conj(), ray_axes), xx.shape
 
     def flux_density_voxels(self, lf_ast_v, lf_ast_q, mask, solar_flux, down_scaling=1, quad_lim=15):
+        # TODO: implement this someday in OpenGL, e.g. like this: http://www.alexandre-pestana.com/volumetric-lights
+
         assert down_scaling >= 1, 'only values of >=1 make sense for down_scaling'
         dq = lf_ast_q * self.voxels.lf_ast_q.conj()
         dv = tools.q_times_v(dq.conj(), lf_ast_v - self.voxels.lf_ast_v)

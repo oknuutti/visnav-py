@@ -147,7 +147,7 @@ def render_67p(show=False):
     l_light_v = tools.q_times_v(SystemModel.sc2gl_q.conj() * g_sc_q.conj(), g_sol_ast_v / np.linalg.norm(g_sol_ast_v))
 
     l_vx_ast_q = SystemModel.sc2gl_q.conj() * quaternion.one.conj() * g_ast_q * SystemModel.sc2gl_q
-    particles = load_particles(r'C:\projects\sispo\data\models\new-jets.exr', lf_ast_q=l_vx_ast_q, cell_size=0.066667)
+    particles = load_particles(r'C:\projects\sispo\data\models\Jets--ROS_CAM1_20150710T074301.exr', lf_ast_q=l_vx_ast_q, cell_size=0.066667)
 
     a, b, c = [0] * 3
     w = 10
