@@ -1,10 +1,9 @@
-
 import math
 import time
 
 import numpy as np
 import numba as nb
-import quaternion
+import quaternion  # adds to numpy  # noqa # pylint: disable=unused-import
 import sys
 
 import scipy
@@ -17,12 +16,12 @@ from visnav.settings import *
 
 
 class PositioningException(Exception):
-	pass
+    pass
 
 
 class Stopwatch:
     # from https://www.safaribooksonline.com/library/view/python-cookbook-3rd/9781449357337/ch13s13.html
-    
+
     def __init__(self, elapsed=0.0, func=time.perf_counter):
         self._elapsed = elapsed
         self._func = func
@@ -43,7 +42,7 @@ class Stopwatch:
         end = self._func()
         self._elapsed += end - self._start
         self._start = None
-        
+
     def reset(self):
         self._elapsed = 0.0
 
@@ -91,7 +90,7 @@ def point_vector_dist(A, B, dist_along_v=False):
 
     # diff vector lengths
     normD = np.sqrt((AB2A ** 2).sum(-1)).reshape((-1, 1))
-    return (normD, diagAB/np.sqrt(normB2)) if dist_along_v else normD
+    return (normD, diagAB / np.sqrt(normB2)) if dist_along_v else normD
 
 
 def sc_asteroid_max_shift_error(A, B):
@@ -104,7 +103,7 @@ def sc_asteroid_max_shift_error(A, B):
 
     # diff vector lengths
     normD = point_vector_dist(A, B)
-    
+
     # max length of diff vectors
     return np.max(normD)
 
@@ -120,16 +119,16 @@ def cross3d(left, right):
 
 def normalize_v(v):
     norm = np.linalg.norm(v)
-    return v/norm if norm != 0 else v
+    return v / norm if norm != 0 else v
 
 
 @nb.njit(nb.types.f8[:](nb.types.f8[:]))
 def normalize_v_f8(v):
     norm = np.linalg.norm(v)
-    return v/norm if norm != 0 else v
+    return v / norm if norm != 0 else v
 
 
-def generate_field_fft(shape, sd=(0.33, 0.33, 0.34), len_sc=(0.5, 0.5/4, 0.5/16)):
+def generate_field_fft(shape, sd=(0.33, 0.33, 0.34), len_sc=(0.5, 0.5 / 4, 0.5 / 16)):
     from visnav.algo.image import ImageProc
     sds = sd if getattr(sd, '__len__', False) else [sd]
     len_scs = len_sc if getattr(len_sc, '__len__', False) else [len_sc]
@@ -137,7 +136,9 @@ def generate_field_fft(shape, sd=(0.33, 0.33, 0.34), len_sc=(0.5, 0.5/4, 0.5/16)
     assert len(sds) == len(len_scs), 'len(sd) differs from len(len_sc)'
     n = np.prod(shape)
 
-    kernel = np.sum(np.stack([1/len_sc*sd*n*ImageProc.gkern2d(shape, 1/len_sc) for sd, len_sc in zip(sds, len_scs)], axis=2), axis=2)
+    kernel = np.sum(
+        np.stack([1 / len_sc * sd * n * ImageProc.gkern2d(shape, 1 / len_sc) for sd, len_sc in zip(sds, len_scs)],
+                 axis=2), axis=2)
     f_img = np.random.normal(0, 1, shape) + np.complex(0, 1) * np.random.normal(0, 1, shape)
     f_img = np.real(np.fft.ifft2(np.fft.fftshift(kernel * f_img)))
     return f_img
@@ -152,33 +153,37 @@ def _surf_normal(x1, x2, x3):
 def surf_normal(x1, x2, x3):
     a, b, c = np.array(x1, dtype=np.float64), np.array(x2, dtype=np.float64), np.array(x3, dtype=np.float64)
     return _surf_normal(a, b, c)
+
+
 #    return normalize_v_f8(cross3d(b-a, c-a))
 
 def vector_projection(a, b):
-    return a.dot(b)/b.dot(b)*b
+    return a.dot(b) / b.dot(b) * b
+
 
 def vector_rejection(a, b):
     return a - vector_projection(a, b)
 
+
 def angle_between_v(v1, v2):
     # Notice: only returns angles between 0 and 180 deg
-    
+
     try:
         v1 = np.reshape(v1, (1, -1))
         v2 = np.reshape(v2, (-1, 1))
-        
-        n1 = v1/np.linalg.norm(v1)
-        n2 = v2/np.linalg.norm(v2)
+
+        n1 = v1 / np.linalg.norm(v1)
+        n2 = v2 / np.linalg.norm(v2)
 
         cos_angle = n1.dot(n2)
     except TypeError as e:
-        raise Exception('Bad vectors:\n\tv1: %s\n\tv2: %s'%(v1, v2)) from e
-    
+        raise Exception('Bad vectors:\n\tv1: %s\n\tv2: %s' % (v1, v2)) from e
+
     return math.acos(np.clip(cos_angle, -1, 1))
 
 
 def angle_between_v_mx(a, B, normalize=True):
-    Bn = B/np.linalg.norm(B, axis=1).reshape((-1, 1)) if normalize else B
+    Bn = B / np.linalg.norm(B, axis=1).reshape((-1, 1)) if normalize else B
     an = normalize_v(a).reshape((-1, 1)) if normalize else a
     return np.arccos(np.clip(Bn.dot(an), -1.0, 1.0))
 
@@ -212,12 +217,12 @@ def rand_q(angle):
 
 def angle_between_q(q1, q2):
     # from  https://chrischoy.github.io/research/measuring-rotation/
-    qd = q1.conj()*q2
-    return abs(wrap_rads(2*math.acos(qd.normalized().w)))
+    qd = q1.conj() * q2
+    return abs(wrap_rads(2 * math.acos(qd.normalized().w)))
 
 
 def angle_between_q_arr(q1, q2):
-    qd = quaternion.as_float_array(q1.conj()*q2)
+    qd = quaternion.as_float_array(q1.conj() * q2)
     qd = qd / np.linalg.norm(qd, axis=1).reshape((-1, 1))
     return np.abs(wrap_rads(2 * np.arccos(qd[:, 0])))
 
@@ -237,7 +242,7 @@ def distance_mx(A, B):
 
 
 def q_to_unitbase(q):
-    U0 = quaternion.as_quat_array([[0,1,0,0], [0,0,1,0], [0,0,0,1.]])
+    U0 = quaternion.as_quat_array([[0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1.]])
     Uq = q * U0 * q.conj()
     return quaternion.as_float_array(Uq)[:, 1:]
 
@@ -245,7 +250,7 @@ def q_to_unitbase(q):
 def equatorial_to_ecliptic(ra, dec):
     """ translate from equatorial ra & dec to ecliptic ones """
     sc = SkyCoord(ra, dec, unit='deg', frame='icrs', obstime='J2000') \
-            .transform_to('barycentrictrueecliptic')
+        .transform_to('barycentrictrueecliptic')
     return sc.lat.value, sc.lon.value
 
 
@@ -260,17 +265,17 @@ def q_to_angleaxis(q, compact=False):
 
 def angleaxis_to_q(rv):
     """ first angle, then axis """
-    if len(rv)==4:
+    if len(rv) == 4:
         theta = rv[0]
         v = normalize_v(np.array(rv[1:]))
-    elif len(rv)==3:
-        theta = math.sqrt(sum(x**2 for x in rv))
+    elif len(rv) == 3:
+        theta = math.sqrt(sum(x ** 2 for x in rv))
         v = np.array(rv) / (1 if theta == 0 else theta)
     else:
-        raise Exception('Invalid angle-axis vector: %s'%(rv,))
-    
-    w = math.cos(theta/2)
-    v = v*math.sin(theta/2)
+        raise Exception('Invalid angle-axis vector: %s' % (rv,))
+
+    w = math.cos(theta / 2)
+    v = v * math.sin(theta / 2)
     return np.quaternion(w, *v).normalized()
 
 
@@ -278,9 +283,9 @@ def ypr_to_q(lat, lon, roll):
     # Tait-Bryan angles, aka yaw-pitch-roll, nautical angles, cardan angles
     # intrinsic euler rotations z-y'-x'', pitch=-lat, yaw=lon
     return (
-          np.quaternion(math.cos(lon/2), 0, 0, math.sin(lon/2))
-        * np.quaternion(math.cos(-lat/2), 0, math.sin(-lat/2), 0)
-        * np.quaternion(math.cos(roll/2), math.sin(roll/2), 0, 0)
+            np.quaternion(math.cos(lon / 2), 0, 0, math.sin(lon / 2))
+            * np.quaternion(math.cos(-lat / 2), 0, math.sin(-lat / 2), 0)
+            * np.quaternion(math.cos(roll / 2), math.sin(roll / 2), 0, 0)
     )
 
 
@@ -289,22 +294,22 @@ def eul_to_q(angles, order='xyz', reverse=False):
     q = quaternion.one
     idx = {'x': 0, 'y': 1, 'z': 2}
     for angle, axis in zip(angles, order):
-        w = math.cos(angle/2)
+        w = math.cos(angle / 2)
         v = [0, 0, 0]
-        v[idx[axis]] = math.sin(angle/2)
+        v[idx[axis]] = math.sin(angle / 2)
         dq = np.quaternion(w, *v)
         q = (dq * q) if reverse else (q * dq)
     return q
 
-    
+
 def q_to_ypr(q):
     # from https://math.stackexchange.com/questions/687964/getting-euler-tait-bryan-angles-from-quaternion-representation
     q0, q1, q2, q3 = quaternion.as_float_array(q)
-    roll = np.arctan2(q2*q3+q0*q1, .5-q1**2-q2**2)
-    lat = -np.arcsin(np.clip(-2*(q1*q3-q0*q2), -1, 1))
-    lon = np.arctan2(q1*q2+q0*q3, .5-q2**2-q3**2)
+    roll = np.arctan2(q2 * q3 + q0 * q1, .5 - q1 ** 2 - q2 ** 2)
+    lat = -np.arcsin(np.clip(-2 * (q1 * q3 - q0 * q2), -1, 1))
+    lon = np.arctan2(q1 * q2 + q0 * q3, .5 - q2 ** 2 - q3 ** 2)
     return lat, lon, roll
-    
+
 
 def mean_q(qs, ws=None):
     """
@@ -327,45 +332,51 @@ def q_times_v(q, v):
     qv2 = q * qv * q.conj()
     return np.array([qv2.x, qv2.y, qv2.z])
 
+
 def q_times_mx(q, mx):
     qqmx = q * mx2qmx(mx) * q.conj()
     aqqmx = quaternion.as_float_array(qqmx)
     return aqqmx[:, 1:]
+
 
 def mx2qmx(mx):
     qmx = np.zeros((mx.shape[0], 4))
     qmx[:, 1:] = mx
     return quaternion.as_quat_array(qmx)
 
+
 def wrap_rads(a):
-    return (a+math.pi)%(2*math.pi)-math.pi
+    return (a + math.pi) % (2 * math.pi) - math.pi
+
 
 def wrap_degs(a):
-    return (a+180)%360-180
+    return (a + 180) % 360 - 180
+
 
 def eccentric_anomaly(eccentricity, mean_anomaly, tol=1e-6):
     # from http://www.jgiesen.de/kepler/kepler.html
-    
+
     E = mean_anomaly if eccentricity < 0.8 else math.pi
     F = E - eccentricity * math.sin(mean_anomaly) - mean_anomaly;
     for i in range(30):
         if abs(F) < tol:
             break
-        E = E - F / (1.0 - eccentricity*math.cos(E))
-        F = E - eccentricity*math.sin(E) - mean_anomaly
+        E = E - F / (1.0 - eccentricity * math.cos(E))
+        F = E - eccentricity * math.sin(E) - mean_anomaly
 
-    return round(E/tol)*tol
+    return round(E / tol) * tol
+
 
 def solar_elongation(ast_v, sc_q):
     sco_x, sco_y, sco_z = q_to_unitbase(sc_q)
-    
+
     if USE_ICRS:
         sc = SkyCoord(x=ast_v[0], y=ast_v[1], z=ast_v[2], frame='icrs',
-                      unit='m', representation_type='cartesian', obstime='J2000')\
-            .transform_to('hcrs')\
+                      unit='m', representation_type='cartesian', obstime='J2000') \
+            .transform_to('hcrs') \
             .represent_as('cartesian')
         ast_v = np.array([sc.x.value, sc.y.value, sc.z.value])
-    
+
     # angle between camera axis and the sun, 0: right ahead, pi: behind
     elong = angle_between_v(-ast_v, sco_x)
 
@@ -379,24 +390,29 @@ def solar_elongation(ast_v, sc_q):
 
     return elong, direc
 
+
 def find_nearest_lesser(array, value):
     I = np.where(array < value)
-    idx = (np.abs(array-value)).argmin()
+    idx = (np.abs(array - value)).argmin()
     return array[I[idx]], I[idx]
+
 
 def find_nearest_greater(array, value):
     I = np.where(array > value)
-    idx = (np.abs(array-value)).argmin()
+    idx = (np.abs(array - value)).argmin()
     return array[I[idx]], I[idx]
 
+
 def find_nearest(array, value):
-    idx = (np.abs(array-value)).argmin()
+    idx = (np.abs(array - value)).argmin()
     return array[idx], idx
+
 
 def find_nearest_arr(array, value, ord=None, fun=None):
     diff = array - value
     idx = np.linalg.norm(diff if fun is None else list(map(fun, diff)), ord=ord, axis=1).argmin()
     return array[idx], idx
+
 
 def find_nearest_n(array, value, r, ord=None, fun=None):
     diff = array - value
@@ -404,27 +420,29 @@ def find_nearest_n(array, value, r, ord=None, fun=None):
     idxs = np.where(d < r)
     return idxs[0]
 
+
 def find_nearest_each(haystack, needles, ord=None):
     assert len(haystack.shape) == 2 and len(needles.shape) == 2 and haystack.shape[1] == needles.shape[1], \
         'wrong shapes for haystack and needles, %s and %s, respectively' % (haystack.shape, needles.shape)
     c = haystack.shape[1]
-    diff_mx = np.repeat(needles.reshape((-1, 1, c)), haystack.shape[0], axis=1) - np.repeat(haystack.reshape((1, -1, c)), needles.shape[0], axis=0)
+    diff_mx = np.repeat(needles.reshape((-1, 1, c)), haystack.shape[0], axis=1) - np.repeat(
+        haystack.reshape((1, -1, c)), needles.shape[0], axis=0)
     norm_mx = np.linalg.norm(diff_mx, axis=2, ord=ord)
     idxs = norm_mx.argmin(axis=1)
     return haystack[idxs], idxs
 
 
 def cartesian2spherical(x, y, z):
-    r = math.sqrt(x**2 + y**2 + z**2)
-    theta = math.acos(z/r)
+    r = math.sqrt(x ** 2 + y ** 2 + z ** 2)
+    theta = math.acos(z / r)
     phi = math.atan2(y, x)
-    lat = math.pi/2 - theta
+    lat = math.pi / 2 - theta
     lon = phi
     return np.array([lat, lon, r])
 
 
 def spherical2cartesian(lat, lon, r):
-    theta = math.pi/2 - lat
+    theta = math.pi / 2 - lat
     phi = lon
     x = r * math.sin(theta) * math.cos(phi)
     y = r * math.sin(theta) * math.sin(phi)
@@ -433,7 +451,7 @@ def spherical2cartesian(lat, lon, r):
 
 
 def spherical2cartesian_arr(A, r=None):
-    theta = math.pi/2 - A[:, 0]
+    theta = math.pi / 2 - A[:, 0]
     phi = A[:, 1]
     r = (r or A[:, 2])
     x = r * np.sin(theta)
@@ -445,7 +463,7 @@ def spherical2cartesian_arr(A, r=None):
     return np.vstack([x, y, z]).T
 
 
-def discretize_v(v, tol=None, lat_range=(-math.pi/2, math.pi/2), points=None):
+def discretize_v(v, tol=None, lat_range=(-math.pi / 2, math.pi / 2), points=None):
     """
     simulate feature database by giving closest light direction with given tolerance
     """
@@ -468,7 +486,7 @@ def discretize_v(v, tol=None, lat_range=(-math.pi/2, math.pi/2), points=None):
     return ret, idx
 
 
-def discretize_q(q, tol=None, lat_range=(-math.pi/2, math.pi/2), points=None):
+def discretize_q(q, tol=None, lat_range=(-math.pi / 2, math.pi / 2), points=None):
     """
     simulate feature database by giving closest lat & roll with given tolerance
     and set lon to zero as feature detectors are rotation invariant (in opengl coords)
@@ -488,27 +506,27 @@ def discretize_q(q, tol=None, lat_range=(-math.pi/2, math.pi/2), points=None):
     )
     nq0 = ypr_to_q(nlat, 0, nroll)
     return nq0, idx
-    
 
-def bf_lat_lon(tol, lat_range=(-math.pi/2, math.pi/2)):
+
+def bf_lat_lon(tol, lat_range=(-math.pi / 2, math.pi / 2)):
     # tol**2 == (step/2)**2 + (step/2)**2   -- 7deg is quite nice in terms of len(lon)*len(lat) == 1260
-    step = math.sqrt(2)*tol
-    lat_steps = np.linspace(*lat_range, num=math.ceil((lat_range[1] - lat_range[0])/step), endpoint=False)[1:]
-    lon_steps = np.linspace(-math.pi, math.pi, num=math.ceil(2*math.pi/step), endpoint=False)
+    step = math.sqrt(2) * tol
+    lat_steps = np.linspace(*lat_range, num=math.ceil((lat_range[1] - lat_range[0]) / step), endpoint=False)[1:]
+    lon_steps = np.linspace(-math.pi, math.pi, num=math.ceil(2 * math.pi / step), endpoint=False)
     return lat_steps, lon_steps
 
 
-def bf2_lat_lon(tol, lat_range=(-math.pi/2, math.pi/2)):
+def bf2_lat_lon(tol, lat_range=(-math.pi / 2, math.pi / 2)):
     # tol**2 == (step/2)**2 + (step/2)**2   -- 7deg is quite nice in terms of len(lon)*len(lat) == 1260
-    step = math.sqrt(2)*tol
-    lat_steps = np.linspace(*lat_range, num=math.ceil((lat_range[1] - lat_range[0])/step), endpoint=False)[1:]
+    step = math.sqrt(2) * tol
+    lat_steps = np.linspace(*lat_range, num=math.ceil((lat_range[1] - lat_range[0]) / step), endpoint=False)[1:]
 
     # similar to https://www.cmu.edu/biolphys/deserno/pdf/sphere_equi.pdf
     points = []
     for lat in lat_steps:
-        Mphi = math.ceil(2*math.pi*math.cos(lat)/step)
+        Mphi = math.ceil(2 * math.pi * math.cos(lat) / step)
         lon_steps = np.linspace(-math.pi, math.pi, num=Mphi, endpoint=False)
-        points.extend(zip([lat]*len(lon_steps), lon_steps))
+        points.extend(zip([lat] * len(lon_steps), lon_steps))
 
     return points
 
@@ -537,8 +555,8 @@ def robust_std(arr, discard_percentile=0.2, mean=None, axis=None):
     corr = 1
     if mean is None:
         mean, n = robust_mean(arr, discard_percentile=discard_percentile, ret_n=True, axis=axis)
-        corr = n/(n-1)
-    return np.sqrt(robust_mean((arr-mean)**2, discard_percentile=discard_percentile, axis=axis) * corr)
+        corr = n / (n - 1)
+    return np.sqrt(robust_mean((arr - mean) ** 2, discard_percentile=discard_percentile, axis=axis) * corr)
 
 
 def mv_normal(mean, cov=None, L=None, size=None):
@@ -550,13 +568,13 @@ def mv_normal(mean, cov=None, L=None, size=None):
         final_shape = size
     final_shape = list(final_shape[:])
     final_shape.append(mean.shape[0])
-    
+
     if L is None and cov is None \
-          or L is not None and cov is not None:
+            or L is not None and cov is not None:
         raise ValueError("you must provide either cov or L (cholesky decomp result)")
     if len(mean.shape) != 1:
         raise ValueError("mean must be 1 dimensional")
-    
+
     if L is not None:
         if (len(L.shape) != 2) or (L.shape[0] != L.shape[1]):
             raise ValueError("L must be 2 dimensional and square")
@@ -572,11 +590,11 @@ def mv_normal(mean, cov=None, L=None, size=None):
 
     from numpy.random import standard_normal
     z = standard_normal(final_shape).reshape(mean.shape[0], -1)
-    
+
     x = L.dot(z).T
     x += mean
     x.shape = tuple(final_shape)
-    
+
     return x, L
 
 
@@ -587,10 +605,10 @@ def point_cloud_vs_model_err(points: np.ndarray, model) -> np.ndarray:
     return errs
 
 
-#@nb.njit(nb.f8[:](nb.f8[:, :], nb.f8[:, :]), nogil=True)
+# @nb.njit(nb.f8[:](nb.f8[:, :], nb.f8[:, :]), nogil=True)
 @nb.njit(nb.f8(nb.f8[:, :], nb.f8[:, :]), nogil=True, cache=True)
 def poly_line_intersect(poly, line):
-#    extend_line = True
+    #    extend_line = True
     eps = 1e-6
     none = np.inf  # np.zeros(1)
 
@@ -598,11 +616,11 @@ def poly_line_intersect(poly, line):
     v0v2 = poly[2, :] - poly[0, :]
 
     dir = line[1, :] - line[0, :]
-    line_len = math.sqrt(np.sum(dir**2))
+    line_len = math.sqrt(np.sum(dir ** 2))
     if line_len < eps:
         return none
 
-    dir = dir/line_len
+    dir = dir / line_len
     pvec = cross3d(dir, v0v2).ravel()
     det = np.dot(v0v1, pvec)
     if abs(det) < eps:
@@ -637,15 +655,15 @@ def poly_line_intersect(poly, line):
         # return actual 3d intersect point
         if not extend_line and t - eps > line_len:
             return none
-        return line[0, :] + t*dir
+        return line[0, :] + t * dir
 
 
 # INVESTIGATE: parallel = True does not speed up at all (or marginally) for some reason even though all cores are in use
 @nb.njit(nb.f8(nb.u4[:, :], nb.f8[:, :], nb.f8[:, :]), nogil=True, parallel=False, cache=True)
 def intersections(faces, vertices, line):
-    #pts = np.zeros((10, 3))
-    #i = 0
-    min_err = np.ones(faces.shape[0])*np.inf
+    # pts = np.zeros((10, 3))
+    # i = 0
+    min_err = np.ones(faces.shape[0]) * np.inf
     for k in nb.prange(1, faces.shape[0]):
         err = poly_line_intersect(vertices[faces[k, :], :], line)
         min_err[k] = err
@@ -662,10 +680,10 @@ def intersections(faces, vertices, line):
     return min_err[i]  # pts[0:i, :]
 
 
-#@nb.jit(nb.f8[:](nb.f8[:, :], nb.f8[:, :], nb.i4[:, :]), nogil=True, parallel=False)
+# @nb.jit(nb.f8[:](nb.f8[:, :], nb.f8[:, :], nb.i4[:, :]), nogil=True, parallel=False)
 def get_model_errors(points, vertices, faces):
     count = len(points)
-    show_progress(count//10, 0)
+    show_progress(count // 10, 0)
     j = 0
 
     devs = np.empty(points.shape[0])
@@ -677,13 +695,13 @@ def get_model_errors(points, vertices, faces):
             continue
 
         if False:
-            idx = np.argmin([np.linalg.norm(pt-vx) for pt in pts])
+            idx = np.argmin([np.linalg.norm(pt - vx) for pt in pts])
             err = np.linalg.norm(pts[idx]) - np.linalg.norm(vx)
 
         devs[i] = err
-        if j < i//10:
-            show_progress(count//10, i//10)
-            j = i//10
+        if j < i // 10:
+            show_progress(count // 10, i // 10)
+            j = i // 10
 
     return devs
 
@@ -707,10 +725,10 @@ def augment_model(model, multiplier=3, length_scales=(0, 0.1, 1), sds=(1e-5, 1.6
     # white noise to ensure positive definite covariance matrix
     ls = dict(zip(length_scales, sds))
     sd0 = ls.pop(0, 1e-5)
-    kernel = WhiteKernel(noise_level=sd0*max_rng)
+    kernel = WhiteKernel(noise_level=sd0 * max_rng)
 
     for l, s in ls.items():
-        kernel += s**2 * Matern(length_scale=l*max_rng, nu=1.5)
+        kernel += s ** 2 * Matern(length_scale=l * max_rng, nu=1.5)
 
     assert False, 'not implemented'
 
@@ -742,7 +760,6 @@ def augment_model(model, multiplier=3, length_scales=(0, 0.1, 1), sds=(1e-5, 1.6
 def apply_noise(model, support=(None, None), L=(None, None), len_sc=SHAPE_MODEL_NOISE_LEN_SC,
                 noise_lv=SHAPE_MODEL_NOISE_LV['lo'], only_z=False,
                 tx_noise=0, tx_noise_len_sc=SHAPE_MODEL_NOISE_LEN_SC, tx_hf_noise=True):
-
     Sv, St = support
     Lv, Lt = L
     inplace = noise_lv == 0 and model.texfile is None
@@ -779,7 +796,7 @@ def apply_noise(model, support=(None, None), L=(None, None), len_sc=SHAPE_MODEL_
             noisy_model.normals = model.normals
 
     return noisy_model, avg_dev, (Lv, Lt)
-    
+
 
 def texture_noise(model, support=None, L=None, noise_sd=SHAPE_MODEL_NOISE_LV['lo'],
                   len_sc=SHAPE_MODEL_NOISE_LEN_SC, max_rng=None, max_n=1e4, hf_noise=True):
@@ -807,9 +824,10 @@ def texture_noise(model, support=None, L=None, noise_sd=SHAPE_MODEL_NOISE_LV['lo
             print('Requires scikit-learn, install using "conda install scikit-learn"')
             sys.exit()
 
-        kernel = 1.0*noise_sd * Matern(length_scale=len_sc*max_rng, nu=1.5) \
-               + 0.5*noise_sd * Matern(length_scale=0.1*len_sc*max_rng, nu=1.5) \
-               + WhiteKernel(noise_level=1e-5*noise_sd*max_rng)  # white noise for positive definite covariance matrix only
+        kernel = 1.0 * noise_sd * Matern(length_scale=len_sc * max_rng, nu=1.5) \
+                 + 0.5 * noise_sd * Matern(length_scale=0.1 * len_sc * max_rng, nu=1.5) \
+                 + WhiteKernel(
+            noise_level=1e-5 * noise_sd * max_rng)  # white noise for positive definite covariance matrix only
 
         # texture coordinates given so that x points left and *Y POINTS UP*
         tex_img_coords = np.array(support.texcoords)
@@ -827,8 +845,8 @@ def texture_noise(model, support=None, L=None, noise_sd=SHAPE_MODEL_NOISE_LV['lo
             orig_tx = cv2.imread(os.path.join(DATA_DIR, '67p+tex.png'), cv2.IMREAD_GRAYSCALE)
             gx, gy = np.gradient(points[tx2vx[idxs], :].reshape((ny, nx, 3)), axis=(1, 0))
             gxy = np.linalg.norm(gx, axis=2) + np.linalg.norm(gy, axis=2)
-            gxy = (gxy - np.min(gxy))/(np.max(gxy) - np.min(gxy))
-            grad_img = cv2.resize((gxy*255).astype('uint8'), orig_tx.shape)
+            gxy = (gxy - np.min(gxy)) / (np.max(gxy) - np.min(gxy))
+            grad_img = cv2.resize((gxy * 255).astype('uint8'), orig_tx.shape)
             overlaid = ImageProc.merge((orig_tx, grad_img))
 
             plt.figure(1)
@@ -865,10 +883,11 @@ def texture_noise(model, support=None, L=None, noise_sd=SHAPE_MODEL_NOISE_LV['lo
         interp1 = RectBivariateSpline(tx_grid_xx[0, :], tx_grid_yy[:, 0], e1, kx=1, ky=1)
         err_coef = interp1(x, y)
         lo, hi = np.min(err_coef), np.max(err_coef)
-        err_coef = (err_coef - lo)/(hi - lo)
+        err_coef = (err_coef - lo) / (hi - lo)
 
         len_sc = 10
-        err1 = generate_field_fft(tex.shape, (6*noise_sd, 4*noise_sd), (len_sc/1000, len_sc/4500)) if hf_noise else 0
+        err1 = generate_field_fft(tex.shape, (6 * noise_sd, 4 * noise_sd),
+                                  (len_sc / 1000, len_sc / 4500)) if hf_noise else 0
         err1 *= err_coef
 
     noisy_tex = tex + err0 + err1
@@ -908,7 +927,7 @@ class NearestKernelNDInterpolator(NearestNDInterpolator):
         if max_distance is None:
             if kernel_sc is None:
                 d, _ = self.tree.query(self.points, k=k_nearest)
-                kernel_sc = np.mean(d) * k_nearest/(k_nearest-1)
+                kernel_sc = np.mean(d) * k_nearest / (k_nearest - 1)
             max_distance = kernel_sc * 3
 
         assert kernel_sc is not None, 'kernel_sc need to be set'
@@ -923,25 +942,25 @@ class NearestKernelNDInterpolator(NearestNDInterpolator):
         if scipy.sparse.issparse(r):
             return self.kernel_sc / (r + self.kernel_eps)
         else:
-            return self.kernel_sc/(r + self.kernel_eps)
+            return self.kernel_sc / (r + self.kernel_eps)
 
     def _quadratic(self, r):
         if scipy.sparse.issparse(r):
-            return np.power(self.kernel_sc/(r.data + self.kernel_eps), 2, out=r.data)
+            return np.power(self.kernel_sc / (r.data + self.kernel_eps), 2, out=r.data)
         else:
-            return (self.kernel_sc/(r + self.kernel_eps)) ** 2
+            return (self.kernel_sc / (r + self.kernel_eps)) ** 2
 
     def _cubic(self, r):
         if scipy.sparse.issparse(r):
-            return self.kernel_sc/(r + self.kernel_eps).power(3)
+            return self.kernel_sc / (r + self.kernel_eps).power(3)
         else:
-            return (self.kernel_sc/(r + self.kernel_eps)) ** 3
+            return (self.kernel_sc / (r + self.kernel_eps)) ** 3
 
     def _gaussian(self, r):
         if scipy.sparse.issparse(r):
-            return np.exp((-r.data/self.kernel_sc)**2, out=r.data)
+            return np.exp((-r.data / self.kernel_sc) ** 2, out=r.data)
         else:
-            return np.exp(-(r/self.kernel_sc)**2)
+            return np.exp(-(r / self.kernel_sc) ** 2)
 
     def __call__(self, *args):
         """
@@ -959,9 +978,10 @@ class NearestKernelNDInterpolator(NearestNDInterpolator):
         xi = self._check_call_shape(xi)
         xi = self._scale_x(xi)
 
-        r, idxs = self.tree.query(xi, self.k_nearest, eps=self.query_eps, distance_upper_bound=self.max_distance or np.inf)
+        r, idxs = self.tree.query(xi, self.k_nearest, eps=self.query_eps,
+                                  distance_upper_bound=self.max_distance or np.inf)
 
-        w = getattr(self, '_'+self.kernel)(r).reshape((-1, self.k_nearest, 1)) + self.kernel_eps
+        w = getattr(self, '_' + self.kernel)(r).reshape((-1, self.k_nearest, 1)) + self.kernel_eps
         w /= np.sum(w, axis=1).reshape((-1, 1, 1))
 
         yt = np.vstack((self.values, [0]))  # if idxs[i, j] == len(values), then i:th point doesnt have j:th match
@@ -971,25 +991,25 @@ class NearestKernelNDInterpolator(NearestNDInterpolator):
 
 def points_with_noise(points, support=None, L=None, noise_lv=SHAPE_MODEL_NOISE_LV['lo'],
                       len_sc=SHAPE_MODEL_NOISE_LEN_SC, max_rng=None, only_z=False):
-    
     try:
         from sklearn.gaussian_process.kernels import Matern, WhiteKernel
     except:
         print('Requires scikit-learn, install using "conda install scikit-learn"')
         sys.exit()
-    
+
     if support is None:
-        support = points #[random.sample(list(range(len(points))), min(3000,len(points)))]
-    
+        support = points  # [random.sample(list(range(len(points))), min(3000,len(points)))]
+
     n = len(support)
     mean = np.mean(points, axis=0)
     max_rng = np.max(np.ptp(points, axis=0)) if max_rng is None else max_rng
-    
+
     y_cov = None
     if L is None:
-        kernel = 0.6*noise_lv * Matern(length_scale=len_sc*max_rng, nu=1.5) \
-               + 0.4*noise_lv * Matern(length_scale=0.1*len_sc*max_rng, nu=1.5) \
-               + WhiteKernel(noise_level=1e-5*noise_lv*max_rng) # white noise for positive definite covariance matrix only
+        kernel = 0.6 * noise_lv * Matern(length_scale=len_sc * max_rng, nu=1.5) \
+                 + 0.4 * noise_lv * Matern(length_scale=0.1 * len_sc * max_rng, nu=1.5) \
+                 + WhiteKernel(
+            noise_level=1e-5 * noise_lv * max_rng)  # white noise for positive definite covariance matrix only
         y_cov = kernel(support - mean)
 
     # sample gp
@@ -1002,10 +1022,10 @@ def points_with_noise(points, support=None, L=None, noise_lv=SHAPE_MODEL_NOISE_L
             print('using orig gp sampled err')
     else:
         # interpolate
-        sc = 0.05*len_sc*max_rng
-        interp = NearestKernelNDInterpolator(support-mean, err, k_nearest=12, kernel='gaussian',
-                                             kernel_sc=sc, max_distance=sc*6)
-        full_err = interp(points-mean).astype(points.dtype)
+        sc = 0.05 * len_sc * max_rng
+        interp = NearestKernelNDInterpolator(support - mean, err, k_nearest=12, kernel='gaussian',
+                                             kernel_sc=sc, max_distance=sc * 6)
+        full_err = interp(points - mean).astype(points.dtype)
 
         # maybe extrapolate
         nanidx = tuple(np.isnan(full_err).flat)
@@ -1023,45 +1043,46 @@ def points_with_noise(points, support=None, L=None, noise_lv=SHAPE_MODEL_NOISE_L
     # white_noise = 1 if True else np.exp(np.random.normal(scale=0.2*noise_lv*max_rng, size=(len(full_err),1)))
 
     if only_z:
-        add_err_z = (max_rng/2) * (full_err - 1)
+        add_err_z = (max_rng / 2) * (full_err - 1)
         add_err = np.concatenate((np.zeros((len(full_err), 2)), add_err_z), axis=1)
         noisy_points = points + add_err
-        devs = np.abs(noisy_points[:, 2] - points[:, 2]) / (max_rng/2)
+        devs = np.abs(noisy_points[:, 2] - points[:, 2]) / (max_rng / 2)
         assert np.isclose(devs.flatten(), np.abs(full_err - 1).flatten()).all(), 'something wrong'
     else:
         # noisy_points = (points-mean)*full_err*white_noise +mean
-        #r = np.sqrt(np.sum((points - mean)**2, axis=-1)).reshape(-1, 1)
-        #noisy_points = (points - mean) * (1 + np.log(full_err)/r) + mean
+        # r = np.sqrt(np.sum((points - mean)**2, axis=-1)).reshape(-1, 1)
+        # noisy_points = (points - mean) * (1 + np.log(full_err)/r) + mean
         noisy_points = (points - mean) * full_err + mean
-        devs = np.sqrt(np.sum((noisy_points - points)**2, axis=-1) / np.sum((points - mean)**2, axis=-1))
-    
+        devs = np.sqrt(np.sum((noisy_points - points) ** 2, axis=-1) / np.sum((points - mean) ** 2, axis=-1))
+
     if DEBUG or not BATCH_MODE:
-        print('noise (lv=%.3f): %.3f, %.3f; avg=%.3f'%((noise_lv,)+tuple(np.percentile(devs, (68, 95)))+(np.mean(devs),)))
-    
+        print('noise (lv=%.3f): %.3f, %.3f; avg=%.3f' % (
+                    (noise_lv,) + tuple(np.percentile(devs, (68, 95))) + (np.mean(devs),)))
+
     if False:
         import matplotlib.pyplot as plt
         plt.figure(1, figsize=(8, 8))
-        #plt.plot(np.concatenate((points[:,0], err0[:,0], err[:,0], points[:,0]*err[:,0])))
+        # plt.plot(np.concatenate((points[:,0], err0[:,0], err[:,0], points[:,0]*err[:,0])))
         plt.subplot(2, 2, 1)
-        plt.plot(points[:,0])
+        plt.plot(points[:, 0])
         plt.title('original', fontsize=12)
 
         plt.subplot(2, 2, 2)
-        plt.plot(err0[:,0])
+        plt.plot(err0[:, 0])
         plt.title('norm-err', fontsize=12)
 
         plt.subplot(2, 2, 3)
-        plt.plot(err[:,0])
+        plt.plot(err[:, 0])
         plt.title('exp-err', fontsize=12)
 
         plt.subplot(2, 2, 4)
-        plt.plot(noisy_points[:,0])
+        plt.plot(noisy_points[:, 0])
         plt.title('noisy', fontsize=12)
 
         plt.tight_layout()
         plt.show()
         assert False, 'exiting'
-    
+
     return noisy_points, np.mean(devs), L
 
 
@@ -1070,27 +1091,28 @@ def foreground_idxs(array, max_val=None):
     idxs = np.concatenate(((iy,), (ix,)), axis=0).T
     return idxs
 
-def interp2(array, x, y, max_val=None, max_dist=30, idxs=None, discard_bg=False):
-    assert y<array.shape[0] and x<array.shape[1], 'out of bounds %s: %s'%(array.shape, (y, x))
 
-    v = array[int(y):int(y)+2, int(x):int(x)+2]
-    xf = x-int(x)
-    yf = y-int(y)
+def interp2(array, x, y, max_val=None, max_dist=30, idxs=None, discard_bg=False):
+    assert y < array.shape[0] and x < array.shape[1], 'out of bounds %s: %s' % (array.shape, (y, x))
+
+    v = array[int(y):int(y) + 2, int(x):int(x) + 2]
+    xf = x - int(x)
+    yf = y - int(y)
     w = np.array((
-        ((1-yf)*(1-xf), (1-yf)*xf),
-        (yf*(1-xf),     yf*xf),
+        ((1 - yf) * (1 - xf), (1 - yf) * xf),
+        (yf * (1 - xf), yf * xf),
     ))
-    
+
     # ignore background depths
     if max_val is not None:
-        idx = v.reshape(1,-1) < max_val*0.999
+        idx = v.reshape(1, -1) < max_val * 0.999
     else:
-        idx = ~np.isnan(v.reshape(1,-1))
-    
-    w_sum = np.sum(w.reshape(1,-1)[idx])
-    if w_sum>0:
+        idx = ~np.isnan(v.reshape(1, -1))
+
+    w_sum = np.sum(w.reshape(1, -1)[idx])
+    if w_sum > 0:
         # ignore background values
-        val = np.sum(w.reshape(1,-1)[idx] * v.reshape(1,-1)[idx]) / w_sum
+        val = np.sum(w.reshape(1, -1)[idx] * v.reshape(1, -1)[idx]) / w_sum
 
     elif discard_bg:
         return float('nan')
@@ -1100,17 +1122,17 @@ def interp2(array, x, y, max_val=None, max_dist=30, idxs=None, discard_bg=False)
         if idxs is None:
             idxs = foreground_idxs(array, max_val)
 
-        fallback = len(idxs)==0
+        fallback = len(idxs) == 0
         if not fallback:
             dist = np.linalg.norm(idxs - np.array((y, x)), axis=1)
             i = np.argmin(dist)
             val = array[idxs[i, 0], idxs[i, 1]]
-            #print('\n%s, %s, %s, %s, %s, %s, %s'%(v, x,y,dist[i],idxs[i,1],idxs[i,0],val))
+            # print('\n%s, %s, %s, %s, %s, %s, %s'%(v, x,y,dist[i],idxs[i,1],idxs[i,0],val))
             fallback = dist[i] > max_dist
-            
+
         if fallback:
-            val = np.sum(w*v)/np.sum(w)
-        
+            val = np.sum(w * v) / np.sum(w)
+
     return val
 
 
@@ -1118,10 +1140,10 @@ def solve_rotation(src_q, dst_q):
     """ q*src_q*q.conj() == dst_q, solve for q """
     # based on http://web.cs.iastate.edu/~cs577/handouts/quaternion.pdf
     # and https://en.wikipedia.org/wiki/Quaternions_and_spatial_rotation#Pairs_of_unit_quaternions_as_rotations_in_4D_space
-    
+
     # NOTE: not certain if works..
-    
-    M = np.zeros((4,4))
+
+    M = np.zeros((4, 4))
     for i in range(len(src_q)):
         si = src_q[i]
         Pi = np.array((
@@ -1138,63 +1160,64 @@ def solve_rotation(src_q, dst_q):
             (qi.y, qi.z, qi.w, -qi.x),
             (qi.z, -qi.y, qi.x, qi.w),
         ))
-    
+
         M += Pi.T * Qi
-    
+
     w, v = np.linalg.eig(M)
     i = np.argmax(w)
-    res_q = np.quaternion(*v[:,i])
-#    alt = v.dot(w)
-#    print('%s,%s'%(res_q, alt))
-#    res_q = np.quaternion(*alt).normalized()
+    res_q = np.quaternion(*v[:, i])
+    #    alt = v.dot(w)
+    #    print('%s,%s'%(res_q, alt))
+    #    res_q = np.quaternion(*alt).normalized()
     return res_q
+
 
 def solve_q_bf(src_q, dst_q):
     qs = []
     d = []
     for res_q in (
-        np.quaternion(0,0,0,1).normalized(),
-        np.quaternion(0,0,1,0).normalized(),
-        np.quaternion(0,0,1,1).normalized(),
-        np.quaternion(0,0,-1,1).normalized(),
-        np.quaternion(0,1,0,0).normalized(),
-        np.quaternion(0,1,0,1).normalized(),
-        np.quaternion(0,1,0,-1).normalized(),
-        np.quaternion(0,1,1,0).normalized(),
-        np.quaternion(0,1,-1,0).normalized(),
-        np.quaternion(0,1,1,1).normalized(),
-        np.quaternion(0,1,1,-1).normalized(),
-        np.quaternion(0,1,-1,1).normalized(),
-        np.quaternion(0,1,-1,-1).normalized(),
-        np.quaternion(1,0,0,1).normalized(),
-        np.quaternion(1,0,0,-1).normalized(),
-        np.quaternion(1,0,1,0).normalized(),
-        np.quaternion(1,0,-1,0).normalized(),
-        np.quaternion(1,0,1,1).normalized(),
-        np.quaternion(1,0,1,-1).normalized(),
-        np.quaternion(1,0,-1,1).normalized(),
-        np.quaternion(1,0,-1,-1).normalized(),
-        np.quaternion(1,1,0,0).normalized(),
-        np.quaternion(1,-1,0,0).normalized(),
-        np.quaternion(1,1,0,1).normalized(),
-        np.quaternion(1,1,0,-1).normalized(),
-        np.quaternion(1,-1,0,1).normalized(),
-        np.quaternion(1,-1,0,-1).normalized(),
-        np.quaternion(1,1,1,0).normalized(),
-        np.quaternion(1,1,-1,0).normalized(),
-        np.quaternion(1,-1,1,0).normalized(),
-        np.quaternion(1,-1,-1,0).normalized(),
-        np.quaternion(1,1,1,-1).normalized(),
-        np.quaternion(1,1,-1,1).normalized(),
-        np.quaternion(1,1,-1,-1).normalized(),
-        np.quaternion(1,-1,1,1).normalized(),
-        np.quaternion(1,-1,1,-1).normalized(),
-        np.quaternion(1,-1,-1,1).normalized(),
-        np.quaternion(1,-1,-1,-1).normalized(),
+            np.quaternion(0, 0, 0, 1).normalized(),
+            np.quaternion(0, 0, 1, 0).normalized(),
+            np.quaternion(0, 0, 1, 1).normalized(),
+            np.quaternion(0, 0, -1, 1).normalized(),
+            np.quaternion(0, 1, 0, 0).normalized(),
+            np.quaternion(0, 1, 0, 1).normalized(),
+            np.quaternion(0, 1, 0, -1).normalized(),
+            np.quaternion(0, 1, 1, 0).normalized(),
+            np.quaternion(0, 1, -1, 0).normalized(),
+            np.quaternion(0, 1, 1, 1).normalized(),
+            np.quaternion(0, 1, 1, -1).normalized(),
+            np.quaternion(0, 1, -1, 1).normalized(),
+            np.quaternion(0, 1, -1, -1).normalized(),
+            np.quaternion(1, 0, 0, 1).normalized(),
+            np.quaternion(1, 0, 0, -1).normalized(),
+            np.quaternion(1, 0, 1, 0).normalized(),
+            np.quaternion(1, 0, -1, 0).normalized(),
+            np.quaternion(1, 0, 1, 1).normalized(),
+            np.quaternion(1, 0, 1, -1).normalized(),
+            np.quaternion(1, 0, -1, 1).normalized(),
+            np.quaternion(1, 0, -1, -1).normalized(),
+            np.quaternion(1, 1, 0, 0).normalized(),
+            np.quaternion(1, -1, 0, 0).normalized(),
+            np.quaternion(1, 1, 0, 1).normalized(),
+            np.quaternion(1, 1, 0, -1).normalized(),
+            np.quaternion(1, -1, 0, 1).normalized(),
+            np.quaternion(1, -1, 0, -1).normalized(),
+            np.quaternion(1, 1, 1, 0).normalized(),
+            np.quaternion(1, 1, -1, 0).normalized(),
+            np.quaternion(1, -1, 1, 0).normalized(),
+            np.quaternion(1, -1, -1, 0).normalized(),
+            np.quaternion(1, 1, 1, -1).normalized(),
+            np.quaternion(1, 1, -1, 1).normalized(),
+            np.quaternion(1, 1, -1, -1).normalized(),
+            np.quaternion(1, -1, 1, 1).normalized(),
+            np.quaternion(1, -1, 1, -1).normalized(),
+            np.quaternion(1, -1, -1, 1).normalized(),
+            np.quaternion(1, -1, -1, -1).normalized(),
     ):
         tq = res_q * src_q * res_q.conj()
         qs.append(res_q)
-        #d.append(1-np.array((tq.w, tq.x, tq.y, tq.z)).dot(np.array((dst_q.w, dst_q.x, dst_q.y, dst_q.z)))**2)
+        # d.append(1-np.array((tq.w, tq.x, tq.y, tq.z)).dot(np.array((dst_q.w, dst_q.x, dst_q.y, dst_q.z)))**2)
         d.append(angle_between_q(tq, dst_q))
     i = np.argmin(d)
     return qs[i]
@@ -1272,7 +1295,16 @@ def numeric(s):
 def pseudo_huber_loss(a, delta):
     # from https://en.wikipedia.org/wiki/Huber_loss
     # first +1e-15 is to avoid divide by zero, second to avoid loss becoming zero if delta > 1e7 due to float precision
-    return delta**2 * (np.sqrt(1 + a**2/(delta**2 + 1e-15)) - 1 + 1e-15)
+    return delta ** 2 * (np.sqrt(1 + a ** 2 / (delta ** 2 + 1e-15)) - 1 + 1e-15)
+
+
+def fixed_precision(val, precision, as_str=False):
+    if val == 0:
+        return ('%%.%df' % precision) % val if as_str else val
+    d = math.ceil(math.log10(abs(val))) - precision
+    c = 10 ** d
+    fp_val = round(val / c) * c
+    return ('%%.%df' % max(0, -d)) % fp_val if as_str else fp_val
 
 
 def plot_quats(quats, conseq=True, wait=True):
@@ -1281,6 +1313,9 @@ def plot_quats(quats, conseq=True, wait=True):
 
     fig = plt.figure()
     ax = Axes3D(fig)
+    ax.set_xlim(-1, 1)
+    ax.set_ylim(-1, 1)
+    ax.set_zlim(-1, 1)
     ax.set_xlabel('x')
     ax.set_ylabel('y')
     ax.set_zlabel('z')
@@ -1290,11 +1325,11 @@ def plot_quats(quats, conseq=True, wait=True):
         if q is not None:
             lat, lon, _ = q_to_ypr(q)
             v1 = spherical2cartesian(lat, lon, 1)
-            v2 = (v1 + normalize_v(np.cross(np.cross(v1, np.array([0, 0, 1])), v1))*0.1)*0.85
+            v2 = (v1 + normalize_v(np.cross(np.cross(v1, np.array([0, 0, 1])), v1)) * 0.1) * 0.85
             v2 = q_times_v(q, v2)
             ax.plot((0, v1[0], v2[0]), (0, v1[1], v2[1]), (0, v1[2], v2[2]))
 
-    while(wait and not plt.waitforbuttonpress()):
+    while (wait and not plt.waitforbuttonpress()):
         pass
 
 
@@ -1309,24 +1344,24 @@ def plot_poses(poses, conseq=True, wait=True, arrow_len=1):
     ax.set_zlabel('z')
     if conseq:
         plt.hsv()
-        #ax.set_prop_cycle('color', map(lambda c: '%f' % c, np.linspace(.7, 0, len(poses))))
+        # ax.set_prop_cycle('color', map(lambda c: '%f' % c, np.linspace(.7, 0, len(poses))))
     for i, pose in enumerate(poses):
         if pose is not None:
             q = np.quaternion(*pose[3:])
             lat, lon, _ = q_to_ypr(q)
-            v1 = spherical2cartesian(lat, lon, 1)*arrow_len
-            v2 = (v1 + normalize_v(np.cross(np.cross(v1, np.array([0, 0, 1])), v1))*0.1*arrow_len)*0.85
+            v1 = spherical2cartesian(lat, lon, 1) * arrow_len
+            v2 = (v1 + normalize_v(np.cross(np.cross(v1, np.array([0, 0, 1])), v1)) * 0.1 * arrow_len) * 0.85
             v2 = q_times_v(q, v2)
             ax.plot((pose[0], v1[0], v2[0]), (pose[1], v1[1], v2[1]), (pose[2], v1[2], v2[2]))
 
-    while(wait and not plt.waitforbuttonpress()):
+    while (wait and not plt.waitforbuttonpress()):
         pass
 
 
 #
 # Not sure if unitbase_to_q works, haven't deleted just in case still need:
 #
-#def unitbase_to_q(b_dst, b_src = [[1, 0, 0], [0, 1, 0], [0, 0, 1]]):
+# def unitbase_to_q(b_dst, b_src = [[1, 0, 0], [0, 1, 0], [0, 0, 1]]):
 #    # based on http://stackoverflow.com/questions/16648452/calculating-\
 #    #   quaternion-for-transformation-between-2-3d-cartesian-coordinate-syst
 #    # , which is based on http://dx.doi.org/10.1117/12.57955
@@ -1337,22 +1372,22 @@ def plot_poses(poses, conseq=True, wait=True, arrow_len=1):
 #        x = np.matrix(np.outer(v, b_dst[i]))
 #        M = M + x
 #
-    # N11 = M[0, 0] + M[1, 1] + M[2, 2]
-    # N22 = M[0, 0] - M[1, 1] - M[2, 2]
-    # N33 = -M[0, 0] + M[1, 1] - M[2, 2]
-    # N44 = -M[0, 0] - M[1, 1] + M[2, 2]
-    # N12 = M[1, 2] - M[2, 1]
-    # N13 = M[2, 0] - M[0, 2]
-    # N14 = M[0, 1] - M[1, 0]
-    # N21 = N12
-    # N23 = M[0, 1] + M[1, 0]
-    # N24 = M[2, 0] + M[0, 2]
-    # N31 = N13
-    # N32 = N23
-    # N34 = M[1, 2] + M[2, 1]
-    # N41 = N14
-    # N42 = N24
-    # N43 = N34
+# N11 = M[0, 0] + M[1, 1] + M[2, 2]
+# N22 = M[0, 0] - M[1, 1] - M[2, 2]
+# N33 = -M[0, 0] + M[1, 1] - M[2, 2]
+# N44 = -M[0, 0] - M[1, 1] + M[2, 2]
+# N12 = M[1, 2] - M[2, 1]
+# N13 = M[2, 0] - M[0, 2]
+# N14 = M[0, 1] - M[1, 0]
+# N21 = N12
+# N23 = M[0, 1] + M[1, 0]
+# N24 = M[2, 0] + M[0, 2]
+# N31 = N13
+# N32 = N23
+# N34 = M[1, 2] + M[2, 1]
+# N41 = N14
+# N42 = N24
+# N43 = N34
 #
 #    N=np.matrix([[N11, N12, N13, N14],\
 #                 [N21, N22, N23, N24],\
@@ -1369,12 +1404,13 @@ import tracemalloc
 import os
 import linecache
 
+
 def display_top(top_stats, key_type='lineno', limit=10):
-#    snapshot = snapshot.filter_traces((
-#        tracemalloc.Filter(False, "<frozen importlib._bootstrap>"),
-#        tracemalloc.Filter(False, "<unknown>"),
-#    ))
-#    top_stats = snapshot.statistics(key_type, cumulative=True)
+    #    snapshot = snapshot.filter_traces((
+    #        tracemalloc.Filter(False, "<frozen importlib._bootstrap>"),
+    #        tracemalloc.Filter(False, "<unknown>"),
+    #    ))
+    #    top_stats = snapshot.statistics(key_type, cumulative=True)
 
     print("Top %s lines" % limit)
     for index, stat in enumerate(top_stats[:limit], 1):
@@ -1382,7 +1418,7 @@ def display_top(top_stats, key_type='lineno', limit=10):
         # replace "/path/to/module/file.py" with "module/file.py"
         filename = os.sep.join(frame.filename.split(os.sep)[-2:])
         print("#%s: %s:%s: %.1f MB (x%.0f)"
-              % (index, filename, frame.lineno, stat.size/1024/1024, stat.count))
+              % (index, filename, frame.lineno, stat.size / 1024 / 1024, stat.count))
         line = linecache.getline(frame.filename, frame.lineno).strip()
         if line:
             print('    %s' % line)
@@ -1390,20 +1426,20 @@ def display_top(top_stats, key_type='lineno', limit=10):
     other = top_stats[limit:]
     if other:
         size = sum(stat.size for stat in other)
-        print("%s other: %.1f MB" % (len(other), size/1024/1024))
+        print("%s other: %.1f MB" % (len(other), size / 1024 / 1024))
     total = sum(stat.size for stat in top_stats)
-    print("Total allocated size: %.1f MB" % (total/1024/1024))
+    print("Total allocated size: %.1f MB" % (total / 1024 / 1024))
 
 
 def show_progress(tot, i):
-    digits = int(math.ceil(math.log10(tot+1)))
+    digits = int(math.ceil(math.log10(tot + 1)))
     if i == 0:
         print('%s/%d' % ('0' * digits, tot), end='', flush=True)
     else:
         print(('%s%0' + str(digits) + 'd/%d') % ('\b' * (digits * 2 + 1), i + 1, tot), end='', flush=True)
 
 
-def smooth1d(xt, x, Y, weight_fun=lambda d: 0.9**abs(d)):
+def smooth1d(xt, x, Y, weight_fun=lambda d: 0.9 ** abs(d)):
     if xt.ndim != 1 or x.ndim != 1:
         raise ValueError("smooth1d only accepts 1 dimension arrays for location")
     if x.shape[0] != Y.shape[0]:
@@ -1411,6 +1447,6 @@ def smooth1d(xt, x, Y, weight_fun=lambda d: 0.9**abs(d)):
 
     D = np.repeat(np.expand_dims(xt, 1), len(x), axis=1) - np.repeat(np.expand_dims(x, 0), len(xt), axis=0)
     weights = np.array(list(map(weight_fun, D.flatten()))).reshape(D.shape)
-    Yt = np.sum(Y*weights, axis=1) / np.sum(weights, axis=1)
+    Yt = np.sum(Y * weights, axis=1) / np.sum(weights, axis=1)
 
     return Yt

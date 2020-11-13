@@ -2,9 +2,11 @@
 Based on Scipy's cookbook:
 http://scipy-cookbook.readthedocs.io/items/bundle_adjustment.html
 """
-
+import sys
+import logging
 
 import numpy as np
+
 from scipy.sparse import lil_matrix
 from scipy.optimize import least_squares
 
@@ -45,11 +47,20 @@ def bundle_adj(poses: np.ndarray, pts3d: np.ndarray, pts2d: np.ndarray,
         err = _costfun(x0, pose0, n_cams, n_pts, cam_idxs, pt3d_idxs, pts2d, K)
         print('ERR: %.4e' % (np.sum(err**2)/2))
 
+    tmp = sys.stdout
+    sys.stdout = LogWriter()
     res = least_squares(_costfun, x0, jac_sparsity=A, verbose=2, x_scale='jac', ftol=1e-4, method='trf',
                         args=(pose0, n_cams, n_pts, cam_idxs, pt3d_idxs, pts2d, K), max_nfev=max_nfev)
+    sys.stdout = tmp
 
     new_poses, new_pts3d = _optimized_params(np.hstack((pose0, res.x)), n_cams, n_pts)
     return new_poses, new_pts3d
+
+
+class LogWriter:
+    def write(self, msg):
+        if msg.strip() != '':
+            logging.info(msg)
 
 
 def _rotate(points, rot_vecs):
@@ -124,9 +135,3 @@ def _optimized_params(params, n_cams, n_pts):
     pts3d = params[n_cams * 6:].reshape((n_pts, 3))
 
     return cam_params, pts3d
-
-
-
-
-
-

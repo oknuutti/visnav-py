@@ -17,11 +17,12 @@
 
 import copy
 from datetime import datetime
+import logging
 
 import math
 
 import numpy as np
-import quaternion
+import quaternion   # adds to numpy  # noqa # pylint: disable=unused-import
 import cv2
 
 from visnav.algo import tools
@@ -217,6 +218,8 @@ class VisualOdometry:
         self.cam = cam
         self.img_width = img_width
         self.verbose = verbose
+        if verbose:
+            logging.basicConfig(level=logging.DEBUG)
         self.pause = pause
         self.cam_mx = cam.intrinsic_camera_mx()
 
@@ -333,8 +336,7 @@ class VisualOdometry:
         return copy.deepcopy(new_frame.pose.post), bias_sds, scale_sd
 
     def initialize_frame(self, time, image, prior_pose, sc_q):
-        if self.verbose:
-            print('\nnew frame')
+        logging.info('new frame')
 
         # maybe scale image
         img_sc = 1
@@ -347,8 +349,7 @@ class VisualOdometry:
         return nf
 
     def initialize(self, new_frame):
-        if self.verbose:
-            print('initializing tracking')
+        logging.info('initializing tracking')
         self.state = State()
         new_frame.pose.post = new_frame.pose.prior
         self.add_new_keyframe(new_frame)
@@ -391,8 +392,7 @@ class VisualOdometry:
             self.state.map2d[kp.id] = kp
         new_frame.ini_kp_count = len(new_frame.kps_uv)
 
-        if self.verbose:
-            print('%d new keypoints detected' % len(kp2d))
+        logging.info('%d new keypoints detected' % len(kp2d))
 
     def _asteroid_mask(self, image):
         _, mask = cv2.threshold(image, self.min_feature_intensity, 255, cv2.THRESH_BINARY)
@@ -495,8 +495,7 @@ class VisualOdometry:
                 assert False, 'invalid feature matching method'
 
             nf.kps_uv = {id: uv for id, uv in zip(ids, new_kp2d)}
-            if self.verbose:
-                print('Tracking: %d/%d' % (len(new_kp2d), len(old_kp2d)))
+            logging.info('Tracking: %d/%d' % (len(new_kp2d), len(old_kp2d)))
 
     def estimate_pose(self, new_frame):
         rf, lf, nf = self.state.keyframes[-1], self.state.last_frame, new_frame
@@ -517,13 +516,9 @@ class VisualOdometry:
                 ok, rv, r, inliers = cv2.solvePnPRansac(pts3d * self.state.scale, pts2d / nf.img_sc, self.cam_mx, None,
                                                         iterationsCount=10000, reprojectionError=8, flags=cv2.SOLVEPNP_AP3P)
 
-            if self.verbose:
-                print('PnP: %d/%d' % (0 if inliers is None else len(inliers), len(pts2d)), end='')
+            logging.info('PnP: %d/%d' % (0 if inliers is None else len(inliers), len(pts2d)))
 
             if ok and len(inliers) > self.min_inliers and len(inliers)/len(pts3d) > self.min_inlier_ratio:
-                if self.verbose:
-                    print('')  # finish printed line
-
                 q = tools.angleaxis_to_q(rv)
                 if self.est_cam_pose:
                     q = q.conj()                    # solvepnp returns orientation of system origin vs camera (!)
@@ -556,17 +551,13 @@ class VisualOdometry:
                 method = VisualOdometry.POSE_RANSAC_3D
 
             elif inliers is None:
-                if self.verbose:
-                    print(' => Too few 3D points matched for reliable pose estimation')
+                logging.info(' => Too few 3D points matched for reliable pose estimation')
             elif len(inliers) < self.min_inliers:
-                if self.verbose:
-                    print(' => PnP was left with too few inliers')
+                logging.info(' => PnP was left with too few inliers')
             elif len(inliers)/len(pts3d) < self.min_inlier_ratio:
-                if self.verbose:
-                    print(' => PnP too few inliers compared to total matches')
+                logging.info(' => PnP too few inliers compared to total matches')
             else:
-                if self.verbose:
-                    print(' => PnP Failed')
+                logging.info(' => PnP Failed')
 
         if (self.use_scale_correction or not self.state.first_result_given) \
                 and (dr is None or
@@ -585,13 +576,11 @@ class VisualOdometry:
                 # solve pose using ransac & 5-point algo
                 E, mask2 = cv2.findEssentialMat(old_kp2d / rf.img_sc, new_kp2d / nf.img_sc, self.cam_mx,
                                                 method=cv2.RANSAC, prob=0.999, threshold=1.0)
-                if self.verbose:
-                    print('E-mat: %d/%d' % (np.sum(mask2), len(old_kp2d)))
+                logging.info('E-mat: %d/%d' % (np.sum(mask2), len(old_kp2d)))
 
                 if np.sum(mask2) > self.min_2d2d_inliers:
                     _, R, ur, mask = cv2.recoverPose(E, old_kp2d / rf.img_sc, new_kp2d / nf.img_sc, self.cam_mx, mask=mask2.copy())
-                    if self.verbose:
-                        print('E=>R: %d/%d' % (np.sum(mask), np.sum(mask2)))
+                    logging.info('E=>R: %d/%d' % (np.sum(mask), np.sum(mask2)))
 
             # TODO: (3) implement pure rotation estimation as a fallback as E can't solve for that
 
@@ -636,21 +625,21 @@ class VisualOdometry:
             nf.pose.method = method
             self.state.last_success_time = nf.time
 
+        if dr is not None and dq is not None:
+            self._log_pose_diff('prior->post', nf.pose.prior.loc, nf.pose.prior.quat, nf.pose.post.loc, nf.pose.post.quat)
+            # self._log_pose_diff('prior', lf.pose.prior.loc, lf.pose.prior.quat, nf.pose.prior.loc, nf.pose.prior.quat)
+            # if lf.pose.post is not None:
+            #     self._log_pose_diff('poste', lf.pose.post.loc, lf.pose.post.quat, nf.pose.post.loc, nf.pose.post.quat)
+            # else:
+            #     self._log_pose_diff('pstrf', lf.pose.prior.loc, lf.pose.prior.quat, nf.pose.post.loc, nf.pose.post.quat)
         if self.verbose:
-            if dr is not None and dq is not None:
-                self._print_pose_diff('prior->post', nf.pose.prior.loc, nf.pose.prior.quat, nf.pose.post.loc, nf.pose.post.quat)
-                # self._print_pose_diff('prior', lf.pose.prior.loc, lf.pose.prior.quat, nf.pose.prior.loc, nf.pose.prior.quat)
-                # if lf.pose.post is not None:
-                #     self._print_pose_diff('poste', lf.pose.post.loc, lf.pose.post.quat, nf.pose.post.loc, nf.pose.post.quat)
-                # else:
-                #     self._print_pose_diff('pstrf', lf.pose.prior.loc, lf.pose.prior.quat, nf.pose.post.loc, nf.pose.post.quat)
             self._draw_tracks(nf, pause=self.pause)
             self._draw_pts3d(nf, pause=self.pause)
 
-    def _print_pose_diff(self, title, r0, q0, r1, q1):
+    def _log_pose_diff(self, title, r0, q0, r1, q1):
         dr = r1 - r0
         dq = q1 * q0.conj()
-        print(title + ' dq: ' + ' '.join(['%.3fdeg' % math.degrees(a) for a in tools.q_to_ypr(dq)])
+        logging.info(title + ' dq: ' + ' '.join(['%.3fdeg' % math.degrees(a) for a in tools.q_to_ypr(dq)])
               + '   dv: ' + ' '.join(['%.3fm' % a for a in dr]))
 
     def is_new_keyframe(self, new_frame):
@@ -793,13 +782,10 @@ class VisualOdometry:
             kp.pt3d = pt3d
             self.state.map3d[kp_id] = kp
 
-        if self.verbose:
-            print('%d keypoints triangulated' % len(tr_kps))
+        logging.info('%d keypoints triangulated' % len(tr_kps))
 
     def bundle_adjustment(self, max_keyframes=None):
-        if self.verbose:
-            print('starting bundle adjustment')
-
+        logging.info('starting bundle adjustment')
         max_keyframes = max_keyframes or len(self.state.keyframes)
 
         tmp = [
@@ -878,8 +864,7 @@ class VisualOdometry:
                 npt3d = tools.q_times_v(bq, npt3d - r0) + r0
             self.state.map3d[ids[i]].pt3d = (npt3d if ADJUST else pt3d) / self.state.scale
 
-        if self.verbose:
-            print('bundle adjustment complete')
+        logging.info('bundle adjustment complete')
 
     def is_maintenance_time(self):
         return self.state.keyframes[-1].id % self.ba_interval == 0
@@ -902,8 +887,7 @@ class VisualOdometry:
         self.state.keyframes = self.state.keyframes[-self.max_keyframes:]
         # no need to remove 3d points as currently only those are retained that can be tracked
         # no need to transform poses or 3d points as basis is the absolute pose
-        if self.verbose:
-            print('%d keyframes dropped' % len(rem_kfs))
+        logging.info('%d keyframes dropped' % len(rem_kfs))
 
     def prune_map3d(self):
         rem = []
@@ -916,8 +900,7 @@ class VisualOdometry:
                 rem.append(kp.id)
         for id in rem:
             self.del_keypoint(id)
-        if self.verbose:
-            print('%d 3d keypoints discarded' % len(rem))
+        logging.info('%d 3d keypoints discarded' % len(rem))
 
     def del_keypoint(self, id):
         self.state.map2d.pop(id, False)

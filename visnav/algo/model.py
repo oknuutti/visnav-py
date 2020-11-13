@@ -6,7 +6,7 @@ from functools import lru_cache
 from math import degrees as deg, radians as rad
 
 import numpy as np
-import quaternion # adds to numpy
+import quaternion  # adds to numpy  # noqa # pylint: disable=unused-import
 from astropy.time import Time
 from astropy import constants as const
 from astropy import units
@@ -32,7 +32,7 @@ class Parameter():
         self.change_callback = None
         self.fire_change_events = True
         self.debug = False
-    
+
     @property
     def range(self):
         return (self._min_val, self._max_val)
@@ -55,12 +55,12 @@ class Parameter():
     @property
     def scale(self):
         return abs(self._max_val - self._min_val)
-    
+
     @property
     def def_val(self):
-        return (self._min_val + self._max_val)/2 \
-                if self._def_val is None \
-                else self._def_val
+        return (self._min_val + self._max_val) / 2 \
+            if self._def_val is None \
+            else self._def_val
 
     @def_val.setter
     def def_val(self, def_val):
@@ -74,38 +74,38 @@ class Parameter():
     def value(self, value):
         self._value = value
         if self.debug:
-            print('o: %s, n: %s'%(self._value, value), flush=True)
+            print('o: %s, n: %s' % (self._value, value), flush=True)
 
         # NOTE: need fine rtol as time is in seconds (e.g. 1407258438)
         if not np.isclose(self._value, value, rtol=1e-9):
             if self.debug:
-                print('value set: %s'%self._value, flush=True)
+                print('value set: %s' % self._value, flush=True)
             if self.fire_change_events:
                 try:
                     self.change_callback(value)
                 except TypeError:
                     pass
-    
+
     @property
     def nvalue(self):
         if self.is_gl_z:
-            scale = abs(1/self._min_val - 1/self._max_val)
-            offset = (1/self._min_val + 1/self._max_val)/2
-            return (-1/(self._value or 1e-6) + offset)/scale
-        return (self._value - self.def_val)/self.scale
-    
+            scale = abs(1 / self._min_val - 1 / self._max_val)
+            offset = (1 / self._min_val + 1 / self._max_val) / 2
+            return (-1 / (self._value or 1e-6) + offset) / scale
+        return (self._value - self.def_val) / self.scale
+
     @nvalue.setter
     def nvalue(self, nvalue):
         if self.is_gl_z:
-            scale = abs(1/self._min_val - 1/self._max_val)
-            offset = (1/self._min_val + 1/self._max_val)/2
-            self.value = -1/((nvalue or 1e-6)*scale - offset)
+            scale = abs(1 / self._min_val - 1 / self._max_val)
+            offset = (1 / self._min_val + 1 / self._max_val) / 2
+            self.value = -1 / ((nvalue or 1e-6) * scale - offset)
         else:
-            self.value = nvalue*self.scale + self.def_val
-    
+            self.value = nvalue * self.scale + self.def_val
+
     def valid(self):
         return self._value >= self._min_val and self._value < self._max_val
-    
+
     def __str__(self):
         return '%.2f (%.2f) in [%.2f, %.2f]' % (
             self._value,
@@ -113,7 +113,7 @@ class Parameter():
             self._min_val,
             self._max_val,
         )
-    
+
 
 class SystemModel(ABC):
     (
@@ -122,13 +122,13 @@ class SystemModel(ABC):
         ASTEROID_FRAME,
         OPENCV_FRAME,
     ) = range(4)
-    
+
     # from sc cam frame (axis: +x, up: +z) to opengl (axis -z, up: +y)
     sc2gl_q = np.quaternion(0.5, 0.5, -0.5, -0.5)
 
     # from opencv cam frame (axis: +z, up: -y) to opengl (axis -z, up: +y)
     cv2gl_q = np.quaternion(0, 1, 0, 0)
-    
+
     def __init__(self, asteroid, camera, limits, *args, **kwargs):
         super(SystemModel, self).__init__()
 
@@ -146,29 +146,31 @@ class SystemModel(ABC):
         ) = limits
 
         assert self.min_altitude > 0, \
-            'min distance %.2fkm too small, possible collision as asteroid max_radius=%.0fm'%(self.min_distance, self.asteroid.max_radius)
+            'min distance %.2fkm too small, possible collision as asteroid max_radius=%.0fm' % (
+            self.min_distance, self.asteroid.max_radius)
 
-        self.mission_id = None      # overridden by particular missions
+        self.mission_id = None  # overridden by particular missions
         self.view_width = VIEW_WIDTH
 
         # spacecraft position relative to asteroid, z towards spacecraft,
         #   x towards right when looking out from s/c camera, y up
         self.x_off = Parameter(-4, 4, estimate=False)
         self.y_off = Parameter(-4, 4, estimate=False)
-        
+
         # whole view: 1.65km/tan(2.5deg) = 38km
         # can span ~30px: 1.65km/tan(2.5deg * 30/1024) = 1290km
-        self.z_off = Parameter(-self.max_distance, -self.min_distance, def_val=-self.min_med_distance, is_gl_z=True) # was 120, 220
+        self.z_off = Parameter(-self.max_distance, -self.min_distance, def_val=-self.min_med_distance,
+                               is_gl_z=True)  # was 120, 220
 
         # spacecraft orientation relative to stars
-        self.x_rot = Parameter(-90, 90, estimate=False) # axis latitude
-        self.y_rot = Parameter(-180, 180, estimate=False) # axis longitude
-        self.z_rot = Parameter(-180, 180, estimate=False) # rotation
+        self.x_rot = Parameter(-90, 90, estimate=False)  # axis latitude
+        self.y_rot = Parameter(-180, 180, estimate=False)  # axis longitude
+        self.z_rot = Parameter(-180, 180, estimate=False)  # rotation
 
         # asteroid zero orientation relative to stars
-        self.ast_x_rot = Parameter(-90, 90, estimate=False) # axis latitude
-        self.ast_y_rot = Parameter(-180, 180, estimate=False) # axis longitude
-        self.ast_z_rot = Parameter(-180, 180, estimate=False) # rotation
+        self.ast_x_rot = Parameter(-90, 90, estimate=False)  # axis latitude
+        self.ast_y_rot = Parameter(-180, 180, estimate=False)  # axis longitude
+        self.ast_z_rot = Parameter(-180, 180, estimate=False)  # rotation
         self.asteroid_rotation_from_model()
 
         # time in seconds since 1970-01-01 00:00:00
@@ -180,37 +182,36 @@ class SystemModel(ABC):
 
         # history of states accumulated by using propagate()
         self.state_history = []
-        
+
         # override any default params
         for n, v in kwargs.items():
             setattr(self, n, v)
-        
+
         # set default values to params
         for n, p in self.get_params():
             p.value = p.def_val
 
-
     @property
     def min_altitude(self):
         """ in km """
-        return self.min_distance - self.asteroid.max_radius/1000
+        return self.min_distance - self.asteroid.max_radius / 1000
 
     @property
     def view_height(self):
-        return int(self.cam.height * self.view_width/self.cam.width)
+        return int(self.cam.height * self.view_width / self.cam.width)
 
     def get_params(self, all=False):
         return (
             (n, getattr(self, n))
             for n in sorted(self.__dict__)
             if isinstance(getattr(self, n), Parameter)
-                and (all or getattr(self, n).estimate)
+               and (all or getattr(self, n).estimate)
         )
-        
+
     def param_change_events(self, enabled):
         for n, p in self.get_params(all=True):
             p.fire_change_events = enabled
-    
+
     @property
     def spacecraft_pos(self):
         return self.x_off.value, self.y_off.value, self.z_off.value
@@ -237,7 +238,7 @@ class SystemModel(ABC):
     @property
     def asteroid_axis(self):
         return self.ast_x_rot.value, self.ast_y_rot.value, self.ast_z_rot.value
-    
+
     @asteroid_axis.setter
     def asteroid_axis(self, r):
         self.ast_x_rot.value, self.ast_y_rot.value, self.ast_z_rot.value = r
@@ -245,7 +246,7 @@ class SystemModel(ABC):
 
     @property
     def spacecraft_dist(self):
-        return math.sqrt(sum(x**2 for x in self.spacecraft_pos))
+        return math.sqrt(sum(x ** 2 for x in self.spacecraft_pos))
 
     @property
     def spacecraft_altitude(self):
@@ -273,12 +274,13 @@ class SystemModel(ABC):
 
     def pixel_extent(self, distance=None):
         distance = abs(self.z_off) if distance is None else distance
-        return self.cam.width * math.atan(self.asteroid.mean_radius/1000/distance)*2 / math.radians(self.cam.x_fov)
+        return self.cam.width * math.atan(self.asteroid.mean_radius / 1000 / distance) * 2 / math.radians(
+            self.cam.x_fov)
 
     @property
     def real_spacecraft_pos(self):
         return self.x_off.real_value, self.y_off.real_value, self.z_off.real_value
-    
+
     @real_spacecraft_pos.setter
     def real_spacecraft_pos(self, rv):
         self.x_off.real_value, self.y_off.real_value, self.z_off.real_value = rv
@@ -286,7 +288,7 @@ class SystemModel(ABC):
     @property
     def real_spacecraft_rot(self):
         return self.x_rot.real_value, self.y_rot.real_value, self.z_rot.real_value
-    
+
     @real_spacecraft_rot.setter
     def real_spacecraft_rot(self, rv):
         self.x_rot.real_value, self.y_rot.real_value, self.z_rot.real_value = rv
@@ -294,7 +296,7 @@ class SystemModel(ABC):
     @property
     def real_asteroid_axis(self):
         return self.ast_x_rot.real_value, self.ast_y_rot.real_value, self.ast_z_rot.real_value
-    
+
     @real_asteroid_axis.setter
     def real_asteroid_axis(self, rv):
         self.ast_x_rot.real_value, self.ast_y_rot.real_value, self.ast_z_rot.real_value = rv
@@ -302,8 +304,8 @@ class SystemModel(ABC):
     @property
     def spacecraft_q(self):
         return tools.ypr_to_q(*list(map(
-                math.radians,
-                (self.x_rot.value, self.y_rot.value, self.z_rot.value)
+            math.radians,
+            (self.x_rot.value, self.y_rot.value, self.z_rot.value)
         )))
 
     @spacecraft_q.setter
@@ -314,8 +316,8 @@ class SystemModel(ABC):
     @property
     def real_spacecraft_q(self):
         return tools.ypr_to_q(*list(map(
-                math.radians,
-                (self.x_rot.real_value, self.y_rot.real_value, self.z_rot.real_value)
+            math.radians,
+            (self.x_rot.real_value, self.y_rot.real_value, self.z_rot.real_value)
         )))
 
     @real_spacecraft_q.setter
@@ -364,28 +366,26 @@ class SystemModel(ABC):
             qq, _ = tools.discretize_q(sc_ast_rel_q, discretize_tol)
             err_q = sc_ast_rel_q * qq.conj()
             sc_ast_rel_q = qq
-        
+
         if not BATCH_MODE and DEBUG:
-            print('asteroid x-axis: %s'%tools.q_times_v(sc_ast_rel_q, np.array([1, 0, 0])))
-        
+            print('asteroid x-axis: %s' % tools.q_times_v(sc_ast_rel_q, np.array([1, 0, 0])))
+
         return sc_ast_rel_q, err_q if discretize_tol else False
-    
-    
+
     def sc_asteroid_rel_q(self, time=None):
         """ rotation of asteroid relative to spacecraft in spacecraft coords """
         ast_q = self.asteroid.rotation_q(time or self.time.value)
         sc_q = self.spacecraft_q
         return sc_q.conj() * ast_q
 
-
     def real_sc_asteroid_rel_q(self):
         org_sc_rot = self.spacecraft_rot
         org_ast_axis = self.asteroid_axis
         self.spacecraft_rot = self.real_spacecraft_rot
         self.asteroid_axis = self.real_asteroid_axis
-        
+
         q_tot = self.sc_asteroid_rel_q(time=self.time.real_value)
-        
+
         self.spacecraft_rot = org_sc_rot
         self.asteroid_axis = org_ast_axis
         return q_tot
@@ -410,13 +410,13 @@ class SystemModel(ABC):
 
     def reset_to_real_vals(self):
         for n, p in self.get_params(True):
-            assert p.real_value is not None, 'real value missing for %s'%n
+            assert p.real_value is not None, 'real value missing for %s' % n
             p.value = p.real_value
 
     def swap_values_with_real_vals(self):
         for n, p in self.get_params(True):
-            assert p.real_value is not None, 'real value missing for %s'%n
-            assert p.value is not None, 'current value missing %s'%n
+            assert p.real_value is not None, 'real value missing for %s' % n
+            assert p.value is not None, 'current value missing %s' % n
             tmp = p.value
             p.value = p.real_value
             p.real_value = tmp
@@ -427,8 +427,7 @@ class SystemModel(ABC):
         target_vertices = self.sc_asteroid_vertices()
         self.swap_values_with_real_vals()
         return tools.sc_asteroid_max_shift_error(est_vertices, target_vertices)
-    
-    
+
     def sc_asteroid_vertices(self, real=False):
         """ asteroid vertices rotated and translated to spacecraft frame """
         if self.asteroid.real_shape_model is None:
@@ -436,9 +435,9 @@ class SystemModel(ABC):
 
         sc_ast_q = self.real_sc_asteroid_rel_q() if real else self.sc_asteroid_rel_q()
         sc_pos = self.real_spacecraft_pos if real else self.spacecraft_pos
-        
+
         return tools.q_times_mx(sc_ast_q, np.array(self.asteroid.real_shape_model.vertices)) + sc_pos
-    
+
     def gl_light_rel_dir(self, err_q=False, discretize_tol=False):
         """ direction of light relative to spacecraft in opengl coords """
         assert not discretize_tol, 'discretize_tol deprecated at gl_light_rel_dir function'
@@ -450,7 +449,8 @@ class SystemModel(ABC):
 
         # new way to discretize light, consistent with real fdb inplementation
         if discretize_tol:
-            dlv, _ = tools.discretize_v(light_gl_v, discretize_tol, lat_range=(-math.pi/2, math.radians(90 - self.min_elong)))
+            dlv, _ = tools.discretize_v(light_gl_v, discretize_tol,
+                                        lat_range=(-math.pi / 2, math.radians(90 - self.min_elong)))
             err_angle = tools.angle_between_v(light_gl_v, dlv)
             light_gl_v = dlv
 
@@ -472,7 +472,7 @@ class SystemModel(ABC):
             err_angle = tools.angle_between_v(light_ast_v, dlv)
             light_v = tools.q_times_v(ast_q, dlv)
 
-        return tools.q_times_v(err_q.conj() * sc_q.conj(), light_v),\
+        return tools.q_times_v(err_q.conj() * sc_q.conj(), light_v), \
                err_angle if discretize_tol else False
 
     def solar_elongation(self, real=False):
@@ -483,17 +483,16 @@ class SystemModel(ABC):
             print('elong: %.3f | dir: %.3f' % (
                 math.degrees(elong), math.degrees(direc)))
         return elong, direc
-    
-    
+
     def rel_rot_err(self):
         return tools.angle_between_q(
             self.sc_asteroid_rel_q(),
             self.real_sc_asteroid_rel_q())
-    
+
     def lat_pos_err(self):
         real_pos = self.real_spacecraft_pos
         err = np.subtract(self.spacecraft_pos, real_pos)
-        return math.sqrt(err[0]**2 + err[1]**2) / abs(real_pos[2])
+        return math.sqrt(err[0] ** 2 + err[1] ** 2) / abs(real_pos[2])
 
     def dist_pos_err(self):
         real_d = self.real_spacecraft_pos[2]
@@ -525,7 +524,8 @@ class SystemModel(ABC):
     def get_system_scf(self):
         sc_ast_lf_r = tools.q_times_v(SystemModel.sc2gl_q, self.spacecraft_pos)
         sc_ast_lf_q = self.spacecraft_q.conj() * self.asteroid.rotation_q(self.time.value)
-        ast_sun_lf_u = tools.q_times_v(self.spacecraft_q.conj(), -tools.normalize_v(self.asteroid.position(self.time.value)))
+        ast_sun_lf_u = tools.q_times_v(self.spacecraft_q.conj(),
+                                       -tools.normalize_v(self.asteroid.position(self.time.value)))
         return sc_ast_lf_r, sc_ast_lf_q, ast_sun_lf_u
 
     def get_cropped_system_scf(self, x, y, w, h):
@@ -553,7 +553,7 @@ class SystemModel(ABC):
 
         # adjust and set rotation
         if rotate_sc:
-            self.spacecraft_q = self.asteroid_q * dq * sc_ast_lf_q.conj()     # TODO: check that valid
+            self.spacecraft_q = self.asteroid_q * dq * sc_ast_lf_q.conj()  # TODO: check that valid
         else:
             self.asteroid_q = self.spacecraft_q * dq * sc_ast_lf_q
 
@@ -690,8 +690,8 @@ class SystemModel(ABC):
             ast_sc_v = tools.q_times_v(sc_q, self.spacecraft_pos)
             sun_ast_v = self.asteroid.position(self.time.value)
 
-            lines.append((t,) + tuple('%f'%f for f in (tuple(ast_q.components) + tuple(sc_q.components)
-                      + tuple(ast_sc_v) + tuple(sun_ast_v))))
+            lines.append((t,) + tuple('%f' % f for f in (tuple(ast_q.components) + tuple(sc_q.components)
+                                                         + tuple(ast_sc_v) + tuple(sun_ast_v))))
             self.swap_values_with_real_vals()
 
         with open(filename, 'w') as f:
@@ -707,13 +707,13 @@ class SystemModel(ABC):
 
     def save_state(self, filename, printout=False):
         config = configparser.ConfigParser()
-        filename = filename+('.lbl' if len(filename)<5 or filename[-4:]!='.lbl' else '')
+        filename = filename + ('.lbl' if len(filename) < 5 or filename[-4:] != '.lbl' else '')
         config.read(filename)
         if not config.has_section('main'):
             config.add_section('main')
         if not config.has_section('real'):
             config.add_section('real')
-        
+
         for n, p in self.get_params(all=True):
             config.set('main', n, str(p.value))
             if p.real_value is not None:
@@ -727,7 +727,7 @@ class SystemModel(ABC):
                 config.write(f)
         else:
             config.write(sys.stdout)
-    
+
     def load_state(self, filename, sc_ast_vertices=False):
         if not os.path.isfile(filename):
             raise FileNotFoundError(filename)
@@ -735,54 +735,54 @@ class SystemModel(ABC):
         self.asteroid.reset_to_defaults()
 
         config = configparser.ConfigParser()
-        filename = filename+('.lbl' if len(filename)<5 or filename[-4:]!='.lbl' else '')
+        filename = filename + ('.lbl' if len(filename) < 5 or filename[-4:] != '.lbl' else '')
         config.read(filename)
-        
+
         for n, p in self.get_params(all=True):
             v = float(config.get('main', n))
             if n == 'time':
                 rp = self.asteroid.rotation_period
-                p.range = (v-rp/2, v+rp/2)
+                p.range = (v - rp / 2, v + rp / 2)
             p.value = v
-            
+
             rv = config.get('real', n, fallback=None)
             if rv is not None:
                 p.real_value = float(rv)
-        
+
         rv = config.get('real', 'sun_asteroid_pos', fallback=None)
         if rv is not None:
             self.asteroid.real_position = np.fromstring(rv[1:-1], dtype=np.float, sep=' ')
-        
+
         assert np.isclose(self.time.value, float(config.get('main', 'time'))), \
-               'Failed to set time value: %s vs %s'%(self.time.value, float(config.get('main', 'time')))
-               
+            'Failed to set time value: %s vs %s' % (self.time.value, float(config.get('main', 'time')))
+
         self.update_asteroid_model()
-        
+
         if sc_ast_vertices:
             # get real relative position of asteroid model vertices
             self.asteroid.real_sc_ast_vertices = self.sc_asteroid_vertices(real=True)
-    
+
     @staticmethod
     def frm_conv_q(fsrc, fdst, ast=None):
         fqm = {
-            SystemModel.OPENGL_FRAME:np.quaternion(1,0,0,0),
-            SystemModel.OPENCV_FRAME:SystemModel.cv2gl_q,
-            SystemModel.SPACECRAFT_FRAME:SystemModel.sc2gl_q,
-            SystemModel.ASTEROID_FRAME: None if ast is None else ast.ast2sc_q*SystemModel.sc2gl_q,
+            SystemModel.OPENGL_FRAME: np.quaternion(1, 0, 0, 0),
+            SystemModel.OPENCV_FRAME: SystemModel.cv2gl_q,
+            SystemModel.SPACECRAFT_FRAME: SystemModel.sc2gl_q,
+            SystemModel.ASTEROID_FRAME: None if ast is None else ast.ast2sc_q * SystemModel.sc2gl_q,
         }
-        return fqm[fsrc]*fqm[fdst].conj()
+        return fqm[fsrc] * fqm[fdst].conj()
 
     def __repr__(self):
         return (
-              'system state:\n\t%s\n'
-            + '\nsolar elongation: %s\n'
-            + '\nasteroid rotation: %.2f\n'
-        ) % (
-            '\n\t'.join('%s = %s'%(n, p) for n, p in self.get_params(all=True)), 
-            tuple(map(math.degrees, self.solar_elongation())),
-            math.degrees(self.asteroid.rotation_theta(self.time.value)),
-        )
-        
+                       'system state:\n\t%s\n'
+                       + '\nsolar elongation: %s\n'
+                       + '\nasteroid rotation: %.2f\n'
+               ) % (
+                   '\n\t'.join('%s = %s' % (n, p) for n, p in self.get_params(all=True)),
+                   tuple(map(math.degrees, self.solar_elongation())),
+                   math.degrees(self.asteroid.rotation_theta(self.time.value)),
+               )
+
 
 class Camera:
     def __init__(self, width, height, x_fov=None, y_fov=None,
@@ -802,7 +802,7 @@ class Camera:
         self.sensor_height = None
         self.f_stop = None
         self.aperture = None
-        self.dist_coefs = dist_coefs   # np.zeros(12) if dist_coefs is None else dist_coefs
+        self.dist_coefs = dist_coefs  # np.zeros(12) if dist_coefs is None else dist_coefs
 
         self.emp_coef = emp_coef
         self.px_saturation_e = px_saturation_e
@@ -811,12 +811,12 @@ class Camera:
         self.lambda_max = lambda_max
         if quantum_eff is not None:
             assert qeff_coefs is None, 'quantum_eff only for backward support, remove it if you give qeff_coefs'
-            self.qeff_coefs = [quantum_eff]    # use a GP with N equally spaced points for spectral response curve
+            self.qeff_coefs = [quantum_eff]  # use a GP with N equally spaced points for spectral response curve
         else:
             self.qeff_coefs = qeff_coefs
-        self.dark_noise_mu = dark_noise_mu or 250/1e5 * self.px_saturation_e
-        self.dark_noise_sd = dark_noise_sd or 60/1e5 * self.px_saturation_e
-        self.readout_noise_sd = readout_noise_sd or 2/1e5 * self.px_saturation_e
+        self.dark_noise_mu = dark_noise_mu or 250 / 1e5 * self.px_saturation_e
+        self.dark_noise_sd = dark_noise_sd or 60 / 1e5 * self.px_saturation_e
+        self.readout_noise_sd = readout_noise_sd or 2 / 1e5 * self.px_saturation_e
         self.gain = None
         self.point_spread_fn = point_spread_fn
         self.scattering_coef = scattering_coef
@@ -829,7 +829,7 @@ class Camera:
         assert sensor_size is None or x_fov is None or focal_length is None, 'give only two of sensor_size, focal_length and fov'
 
         if sensor_size is not None:
-            sw, sh = sensor_size    # in mm
+            sw, sh = sensor_size  # in mm
             self.sensor_width = sw
             self.sensor_height = sh
             if x_fov is not None:
@@ -846,7 +846,7 @@ class Camera:
                 self.sensor_height = math.tan(math.radians(y_fov) / 2) * 2 * focal_length
 
         if self.focal_length is not None:
-            self.pixel_size = 1e3*min(self.sensor_width/self.width, self.sensor_height/self.width)  # in um
+            self.pixel_size = 1e3 * min(self.sensor_width / self.width, self.sensor_height / self.width)  # in um
             if f_stop is not None:
                 self.f_stop = f_stop
                 self.aperture = self.focal_length / f_stop
@@ -865,13 +865,13 @@ class Camera:
         #   \Omega=2\pi- \sum_{j=1}^{n} \arg [&(\vec{s}_{j-1} \cdot \vec{s}_{j})(\vec{s}_{j} \cdot \vec{s}_{j+1})
         #   -(\vec{s}_{j-1} \cdot \vec{s}_{j+1})+i(\vec{s}_{j-1} \cdot (\vec{s}_{j} \times \vec{s}_{j+1}))]
 
-        x0 = self.width/2
-        y0 = self.height/2
-        pw = self.sensor_width/self.width
-        ph = self.sensor_height/self.height
+        x0 = self.width / 2
+        y0 = self.height / 2
+        pw = self.sensor_width / self.width
+        ph = self.sensor_height / self.height
 
         # distance of image plane from projection point
-        dz = self.sensor_width/2 / math.tan(math.radians(self.x_fov/2))
+        dz = self.sensor_width / 2 / math.tan(math.radians(self.x_fov / 2))
 
         # edges of the projected pixel onto the unit circle, distances in mm
         # counter clockwise order, otherwise get whole sphere with px area removed
@@ -887,9 +887,9 @@ class Camera:
         s = lambda j: edges[(j + n) % n]
 
         # calculations inside the product operator
-        tmp = [s(j-1).dot(s(j)) * s(j).dot(s(j+1))
-               - s(j-1).dot(s(j+1))
-               + 1j * s(j-1).dot(np.cross(s(j), s(j+1)))
+        tmp = [s(j - 1).dot(s(j)) * s(j).dot(s(j + 1))
+               - s(j - 1).dot(s(j + 1))
+               + 1j * s(j - 1).dot(np.cross(s(j), s(j + 1)))
                for j in range(n)]
 
         if 1:
@@ -899,7 +899,7 @@ class Camera:
             # in Mazonka 2012 the identity (23) "sum(arg(z_j)) == arg(prod(z_j)" seems flawed,
             # at least could not make it work on numpy as the different sides give different answers,
             # if skip the identity (23), then all seems to work fine
-            Omega = 2*np.pi - np.sum(np.angle(tmp))
+            Omega = 2 * np.pi - np.sum(np.angle(tmp))
         else:
             # Curiously, seems that at least sometimes sum(arg(z_j)) == arg(prod(z_j) + 2*pi
             Omega = - np.angle(np.prod(tmp))
@@ -908,7 +908,7 @@ class Camera:
 
     @property
     def aperture_area(self):
-        return np.pi * (self.aperture*1e-3/2)**2
+        return np.pi * (self.aperture * 1e-3 / 2) ** 2
 
     @property
     def sensitivity(self):
@@ -916,15 +916,16 @@ class Camera:
 
     @property
     def px_sr(self):
+        # better use more accurate pixel_solid_angle(x, y) instead, if possible
         return math.radians(self.x_fov) / self.width * math.radians(self.y_fov) / self.height
 
     @property
     def def_exposure(self):
-        return min(2e5/self.sensitivity, 5)
+        return min(2e5 / self.sensitivity, 5)
 
     @property
     def def_gain(self):
-        return 2e5/(self.def_exposure * self.sensitivity)
+        return 2e5 / (self.def_exposure * self.sensitivity)
 
     @property
     def electrons_per_solar_irradiance(self):
@@ -933,7 +934,7 @@ class Camera:
     @staticmethod
     def level_to_exp_gain(level, exp_range):
         exp = 0.001 * np.floor(np.clip(level, *exp_range) * 1000)
-        gain = 0.001 * np.floor(max(1, level/exp) * 1000)
+        gain = 0.001 * np.floor(max(1, level / exp) * 1000)
         return exp, gain
 
     # @staticmethod
@@ -947,7 +948,8 @@ class Camera:
 
     @staticmethod
     def qeff_fn_lams(lambda_min, lambda_max, n, endpoints=True):
-        return np.linspace(lambda_min, lambda_max, n+(0 if endpoints else 1), endpoint=endpoints)[(0 if endpoints else 1):]
+        return np.linspace(lambda_min, lambda_max, n + (0 if endpoints else 1), endpoint=endpoints)[
+               (0 if endpoints else 1):]
 
     @staticmethod
     @lru_cache(maxsize=100)
@@ -994,7 +996,9 @@ class Camera:
             def qeff_fn(lam):
                 X = np.array(lam).reshape((-1, 1))
                 len_sc = (lambda_max - lambda_min) / (n - 1)
-                y = np.sinc((np.repeat(X, len(x_tr), axis=1) - np.repeat(x_tr.reshape((1, -1)), len(X), axis=0)) / len_sc).dot(y_tr)
+                y = np.sinc(
+                    (np.repeat(X, len(x_tr), axis=1) - np.repeat(x_tr.reshape((1, -1)), len(X), axis=0)) / len_sc).dot(
+                    y_tr)
                 return np.clip(y.flatten(), 0, np.inf)
 
             lml = -(np.mean(y_tr) + np.mean(np.abs(np.diff(y_tr)))) * 10
@@ -1004,8 +1008,8 @@ class Camera:
                 X = np.array(lam).reshape((-1, 1))
                 len_sc = (lambda_max - lambda_min) / (n - 1) * 0.5
                 d = (np.repeat(X, len(x_tr), axis=1) - np.repeat(x_tr.reshape((1, -1)), len(X), axis=0))
-                w = np.exp(-0.5*(d/len_sc)**2)
-                y = (w/np.sum(w, axis=1).reshape((-1, 1))).dot(y_tr)
+                w = np.exp(-0.5 * (d / len_sc) ** 2)
+                y = (w / np.sum(w, axis=1).reshape((-1, 1))).dot(y_tr)
                 return np.clip(y.flatten(), 0, np.inf)
 
             lml = -(np.mean(y_tr) + np.mean(np.abs(np.diff(y_tr)))) * 10
@@ -1013,13 +1017,14 @@ class Camera:
             from scipy.interpolate import interp1d
             # method can be 'linear', 'nearest', 'zero', 'slinear', 'quadratic', 'cubic',
             #               'previous', 'next', where 'zero', 'slinear', 'quadratic' or 'cubic'
-            tmp_fn = interp1d(np.flip(x_tr), np.flip(y_tr), kind=method, bounds_error=False, fill_value='extrapolate', assume_sorted=True)
+            tmp_fn = interp1d(np.flip(x_tr), np.flip(y_tr), kind=method, bounds_error=False, fill_value='extrapolate',
+                              assume_sorted=True)
             qeff_fn = lambda lam: np.clip(tmp_fn(lam), 0, np.inf)
-            lml = -(np.mean(y_tr) + np.mean(np.abs(np.diff(y_tr))))*10
+            lml = -(np.mean(y_tr) + np.mean(np.abs(np.diff(y_tr)))) * 10
 
         if debug:
             import matplotlib.pyplot as plt
-            x = np.linspace(lambda_min, lambda_max, (n-1)*10)
+            x = np.linspace(lambda_min, lambda_max, (n - 1) * 10)
             y = qeff_fn(x)
             plt.plot(x, y)
             plt.plot(x_tr, y_tr, 'x')
@@ -1033,13 +1038,13 @@ class Camera:
 
         y_tr = np.array(self.qeff_coefs)
         x_tr = Camera.qeff_fn_lams(self.lambda_min, self.lambda_max, len(self.qeff_coefs))
-        x = np.linspace(self.lambda_min, self.lambda_max, len(self.qeff_coefs)*10)
+        x = np.linspace(self.lambda_min, self.lambda_max, len(self.qeff_coefs) * 10)
         y = qeff_fn(x)
 
         ax = ax or plt
-        ax.plot(x*1e9, y*100, label=label, **kwargs)
+        ax.plot(x * 1e9, y * 100, label=label, **kwargs)
         if marker:
-            ax.plot(x_tr*1e9, y_tr*100, linestyle='none', fillstyle='none', marker=marker, **kwargs)
+            ax.plot(x_tr * 1e9, y_tr * 100, linestyle='none', fillstyle='none', marker=marker, **kwargs)
 
     @staticmethod
     @lru_cache(maxsize=10)
@@ -1059,7 +1064,7 @@ class Camera:
         # need to divide result with value integrated over whole spectrum as units are in W/m3/sr
         tphi = integrate.quad(spectrum_fn, 1e-8, 1e-2)
         telec, _ = Camera.electron_flux_in_sensed_spectrum_fn(qeff_coefs, spectrum_fn, lambda_min, lambda_max)
-        return telec/tphi[0]
+        return telec / tphi[0]
 
     @staticmethod
     @lru_cache(maxsize=1000)
@@ -1085,10 +1090,10 @@ class Camera:
             return qeff_fn(lam) * spectrum_fn(lam) / E
 
         if fast and points is None:
-            n = 100     # n=100 err~=0.02%; n=1000 err~=0.002%, n=1e4 err~=2e-4%
+            n = 100  # n=100 err~=0.02%; n=1000 err~=0.002%, n=1e4 err~=2e-4%
             x_tr = np.linspace(lambda_min, lambda_max, n)
             y_tr = spectral_electrons(x_tr)
-            telec = [np.sum(y_tr) * (lambda_max - lambda_min) / (n-1)]
+            telec = [np.sum(y_tr) * (lambda_max - lambda_min) / (n - 1)]
         else:
             telec = integrate.quad(spectral_electrons, lambda_min, lambda_max, points=points)
 
@@ -1107,8 +1112,8 @@ class Camera:
             # shot noise (should be based on electrons, but figured that electrons should be fine)
             # - also, poisson distributed with lambda=sqrt(electrons)
             #   here approximated using normal distribution with mu=electrons, sd=sqrt(electrons)
-            mu = exposure*self.dark_noise_mu + electrons
-            sigma2 = exposure*self.dark_noise_sd**2 + electrons + self.readout_noise_sd**2
+            mu = exposure * self.dark_noise_mu + electrons
+            sigma2 = exposure * self.dark_noise_sd ** 2 + electrons + self.readout_noise_sd ** 2
 
             # shot noise, dark current and readout noise
             electrons = np.random.normal(mu, np.sqrt(sigma2))
@@ -1123,13 +1128,13 @@ class Camera:
 
     @staticmethod
     def _intrinsic_camera_mx(width, height, x_fov, y_fov, legacy=True):
-        x = width/2
-        y = height/2
-        fl_x = x / math.tan(math.radians(x_fov)/2)
-        fl_y = y / math.tan(math.radians(y_fov)/2)
+        x = width / 2
+        y = height / 2
+        fl_x = x / math.tan(math.radians(x_fov) / 2)
+        fl_y = y / math.tan(math.radians(y_fov) / 2)
         return np.array([[fl_x * (1 if legacy else -1), 0, x],
-                        [0, fl_y, y],
-                        [0, 0, 1]], dtype="float")
+                         [0, fl_y, y],
+                         [0, 0, 1]], dtype="float")
 
     @staticmethod
     @lru_cache(maxsize=1)
@@ -1166,7 +1171,7 @@ class Camera:
     def calc_img_xy(self, x, y, z, undistorted=False):
         """ x, y, z are in camera frame (z typically negative),  return image coordinates  """
         K = self.intrinsic_camera_mx(legacy=False)[:2, :]
-        xd, yd = x/z, y/z
+        xd, yd = x / z, y / z
 
         # DISTORT
         if self.dist_coefs is not None:
@@ -1203,22 +1208,22 @@ class Camera:
         if inv_cam_mx is not None:
             P = np.hstack((P, np.ones((len(P), 1)))).dot(inv_cam_mx[:2, :].T)
 
-        k1, k2, p1, p2, k3, k4, k5, k6, s1, s2, s3, s4 = np.pad(dist_coefs, (0, 12-len(dist_coefs)), 'constant')
+        k1, k2, p1, p2, k3, k4, k5, k6, s1, s2, s3, s4 = np.pad(dist_coefs, (0, 12 - len(dist_coefs)), 'constant')
 
-        R2 = np.sum(P[:, 0:2]**2, axis=1).reshape((-1, 1))
-        R4 = R2**2
-        R6 = R4**2 if k3 or k6 else 0
+        R2 = np.sum(P[:, 0:2] ** 2, axis=1).reshape((-1, 1))
+        R4 = R2 ** 2
+        R6 = R4 ** 2 if k3 or k6 else 0
         XY = np.prod(P, axis=1).reshape((-1, 1))
-        KR = (1 + k1*R2 + k2*R4 + k3*R6) / (1 + k4*R2 + k5*R4 + k6*R6)
+        KR = (1 + k1 * R2 + k2 * R4 + k3 * R6) / (1 + k4 * R2 + k5 * R4 + k6 * R6)
 
         Xdd = P[:, 0:1] * KR \
               + (2 * p1 * XY if p1 else 0) \
-              + (p2 * (R2 + 2 * P[:, 0:1]**2) if p2 else 0) \
+              + (p2 * (R2 + 2 * P[:, 0:1] ** 2) if p2 else 0) \
               + (s1 * R2 if s1 else 0) \
               + (s2 * R4 if s2 else 0)
 
         Ydd = P[:, 1:2] * KR \
-              + (p1 * (R2 + 2 * P[:, 1:2]**2) if p1 else 0) \
+              + (p1 * (R2 + 2 * P[:, 1:2] ** 2) if p1 else 0) \
               + (2 * p2 * XY if p2 else 0) \
               + (s1 * R2 if s1 else 0) \
               + (s2 * R4 if s2 else 0)
@@ -1227,8 +1232,6 @@ class Camera:
         if cam_mx is not None:
             img_P = img_P.dot(cam_mx[:2, :].T)
         return img_P
-
-
 
 
 class Asteroid(ABC):
@@ -1257,13 +1260,13 @@ class Asteroid(ABC):
         self.reflmod_params = None
 
         self.real_position = None       # in km, transient, loaded from image metadata at iotools.lblloader
-        
+
         self.max_radius = None          # in meters, maximum extent of object from asteroid frame coordinate origin
         self.mean_radius = None         # in meters
 
         # for cross section (probably not in (good) use)
         self.mean_cross_section = None  # in m2
-        
+
         # epoch for orbital elements
         self.oe_epoch = None            # as astropy.time.Time
 

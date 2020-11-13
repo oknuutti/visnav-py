@@ -21,11 +21,11 @@ from photutils import DAOStarFinder
 from astropy.visualization import SqrtStretch
 from astropy.visualization.mpl_normalize import ImageNormalize
 from photutils import CircularAperture
+from scipy.optimize import minimize
 
 from visnav.algo import tools
 from visnav.algo.image import ImageProc
 from visnav.algo.model import Camera
-from visnav.algo.tools import find_nearest_arr
 from visnav.render.stars import Stars
 from visnav.calibration import ssi_table
 
@@ -40,8 +40,10 @@ MANUAL_ATTITUDE = 0
 PLOT_INITIAL_QEFF_FN = 0
 SHOW_MEASURES = 1
 
+RAW_IMG_MAX_VALUE = 567
+
 # for moon
-MOON_GAIN_ADJ = 567/1023   #  was: 506/1023
+MOON_GAIN_ADJ = RAW_IMG_MAX_VALUE/1023   #  was: 506/1023
 
 STAR_GAIN_ADJUSTMENT_TN = 0.7           #
 STAR_PSF_COEF_TN = (0.22, 0.15, 0.12)   #
@@ -52,7 +54,7 @@ STAR_MOON_WEIGHT = 1.0
 STAR_IGNORE_MOON_CH = (2,)        # cam channels
 STAR_CALIB_PRIOR_WEIGHT = 0.0001   # 0.5: high, 0.3: med, 0.1: low          # first, 0.1, then 0.0001
 STAR_CALIB_HUBER_COEF = np.log10(1 + 0.1)       # %: err_dus/measured_du    # first: 0.25, then 0.10
-STAR_GAIN_ADJUSTMENT = 567/1023   #                             # was 608/1023
+STAR_GAIN_ADJUSTMENT = RAW_IMG_MAX_VALUE/1023   #                             # was 608/1023
 STAR_PSF_COEF = (145, 95, 70)     # bgr                         # best: (180, 100, 65), (150, 95, 80)
 INIT_QEFF_ADJ = (1.0, 1.0, 1.0)   # bgr                         # best: (1.0, 0.95, 0.8),
 
@@ -109,12 +111,15 @@ MISSING_BG_REMOVE_STRIPES = 1
 
 def use_aurora_img(img_file):
     debug = 1
+    n = 0
+
     override = {
-        'exposure': 2.4,
-        'gamma_break': 0.1,
+        # 'exposure': 2.4,
+        # 'gamma_break': 0.1,
         # 'phase_angle': 2,
         # 'sun_moon_lon': 2,
-        'gain': NANOCAM_GAINS[65535],  # x128
+        # 'gain': NANOCAM_GAINS[65535],  # x128
+        # 'bg_image': None,
     }
     Frame.MISSING_BG_REMOVE_STRIPES = 0
 
@@ -123,36 +128,117 @@ def use_aurora_img(img_file):
     if GAMMA_BREAK_OVERRIDE:
         override['gamma_break'] = GAMMA_BREAK_OVERRIDE
 
-    bgr_cam = get_bgr_cam(thumbnail=False, estimated=1)
+    bgr_cam = get_bgr_cam(thumbnail=False, estimated=1, final=1)
     f = Frame.from_file(bgr_cam, img_file, img_file[:-4]+'.lbl', override=override, bg_offset=False, debug=debug)
 
     if 0:
         f.show_image(processed=True, save_as='C:/projects/s100imgs/processed-aurora.png')
 
     img = f.image.astype('float')
-    mean_bg = np.mean(np.vstack((img[900:1280, 0:660, :].reshape((-1, 3)),
-                                 img[1050:1350, 1560:2048, :].reshape((-1, 3)))), axis=0)
+
+    if 0:
+        img = img - np.percentile(img, 5, axis=1).reshape((-1, 1, 3))
+
+    bg1 = (830, 1070), (1180, 1400)
+#    bg1 = (0, 900), (660, 1280)
+#    bg2 = (1560, 1050), (2048, 1350)
+    mean_bg = np.mean(img[bg1[0][1]:bg1[1][1], bg1[0][0]:bg1[1][0], :].reshape((-1, 3)), axis=0)
+#    mean_bg = np.mean(np.vstack((img[bg1[0][1]:bg1[1][1], bg1[0][0]:bg1[1][0], :].reshape((-1, 3)),
+#                                 img[bg2[0][1]:bg2[1][1], bg2[0][0]:bg2[1][0], :].reshape((-1, 3)))), axis=0)
     img = img - mean_bg
     # img = ImageProc.apply_point_spread_fn(img - mean_bg, 0.01)
     # img = np.clip(img, 0, 1023).astype('uint16')
     # img = cv2.medianBlur(img, 31)
+    # img = np.clip(img, 0, RAW_IMG_MAX_VALUE) / RAW_IMG_MAX_VALUE
 
-    plt.figure(1)
-    plt.imshow(np.flip(img / np.max(img) * 4, axis=2))
-    # plt.show()
+    n += 1
+    plt.figure(n)
+    imsh = (np.clip(img * 2 + RAW_IMG_MAX_VALUE * 0.3, 0, RAW_IMG_MAX_VALUE) / RAW_IMG_MAX_VALUE * 255).astype('uint8')
+    rd_y = (720, 700), (890, 720)
+    rd_r1 = (720, 830), (890, 870)
+    rd_r2 = (1080, 820), (1250, 860)
+    gr_r = (1280, 770), (1450, 795)
+    cv2.rectangle(imsh, bg1[0], bg1[1], (255, 0, 0), 2)       # bg1
+#    cv2.rectangle(imsh, bg2[0], bg2[1], (255, 0, 0), 2)       # bg2
+    cv2.rectangle(imsh, rd_y[0], rd_y[1], (0, 200, 200), 2)       # yellow
+    cv2.rectangle(imsh, rd_r1[0], rd_r1[1], (0, 0, 255), 2)     # red1
+    cv2.rectangle(imsh, rd_r2[0], rd_r2[1], (0, 0, 255), 2)     # red2
+    cv2.rectangle(imsh, gr_r[0], gr_r[1], (0, 255, 0), 2)     # green
+    plt.imshow(np.flip(imsh, axis=2))
+    plt.show()
 
-    red = 630.0e-9
+    def electrons(lam):
+        h = 6.626e-34  # planck constant (m2kg/s)
+        c = 3e8  # speed of light
+        return h * c / lam  # energy per photon
+
+    blue = 427.8e-9
     green = 557.7e-9
-    emission = {green: [], red: []}
-    for wl in emission.keys():
+    yellow = 589.3e-9
+    red = 630.0e-9
+    colors = (blue, green, yellow, red)
+    dus_per_rad = dict(zip(colors, ([], [], [], [])))   # DUs per 1 W/m2/sr of radiance
+    coef = f.exposure * f.gain * RAW_IMG_MAX_VALUE
+
+    for wl in dus_per_rad.keys():
         for cam in bgr_cam:
+            cgain = cam.gain * cam.emp_coef * cam.aperture_area
             fn, _ = Camera.qeff_fn(tuple(cam.qeff_coefs), 350e-9, 1000e-9)
-            emission[wl].append(fn(wl))
-    for wl in emission.keys():
-        emission[wl] = np.array(emission[wl])
+
+            # W/m2/sr => phot/s/m2/sr => elec/s/m2/sr => DUs/sr
+            dus_per_rad[wl].append(1/electrons(wl) * fn(wl) * coef * cgain)
+    for wl in dus_per_rad.keys():
+        dus_per_rad[wl] = np.array(dus_per_rad[wl])
+
+    class Patch:
+        def __init__(self, name, rect, bands, mean=None, rad=None):
+            self.name, self.rect, self.bands, self.mean, self.rad = name, rect, bands, mean, rad
+    nt = lambda n, r, b: Patch(name=n, rect=r, bands=b)
+
+    patches = [
+        nt('Clean Red', rd_r1, (blue, green, red)),
+        nt('Strong Red', rd_r2, (blue, green, red)),
+        nt('Green', gr_r, (blue, green, red)),
+        nt('Sodium', rd_y, (blue, green, yellow)),
+    ]
+
+    # pseudo inverse
+    for p in patches:
+        p.mean = np.mean(img[p.rect[0][1]:p.rect[1][1], p.rect[0][0]:p.rect[1][0], :].reshape((-1, 3)), axis=0)
+        px_sr = cam.pixel_solid_angle((p.rect[0][0]+p.rect[1][0])//2, (p.rect[0][1]+p.rect[1][1])//2)
+        E = np.hstack((dus_per_rad[p.bands[0]], dus_per_rad[p.bands[1]], dus_per_rad[p.bands[2]])) * px_sr
+        invE = np.linalg.inv(E.T.dot(E)).dot(E.T)
+        rad = invE.dot(p.mean)    # radiance in W/m2/sr
+        # e = E.dot(rad)
+        # diff = (p.mean - e) * 100 / np.linalg.norm(p.mean)
+        p.rad = [''] * len(colors)
+        for i, b in enumerate(p.bands):
+            idx = colors.index(b)
+            p.rad[idx] = rad[i]
+
+    sep = '\t' if 1 else ' & '
+    le = '\n' if 1 else ' \\\\\n'
+    if 0:
+        print(sep.join(('Patch', 'Emission at', '', '', 'Red', 'Green', 'Blue')), end=le)
+        for name, irr, mean, model, diff in patches:
+            print(sep.join((name, '428 nm', ('%.3e' % irr[0]) if irr[0] else 'n/a', 'Mean',
+                            *('%.1f' % m for m in np.flip(mean.flatten())))), end=le)
+            print(sep.join(('', '557.7 nm', ('%.3e' % irr[1]) if irr[1] else 'n/a', 'Modeled',
+                            *('%.1f' % m for m in np.flip(model.flatten())))), end=le)
+            print(sep.join(('', '589 nm', ('%.3e' % irr[2]) if irr[2] else 'n/a', 'Diff. [%]',
+                            *('%.1f' % m for m in np.flip(diff.flatten())))), end=le)
+            print(sep.join(('', '630 nm', ('%.3e' % irr[3]) if irr[3] else 'n/a', *(['']*4))), end=le)
+    else:
+        print(sep.join(('Patch', 'Red', 'Green', 'Blue', '428 nm', '557.7 nm', '589 nm', '630 nm')), end=le)
+        for p in patches:
+            # in kilo Rayleigh (kR) == 6330*1e9*lambda * W/m2/sr    or  4*pi*10^(-10)*10^(-3) * photon flux
+            print(sep.join((p.name, *('%.1f' % m for m in np.flip(p.mean.flatten())),
+                                    *(tools.fixed_precision(r*4*np.pi*1e-13/electrons(colors[i]), 3, True) if r else ''  # r*1e-13*4*np.pi
+                                      for i, r in enumerate(p.rad)))), end=le)
+    quit()
 
     aurora = np.zeros_like(img)
-    for color in (red, green):
+    for i, color in enumerate(colors):
         # d/dx[(r-aw)'*(r-aw)] == 0
         #  => w == (r'*a)/(a'*a)
         a = emission[color]
@@ -169,15 +255,14 @@ def use_aurora_img(img_file):
         # plt.imshow(x.reshape(img.shape[:2])/np.max(x))
         # plt.title('x (max=%f)' % np.max(x))
 
-        plt.figure(4 if color == red else 5)
-        x[x < (10 if color == red else 6)] = 0
+        n += 1
+        plt.figure(n)
+        x[x < {red: 10, green: 6, yellow: 16}[color]] = 0
         x[w < 100] = 0
         xf = ImageProc.apply_point_spread_fn(x.reshape(img.shape[:2]), 0.03)
         xf = cv2.medianBlur(xf.astype('uint16'), 11)
-        #xf = ImageProc.apply_point_spread_fn(x.reshape(img.shape[:2]), 0.01)
         plt.imshow(xf / np.max(xf))
-        #plt.imshow(x.reshape(img.shape[:2])/np.max(x))
-        plt.title('aurora detection [%.1fnm]' % (color*1e9))
+        plt.title('Emission detection @ %.1fnm' % (color * 1e9))
 
         e[xf.flatten() == 0, :] = (0, 0, 0)
         aurora += e.reshape(img.shape)
@@ -339,7 +424,7 @@ def use_stars(folder, thumbnail=True):
             if m.obj_id[0] == 'moon':
                 m.weight = moon_weight
 
-    opt = Optimizer()
+    opt = Optimizer({'method': 'leastsq'})
     qeff_coefs, f_gains, gain_adj, psf_coef, err, measured, expected = opt.optimize(measures)
 
     for i, qec in enumerate(qeff_coefs):
@@ -353,6 +438,7 @@ def use_stars(folder, thumbnail=True):
     print('frame gains: %s' % (f_gains,))
     print('gain_adj: %s' % (gain_adj,))
     print('psf_coefs: %s' % (psf_coef,))
+    print('psf SDs [px]: %.3f, %.3f, %.3f' % (*np.sqrt(np.array(psf_coef) / np.pi / 2),))
 
     ## star measurement table
     ##
@@ -409,6 +495,8 @@ def use_stars(folder, thumbnail=True):
         plt.plot(x[:, 0], x[:, 3], 'r+')
         plt.show()
 
+    bgr_cam0 = get_bgr_cam(estimated=False)
+    plot_bgr_qeff(bgr_cam0, hold=True, color=('lightblue', 'lightgreen', 'pink'), linestyle='dashed', linewidth=1, marker="")
     plot_bgr_qeff(bgr_cam)
 
 
@@ -608,8 +696,8 @@ class Frame:
             self.image = ImageProc.remove_bg(img, background_img, gain=1, offset=bg_offset, max_val=max_val)
         elif self.MISSING_BG_REMOVE_STRIPES:
             for k in range(img.shape[2]):
-                img[:, :, k] -= np.median(img[:, :, k], axis=0).reshape((1, -1))
-                img[:, :, k] -= np.median(img[:, :, k], axis=1).reshape((-1, 1))
+                img[:, :, k] -= np.percentile(img[:, :, k], 5, axis=0).reshape((1, -1))
+                img[:, :, k] -= np.percentile(img[:, :, k], 5, axis=1).reshape((-1, 1))
             img += bg_offset - np.min(img)
             self.image = np.clip(img, 0, max_val)
         else:
@@ -1473,8 +1561,10 @@ class LabMeasure:
 class Optimizer:
     def __init__(self, params=None):
         self.params = params or {}
+        self.method = self.params.pop('method', 'leastsq')
 
     def optimize(self, measures):
+        opt_method = self.method
         cams = measures[0].frame.cam
         cn = len(cams)
         qn = [len(cams[i].qeff_coefs) for i in range(cn)]
@@ -1545,20 +1635,22 @@ class Optimizer:
             measured_du, expected_du, band = map(np.array, (measured_du, expected_du, band))
 
             if plot:
-                fig, ax = plt.subplots(1, 1)
-                sb, = ax.plot(expected_du[band == 0], measured_du[band == 0], 'bx')
-                sg, = ax.plot(expected_du[band == 1], measured_du[band == 1], 'gx')
-                sr, = ax.plot(expected_du[band == 2], measured_du[band == 2], 'rx')
+                plt.rcParams.update({'font.size': 16})
+                fig, ax = plt.subplots(1, 1, figsize=[6.4, 4.8])
+                sb, = ax.plot(expected_du[band == 0]*1e-3, measured_du[band == 0]*1e-3, 'bx')
+                sg, = ax.plot(expected_du[band == 1]*1e-3, measured_du[band == 1]*1e-3, 'gx')
+                sr, = ax.plot(expected_du[band == 2]*1e-3, measured_du[band == 2]*1e-3, 'rx')
                 line = np.linspace(0, np.max(expected_du))
-                ax.plot(line, line, 'k--', linewidth=0.5)
-                ax.set_xlabel('expected [du]')
-                ax.set_ylabel('measured [du]')
+                ax.plot(line*1e-3, line*1e-3, 'k--', linewidth=0.5)
+                ax.set_xlabel('Expected [1000 DUs]')
+                ax.set_ylabel('Measured [1000 DUs]')
                 names = Stars.get_catalog_id(np.unique(list(s[0] for s in obj_ids if s[0] != 'moon')), 'simbad')
-                names['moon'] = 'moon'
+                names['moon'] = 'Moon'
                 labels = np.array([names[id[0]] for id in obj_ids])
                 tools.hover_annotate(fig, ax, sb, labels[band == 0])
                 tools.hover_annotate(fig, ax, sg, labels[band == 1])
                 tools.hover_annotate(fig, ax, sr, labels[band == 2])
+                plt.tight_layout()
                 plt.show()
 
             _, _, gain_adj0, _ = decode(x0)
@@ -1581,7 +1673,9 @@ class Optimizer:
                 if STAR_CALIB_PRIOR_WEIGHT > 0 else tuple()
 
             err_tuple = lab_dp + err + prior
-            return (err_tuple, measured_du, expected_du) if return_details else err_tuple
+            return (err_tuple, measured_du, expected_du) if return_details else \
+                    err_tuple if opt_method == 'leastsq' else \
+                    np.sum(err_tuple)
 
         if STAR_SATURATION_MODELING:
             psf_coef = STAR_PSF_COEF_TN if cams[0].emp_coef < 1 else STAR_PSF_COEF
@@ -1601,10 +1695,16 @@ class Optimizer:
         for i in range(OPTIMIZER_START_N):
             tools.show_progress(OPTIMIZER_START_N, i)
             x0 = tuple(np.array(x0b) * (1 if OPTIMIZER_START_N == 1 else np.random.lognormal(0, 0.05, len(x0b))))
-            res = leastsq(cost_fun, x0, args=(measures, x0b), full_output=True, **self.params)
-            results[i] = (res[0], x0)
-            score = np.mean(res[2]['fvec'])
-            scores[i] = score if score > 0 else float('inf')
+
+            if opt_method == 'leastsq':
+                res = leastsq(cost_fun, x0, args=(measures, x0b), full_output=True, **self.params)
+                x, fval = res[0], np.sum(res[2]['fvec'])
+            else:
+                res = minimize(cost_fun, x0, args=(measures, x0b), method=opt_method, **self.params)
+                x, fval = res.x, res.fun
+
+            results[i] = (x, x0)
+            scores[i] = fval if fval > 0 else float('inf')
         timer.stop()
 
         if len(scores) > 0:
@@ -1622,11 +1722,13 @@ class Optimizer:
         return qeff_coefs, f_gains, gain_adj, psf_coef, err, measured, expected
 
 
-def plot_bgr_qeff(cams, ax=None, color=None, **kwargs):
+def plot_bgr_qeff(cams, ax=None, color=None, hold=False, **kwargs):
     color = color or ('b', 'g', 'r')
     for col, cam in zip(color, cams):
         cam.plot_qeff_fn(ax=ax, color=col, **kwargs)
-    if ax is None:
+    if ax is None and not hold:
+        plt.xlabel('Wave Length [nm]')
+        plt.ylabel('Quantum efficiency [%]')
         plt.tight_layout()
         plt.show()
     # while not plt.waitforbuttonpress():
@@ -1689,7 +1791,7 @@ def merge(old, new):
         old[n].extend(v)
 
 
-def get_bgr_cam(thumbnail=False, estimated=False):
+def get_bgr_cam(thumbnail=False, estimated=False, final=False):
     if 0:
         bgr = (
             {'qeff_coefs': [.05] * 2 + [0.4] + [.05] * 10,
@@ -1701,7 +1803,18 @@ def get_bgr_cam(thumbnail=False, estimated=False):
         )
     elif estimated:
         array = tuple
-        if 1:
+        if final:
+            tmp = [array([7.11406102e-02, 1.88573116e-01, 3.57879372e-01, 2.11712854e-01,
+       6.74648094e-02, 5.48490265e-02, 4.12507246e-02, 8.67861076e-02,
+       4.63874858e-02, 8.59392458e-02, 3.43248506e-03, 2.42848137e-07,
+       6.33677240e-05, 2.58960325e-04]), array([1.62839478e-05, 1.22732653e-01, 1.32569634e-01, 2.87502674e-01,
+       3.28414592e-01, 1.38869899e-01, 8.55101974e-02, 3.83200070e-02,
+       2.82970362e-02, 3.35710523e-02, 4.36661226e-02, 1.50696186e-02,
+       1.79069082e-05, 2.56061220e-05]), array([4.51968337e-02, 9.85000036e-02, 3.38110687e-03, 3.69001606e-02,
+       4.66199542e-02, 3.25547433e-01, 3.28265779e-01, 2.07627353e-01,
+       1.41951262e-01, 5.77236686e-02, 1.02290914e-02, 7.49534067e-06,
+       3.77433362e-06, 2.00245623e-04])]
+        elif 1:
             # based on stars, no weighting
             tmp = [array([4.24493739e-02, 1.47335623e-01, 3.40773426e-01, 2.07252471e-01,
        6.74203914e-02, 5.38111110e-02, 3.61301608e-02, 7.89194073e-02,
