@@ -48,6 +48,7 @@ class TestLoop:
     def __init__(self, system_model, file_prefix_mod, est_real_ast_orient=False,
                  uniform_distance_gen=UNIFORM_DISTANCE_GENERATION,
                  operation_zone_only=False, state_generator=None, cache_path=None,
+                 max_sc_lateral_disp=1.0,
                  sm_noise=0, sm_noise_len_sc=SHAPE_MODEL_NOISE_LEN_SC,
                  navcam_cache_id='', save_depth=False, save_coords=False,
                  traj_len=1, traj_prop_dt=60, only_populate_cache=ONLY_POPULATE_CACHE,
@@ -75,7 +76,8 @@ class TestLoop:
 
         self._state_generator = state_generator if state_generator is not None else \
                                 lambda sm: sm.random_state(uniform_distance=uniform_distance_gen,
-                                                           opzone_only=self._opzone_only)
+                                                           opzone_only=self._opzone_only,
+                                                           max_sc_lateral_disp=max_sc_lateral_disp)
 
         self.sm_noise = sm_noise
         self.sm_noise_len_sc = sm_noise_len_sc
@@ -652,7 +654,7 @@ class TestLoop:
 
                 if j+1 < traj_len:
                     # propagate if not last state
-                    sm.propagate(dt)
+                    sm.propagate(0)     # should be dt instead of 0, but now propagation is just done using add_noise
 
                     # TODO: remove following when propagate() does more than just save current state
                     if 1:

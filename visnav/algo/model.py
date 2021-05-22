@@ -605,7 +605,7 @@ class SystemModel(ABC):
 
         return sc, dq
 
-    def random_state(self, uniform_distance=True, opzone_only=False):
+    def random_state(self, uniform_distance=True, opzone_only=False, max_sc_lateral_disp=1.0):
         # reset asteroid axis to true values
         self.asteroid.reset_to_defaults()
         self.asteroid_rotation_from_model()
@@ -637,7 +637,7 @@ class SystemModel(ABC):
             if opzone_only:
                 # always get at least 50% of astroid in view, 5% of the time maximum offset angle
                 max_angle = rad(min(self.cam.x_fov, self.cam.y_fov) / 2)
-                da = min(max_angle, np.abs(np.random.normal(0, max_angle / 2)))
+                da = min(max_angle, max_sc_lateral_disp * np.abs(np.random.normal(0, max_angle / 2)))
                 dd = np.random.uniform(0, 2 * math.pi)
                 sco_lat = tools.wrap_rads(-sc_lat + da * math.sin(dd))
                 sco_lon = tools.wrap_rads(math.pi + sc_lon + da * math.cos(dd))
@@ -652,8 +652,8 @@ class SystemModel(ABC):
 
                 ast_ang_r = math.atan(
                     self.asteroid.mean_radius / 1000 / sc_r)  # if asteroid close, allow s/c to look at limb
-                dx = max(rad(self.cam.x_fov / 2), ast_ang_r)
-                dy = max(rad(self.cam.y_fov / 2), ast_ang_r)
+                dx = max(max_sc_lateral_disp * rad(self.cam.x_fov / 2), ast_ang_r)
+                dy = max(max_sc_lateral_disp * rad(self.cam.y_fov / 2), ast_ang_r)
                 disturbance_q = tools.ypr_to_q(np.random.uniform(-dy, dy), np.random.uniform(-dx, dx), 0)
                 sco_lat, sco_lon, sco_rot = tools.q_to_ypr(sco_q * disturbance_q)
 

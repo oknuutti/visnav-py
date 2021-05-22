@@ -1043,7 +1043,8 @@ def points_with_noise(points, support=None, L=None, noise_lv=SHAPE_MODEL_NOISE_L
 
     # extra high frequency noise
     # white_noise = 1 if False else np.exp(np.random.normal(scale=0.2*noise_lv*max_rng, size=(len(full_err),1)))
-    white_noise = 0 if 0 else np.random.normal(scale=0.0003*max_rng, size=(len(full_err), 1 if only_z else 3))
+#    white_noise = 0 if 0 else np.random.normal(scale=0.0001*max_rng, size=(len(full_err), 1 if only_z else 3))
+    white_noise = 0 if 0 else np.random.uniform(-0.0001*max_rng, 0.0001*max_rng, size=(len(full_err), 1 if only_z else 3))
 
     if only_z:
         add_err_z = (max_rng / 2) * (full_err - 1) + white_noise

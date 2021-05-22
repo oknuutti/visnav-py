@@ -73,6 +73,8 @@ def parse_arguments():
                         help='Max phase angle allowed when generating system state (default: %f)' % 100)
     parser.add_argument('--max-sc-distance', default=1.0, type=float, metavar='A',
                         help='Max spacecraft distance as min_dist+A*(max_dist-min_dist) (default: %f)' % 1.0)
+    parser.add_argument('--max-sc-lateral-disp', default=1.0, type=float, metavar='A',
+                        help='Max spacecraft lateral displacement [0-1] where 0 is always centered (default: %f)' % 1.0)
 
     parser.add_argument('--hapke-noise', '--hn', default=0.0, type=float, metavar='SD',
                         help=('Randomize all Hapke reflection model parameters by multiplying with log normally'
@@ -136,9 +138,12 @@ def main():
 
     traj_len = 2 if args.relative else 1
 
+    state_gen = lambda sm: sm.random_state(uniform_distance=False, opzone_only=True,
+                                           max_sc_lateral_disp=args.max_sc_lateral_disp)
+
     print('starting to generate images')
     tl = TestLoop(sm, file_prefix_mod=file_prefix_mod, est_real_ast_orient=False,
-              state_generator=None, uniform_distance_gen=False, operation_zone_only=True,
+              state_generator=state_gen, uniform_distance_gen=False, operation_zone_only=True,
               cache_path=cache_path,
               sm_noise=0, sm_noise_len_sc=SHAPE_MODEL_NOISE_LEN_SC,
               navcam_cache_id=img_file_prefix, save_depth=True, save_coords=True,
@@ -175,7 +180,7 @@ def main():
     if row_range is not None:
         tl.run(row_range, log_prefix=log_prefix,
                constant_sm_noise=True, smn_cache_id='lo',
-               method='keypoint', feat=1, verbose=0)
+               method='keypoint' if args.max_rot_err > 0 else 'centroid', feat=1, verbose=0)
 
     # export
     print('starting to export images')
@@ -273,13 +278,13 @@ def read_logfiles(sm, file_prefix, max_err, traj_len=1):
                                 #roterrs[i] = min(float(row[rot_i]), relative_pose_err(sm, imgs[i]))
                                 roterrs[i] = float(row[rot_i])
                                 # TODO: cache result as now this is called two times
-                            ok += 1 if roterrs[i] < max_err else 0
+                            ok += 1 if max_err <= 0 or roterrs[i] < max_err else 0
                             pbar.set_postfix({'ratio': '%.3f' % (ok / n)}, refresh=False)
                         except ValueError as e:
                             print('Can\'t convert roterr or iter on row %s' % (row[lbl_i],))
                             raise e
 
-    images = [(i, imgs[i]) for i, e in roterrs.items() if not math.isnan(e) and e < max_err]
+    images = [(i, imgs[i]) for i, e in roterrs.items() if not math.isnan(e) and (max_err <= 0 or e < max_err)]
     images = sorted(images, key=lambda x: x[0])
     return images
 

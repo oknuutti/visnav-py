@@ -109,7 +109,7 @@ class Bennu(Asteroid):
         self.name = 'Bennu'
 
         # xtra_hires = os.path.join(DATA_DIR, 'original-shapemodels/bennu.orex.obj')
-        xtra_hires = os.path.join(DATA_DIR, 'bennu+tex-98k.obj')
+        xtra_hires = os.path.join(DATA_DIR, 'bennu+tex-98k-v3.obj')
         if os.path.exists(xtra_hires):
             self.hires_target_model_file = xtra_hires
         else:
