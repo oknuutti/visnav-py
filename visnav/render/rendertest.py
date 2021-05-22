@@ -42,7 +42,7 @@ def render_itokawa(show=False):
     shape_model_file = [
         r'C:\projects\sispo\data\models\itokawa_16k.obj',
         r'C:\projects\sispo\data\models\itokawa_f3145728.obj',
-    ][1]
+    ][0]
 
     RenderEngine.REFLMOD_PARAMS[RenderEngine.REFLMOD_HAPKE] = [
         553.38,          # J         0
@@ -58,7 +58,7 @@ def render_itokawa(show=False):
         1,          # K         1
     ]
 
-    re = RenderEngine(cam.width, cam.height, antialias_samples=0)
+    re = RenderEngine(cam.width, cam.height, antialias_samples=0)  #, enable_extra_data=True)
     re.set_frustum(cam.x_fov, cam.y_fov, 0.05, 12)
     obj_idx = re.load_object(shape_model_file)
 
@@ -81,11 +81,17 @@ def render_itokawa(show=False):
     sc_mode = 0
     a, b, c = [0]*3
     ds, dq = 0.135, tools.ypr_to_q(math.radians(1.154), 0, math.radians(-5.643))
+#    ds, dq = 0.535, quaternion.one     # itokawa centered
 
     while True:
         img = re.render(obj_idx, tools.q_times_v(dq, l_ast_sc_v*ds), l_ast_q, l_light_v, flux_density=1.0,
                         gamma=1.0, get_depth=False, shadows=True, textures=True,
                         reflection=RenderEngine.REFLMOD_HAPKE)
+
+#        data = re.render_extra_data(obj_idx, tools.q_times_v(dq, l_ast_sc_v*ds), l_ast_q, l_light_v)
+#        import matplotlib.pyplot as plt
+#        plt.imshow(data[:, :, 0])
+
         k = output(img, show, maxval=0.90)
 
         if k is None or k == 27:
@@ -194,9 +200,9 @@ def get_ast_q(axis_ra, axis_dec, rotation_zlra):
     return tools.eul_to_q((axis_ra, np.pi / 2 - axis_dec, rotation_zlra), 'zyz', False)
 
 
-def output(img, show, maxval=1.0, gamma=1.0):
+def output(img, show, maxval=1.0, gamma=1.0, outfile=None):
     img = ImageProc.adjust_gamma(maxval * img / np.max(img) * 255, gamma=gamma) / 255
-    cv2.imwrite(sys.argv[1] if len(sys.argv) > 1 else 'test.png', (255*img).astype('uint8'))
+    cv2.imwrite(outfile or (sys.argv[1] if len(sys.argv) > 1 else 'test.png'), (255*img).astype('uint8'))
     if show:
         img_sc = cv2.resize(img, (700, 700))
         cv2.imshow('test.png', img_sc)
@@ -250,7 +256,7 @@ def perm(dat, idx):
 if __name__ == '__main__':
     if 0:
         render_didymos(0)
-    elif 1:
+    elif 0:
         render_67p(1)
     else:
         render_itokawa(1)

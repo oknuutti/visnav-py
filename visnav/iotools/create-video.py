@@ -11,7 +11,7 @@ from visnav.settings import *
 
 if __name__ == '__main__':
     try:
-        folder = os.path.join(LOG_DIR, sys.argv[1])
+        folder = sys.argv[1]  # os.path.join(LOG_DIR, sys.argv[1])
         assert os.path.isdir(folder), 'invalid folder path given: %s'%(folder,)
         regex = sys.argv[2]
         target_file = sys.argv[3]
@@ -21,17 +21,19 @@ if __name__ == '__main__':
         exposure = False  # 2.5
     except Exception as e:
         print(str(e))
-        print('\nUSAGE: %s <log-dir relative input-dir> <img_regex> <target_file> <WxH> <framerate> [skip mult]'%(sys.argv[0],))
+        print('\nUSAGE: %s <input-dir> <img_regex> <target_file> <WxH> <framerate> [skip mult]'%(sys.argv[0],))
         quit()
 
     test = re.compile(regex)
     img_files = []
     for file in os.listdir(folder):
-        if test.match(file):
-            img_files.append(file)
+        m = test.match(file)
+        if m:
+            i = int(m[1]) if len(m.groups()) > 0 else file
+            img_files.append((i, file))
 
-    img_files = sorted(img_files)
-    assert len(img_files)>3, 'too few images found: %s'%(img_files,)
+    img_files = [f for _, f in sorted(img_files, key=lambda x: x[0])]
+    assert len(img_files) > 3, 'too few images found: %s'%(img_files,)
 
     img0 = cv2.imread(os.path.join(folder, img_files[0]), cv2.IMREAD_COLOR)
     sh, sw, sc = img0.shape

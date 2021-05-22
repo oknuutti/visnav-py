@@ -4,8 +4,14 @@ import sys
 import math
 import re
 
+import cv2
 import numpy as np
+import quaternion
+from tqdm import tqdm
 
+from visnav.algo import tools
+from visnav.algo.keypoint import KeypointAlgo
+from visnav.algo.tools import PositioningException
 from visnav.batch1 import get_system_model
 from visnav.iotools import cnn_export
 from visnav.testloop import TestLoop
@@ -20,7 +26,7 @@ from visnav.settings import *
 
 
 def parse_arguments():
-    missions = ('rose', 'didy1n', 'didy1w', 'didy2n', 'didy2w')
+    missions = ('rose', 'orex', 'didy1n', 'didy1w', 'didy2n', 'didy2w')
 
     parser = argparse.ArgumentParser(description='Asteroid Image Data Generator')
     parser.add_argument('--relative', '-R', action='store_true',
@@ -33,12 +39,15 @@ def parse_arguments():
                         help='mission: %s (default: rose)' % (' | '.join(missions)))
     parser.add_argument('--count', '-n', default='10', type=str, metavar='N',
                         help='number of images to be generated, accepts also format [start:end]')
+    parser.add_argument('--crop', default=0, type=int,
+                        help='detect object and crop exported images, only when "--relative" not set')
     parser.add_argument('--id', '-i', default=None, type=str, metavar='N',
                         help='a unique dataset id, defaults to a hash calculated from image generation parameters')
 
     parser.add_argument('--max-rot-err', default=10, type=float, metavar='A',
                         help='Max rotation error (in deg) allowed when determining pose with AKAZE-PnP-RANSAC (default: %f)' % 10)
 
+    parser.add_argument('--res-mult', type=float, default=1.0, help="scale camera resultion, default=1.0")
     parser.add_argument('--sm-lores', default=False, help="use low resolution shape model", action='store_true')
     parser.add_argument('--sm-noise', default=0, type=float, metavar='SD',
                         help='Shape model noise level (default: %f)' % 0)
@@ -59,6 +68,11 @@ def parse_arguments():
                         help='Jet intensity mode [0, 1], beta-distributed, (default: %f)' % 0.001)
     parser.add_argument('--jet-int-conc', '--jc', default=10, type=float, metavar='JC',
                         help='Jet intensity concentration [1, 1000] (default: %f)' % 10)
+
+    parser.add_argument('--max-phase-angle', default=100, type=float, metavar='A',
+                        help='Max phase angle allowed when generating system state (default: %f)' % 100)
+    parser.add_argument('--max-sc-distance', default=1.0, type=float, metavar='A',
+                        help='Max spacecraft distance as min_dist+A*(max_dist-min_dist) (default: %f)' % 1.0)
 
     parser.add_argument('--hapke-noise', '--hn', default=0.0, type=float, metavar='SD',
                         help=('Randomize all Hapke reflection model parameters by multiplying with log normally'
@@ -97,6 +111,10 @@ def parse_arguments():
                         help='spacecraft lateral translational noise when generating second frame, noise sd [m/m, ratio] (default: %f)' % 0.0)
     parser.add_argument('--noise-altitude', '--na', default=0, type=float, metavar='SD',
                         help='spacecraft radial translational noise when generating second frame, noise sd [m/m, ratio] (default: %f)' % 0.0)
+    parser.add_argument('--noise-phase-angle', '--npa', default=0, type=float, metavar='SD',
+                        help='change in phase angle when generating second frame, noise sd [deg] (default: %f)' % 0.0)
+    parser.add_argument('--noise-light-dir', '--nld', default=0, type=float, metavar='SD',
+                        help='change in light direction when generating second frame, noise sd [deg] (default: %f)' % 0.0)
 
     args = parser.parse_args()
     return args
@@ -105,7 +123,7 @@ def parse_arguments():
 def main():
     args = parse_arguments()
 
-    sm = get_system_model(args.mission, hi_res_shape_model=not args.sm_lores)
+    sm = get_system_model(args.mission, hi_res_shape_model=not args.sm_lores, res_mult=args.res_mult)
     file_prefix_mod = ''
     img_file_prefix = 'cm' if args.sm_noise > 0 else ''
     log_prefix = ('r-' if args.relative else '')+'dsg-'+args.mission+'-'+args.id+'-'
@@ -113,8 +131,8 @@ def main():
 
     # operational zone only
     sm.min_distance = sm.min_med_distance
-    sm.max_distance = sm.max_med_distance
-    sm.min_elong = 180 - 100    # max phase angle = 100 deg
+    sm.max_distance = sm.min_distance + args.max_sc_distance * (sm.max_med_distance - sm.min_distance)
+    sm.min_elong = 180 - args.max_phase_angle    # max phase angle = 100 deg
 
     traj_len = 2 if args.relative else 1
 
@@ -123,7 +141,7 @@ def main():
               state_generator=None, uniform_distance_gen=False, operation_zone_only=True,
               cache_path=cache_path,
               sm_noise=0, sm_noise_len_sc=SHAPE_MODEL_NOISE_LEN_SC,
-              navcam_cache_id=img_file_prefix, save_depth=True,
+              navcam_cache_id=img_file_prefix, save_depth=True, save_coords=True,
               traj_len=traj_len, traj_prop_dt=60,
               real_sm_noise=args.sm_noise, real_sm_noise_len_sc=args.sm_noise_len_sc,
               real_tx_noise=args.tx_noise, real_tx_noise_len_sc=args.tx_noise_len_sc,
@@ -137,11 +155,13 @@ def main():
               noise_time=args.noise_time, noise_ast_rot_axis=args.noise_ast_rot_axis,
               noise_ast_phase_shift=args.noise_ast_phase_shift, noise_sco_lat=args.noise_sco_lat,
               noise_sco_lon=args.noise_sco_lon, noise_sco_rot=args.noise_sco_rot,
-              noise_lateral=args.noise_lateral, noise_altitude=args.noise_altitude
-    )
+              noise_lateral=args.noise_lateral, noise_altitude=args.noise_altitude,
+              noise_phase_angle=args.noise_phase_angle, noise_light_dir=args.noise_light_dir,
+              ext_noise_dist=True
+          )
 
     # check if can skip testloop iterations in case the execution died during previous execution
-    log_entries = read_logfiles(log_prefix, args.max_rot_err, traj_len=traj_len)
+    log_entries = read_logfiles(sm, log_prefix, args.max_rot_err, traj_len=traj_len)
     if args.relative:
         entry_exists = [i for i, fs in log_entries if np.all(
             [os.path.exists(f) and f == tl.cache_file(i, postfix='%d.png' % j)
@@ -167,7 +187,7 @@ def main():
         start, end = map(int, args.count.split(':'))
     else:
         start, end = 0, int(args.count)
-    imgfiles = read_logfiles(log_prefix, args.max_rot_err, traj_len=traj_len)
+    imgfiles = read_logfiles(sm, log_prefix, args.max_rot_err, traj_len=traj_len)
 
     if args.relative:
         imgfiles = [(f, os.path.join(args.output, os.path.basename(f))) for i, fs in imgfiles if start <= i < end for f in fs]
@@ -185,7 +205,8 @@ def main():
                                    title="Synthetic Image Set, mission=%s, id=%s" % (args.mission, args.id), debug=0)
     else:
         cnn_export.export(sm, args.output, src_imgs=imgfiles, trg_shape=(224, 224), img_prefix=img_file_prefix,
-                          title="Synthetic Image Set, mission=%s, id=%s" % (args.mission, args.id), debug=0)
+                          title="Synthetic Image Set, mission=%s, id=%s" % (args.mission, args.id),
+                          crop=args.crop, debug=0)
 
 
 def sample_mosaic():
@@ -217,7 +238,7 @@ def get_range(org_range, exists):
     return '%d:%d' % (start, end)
 
 
-def read_logfiles(file_prefix, max_err, traj_len=1):
+def read_logfiles(sm, file_prefix, max_err, traj_len=1):
     # find all files with given prefix, merge in order of ascending date
     logfiles = []
     for f in os.listdir(LOG_DIR):
@@ -231,7 +252,9 @@ def read_logfiles(file_prefix, max_err, traj_len=1):
         with open(logfile, newline='') as csvfile:
             data = csv.reader(csvfile, delimiter='\t')
             first = True
-            for row in data:
+            pbar = tqdm(data, mininterval=3)
+            ok = 0
+            for n, row in enumerate(pbar):
                 if len(row) > 10:
                     if first:
                         first = False
@@ -244,9 +267,14 @@ def read_logfiles(file_prefix, max_err, traj_len=1):
                             img0 = row[img_i]
                             if traj_len == 1:
                                 imgs[i] = img0
+                                roterrs[i] = float(row[rot_i])
                             else:
                                 imgs[i] = [re.sub(r'(.*?)_(\d+)\.(png|jpg)$', r'\1_%s.\3' % j, img0) for j in range(traj_len)]
-                            roterrs[i] = float(row[rot_i])
+                                #roterrs[i] = min(float(row[rot_i]), relative_pose_err(sm, imgs[i]))
+                                roterrs[i] = float(row[rot_i])
+                                # TODO: cache result as now this is called two times
+                            ok += 1 if roterrs[i] < max_err else 0
+                            pbar.set_postfix({'ratio': '%.3f' % (ok / n)}, refresh=False)
                         except ValueError as e:
                             print('Can\'t convert roterr or iter on row %s' % (row[lbl_i],))
                             raise e
@@ -254,6 +282,47 @@ def read_logfiles(file_prefix, max_err, traj_len=1):
     images = [(i, imgs[i]) for i, e in roterrs.items() if not math.isnan(e) and e < max_err]
     images = sorted(images, key=lambda x: x[0])
     return images
+
+
+def true_relative_pose(sm, img_files):
+    rel_qs = []
+    for file in img_files:
+        sm.load_state(file[:-4].replace('_cm', '') + '.lbl')
+        sm.swap_values_with_real_vals()
+        _, sc_ast_lf_q, _ = sm.get_system_scf()
+        rel_qs.append(sc_ast_lf_q)
+    return rel_qs[0].conj() * rel_qs[1]
+
+
+def relative_pose_err(sm, imgs):
+    try:
+        img0, img1 = [cv2.imread(img, cv2.IMREAD_UNCHANGED) for img in imgs]
+        kp0, desc0, det = KeypointAlgo.detect_features(img0, KeypointAlgo.AKAZE, max_feats=1000, for_ref=True, maxmem=0)
+        kp1, desc1, det = KeypointAlgo.detect_features(img1, KeypointAlgo.AKAZE, max_feats=1000, for_ref=False, maxmem=0)
+        matches = KeypointAlgo.match_features(desc1, desc0, det.defaultNorm(), method='brute')
+
+        depth0 = cv2.imread(imgs[0][:-4]+'.d.exr', cv2.IMREAD_UNCHANGED)
+        kp0_3d = KeypointAlgo.inverse_project(sm, [kp0[m.trainIdx].pt for m in matches], depth0, np.nanmax(depth0), 1)
+        kp1_2d = np.array([kp1[m.queryIdx].pt for m in matches], dtype='float32')
+        rvec, tvec, inliers = KeypointAlgo.solve_pnp_ransac(sm, kp1_2d, kp0_3d, 8)
+    except PositioningException as e:
+        inliers = []
+
+    err = np.nan
+    if len(inliers) >= KeypointAlgo.MIN_FEATURES:
+        rel_q = true_relative_pose(sm, imgs)
+        sc2cv_q = sm.frm_conv_q(sm.SPACECRAFT_FRAME, sm.OPENCV_FRAME)
+
+        est_rel_cv_q = tools.angleaxis_to_q(rvec)
+        est_rel_q1 = sc2cv_q * est_rel_cv_q * sc2cv_q.conj()
+
+        # solvePnPRansac has some bug that apparently randomly gives 180deg wrong answer
+        est_rel_q2 = sc2cv_q * est_rel_cv_q * tools.ypr_to_q(0, math.pi, 0) * sc2cv_q.conj()
+
+        err = math.degrees(min(tools.angle_between_q(est_rel_q1, rel_q),
+                               tools.angle_between_q(est_rel_q2, rel_q)))
+
+    return err
 
 
 if __name__ == '__main__':

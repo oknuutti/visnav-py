@@ -16,7 +16,7 @@ from visnav.settings import *
 
 
 class DidymosSystemModel(SystemModel):
-    def __init__(self, target_primary=True, hi_res_shape_model=False, use_narrow_cam=True):
+    def __init__(self, target_primary=True, hi_res_shape_model=False, use_narrow_cam=True, res_mult=1.0):
         # gives some unnecessary warning about "dubious year" even when trying to ignore it
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
@@ -41,8 +41,8 @@ class DidymosSystemModel(SystemModel):
         common_kwargs = common_kwargs_best
 
         narrow_cam = Camera(
-            2048,   # width in pixels
-            1944,   # height in pixels
+            2048 * res_mult,   # width in pixels
+            1944 * res_mult,   # height in pixels
             7.7,    # x fov in degrees  (could be 6 & 5.695, 5.15 & 4.89, 7.7 & 7.309)
             7.309,  # y fov in degrees
             f_stop=5,       # TODO: put better value here
@@ -51,8 +51,8 @@ class DidymosSystemModel(SystemModel):
             **common_kwargs
         )
         wide_cam = Camera(
-            2048,   # width in pixels
-            1944,   # height in pixels
+            2048 * res_mult,   # width in pixels
+            1944 * res_mult,   # height in pixels
             61.5,     # x fov in degrees
             58.38,  # y fov in degrees
             f_stop=5,   # TODO: put better value here

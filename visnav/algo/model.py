@@ -401,6 +401,11 @@ class SystemModel(ABC):
         new_q = q * self.asteroid.rotation_q(self.time.value)
         self.asteroid_q = new_q
 
+    def rotate_system(self, q):
+        self.asteroid.real_position = tools.q_times_v(q, self.asteroid.position(self.time.value))
+        self.rotate_asteroid(q)
+        self.rotate_spacecraft(q)
+
     def get_vals(self, real=False):
         return {n: (p.real_value if real else p.value) for n, p in self.get_params(True)}
 
@@ -520,6 +525,14 @@ class SystemModel(ABC):
         visib = xm * ym * 100
 
         return visib if return_array else visib[0]
+
+    def get_system_gf(self):
+        # return all in ICRS frame
+        sc_gf_q = self.spacecraft_q
+        ast_gf_q = self.asteroid.rotation_q(self.time.value)
+        sc_ast_gf_r = -tools.q_times_v(sc_gf_q, self.spacecraft_pos)
+        sc_sun_gf_r = sc_ast_gf_r - self.asteroid.position(self.time.value)
+        return sc_gf_q, ast_gf_q, sc_ast_gf_r, sc_sun_gf_r
 
     def get_system_scf(self):
         sc_ast_lf_r = tools.q_times_v(SystemModel.sc2gl_q, self.spacecraft_pos)

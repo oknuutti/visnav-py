@@ -67,13 +67,10 @@ void main()
                 float a = degrees(g);
                 float a2 = a*a;
                 float L = model_coefs[0]+model_coefs[1]*a+model_coefs[2]*a2+model_coefs[3]*a2*a+model_coefs[4]*a2*a2+model_coefs[5]*a2*a2*a;
-                float scaling = relative_albedo;
-                if (!use_flux_density) {
-                    scaling *= model_coefs[6];
-                }
+                float albedo = relative_albedo * model_coefs[6];
 
                 // model_coefs[6] is a scaling coef, reflectance can theoretically go to negative => clamp from below
-                radiance *= scaling*clamp((2*L*cos_incidence / (cos_incidence + cos_emission) + (1-L)*cos_incidence), 0, 1e19);
+                radiance *= albedo*clamp((2*L*cos_incidence / (cos_incidence + cos_emission) + (1-L)*cos_incidence), 0, 1e19);
             }
             else if(reflection_model == 2) {
                 // Hapke params & exact variation from article:

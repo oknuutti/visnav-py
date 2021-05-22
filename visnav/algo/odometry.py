@@ -145,7 +145,7 @@ class VisualOdometry:
         KEYPOINT_FAST,          # ORB descriptor if MATCH_DESCRIPTOR used
         KEYPOINT_AKAZE,         # AKAZE descriptor if MATCH_DESCRIPTOR used
     ) = range(3)
-    DEF_KEYPOINT_ALGO = KEYPOINT_AKAZE
+    DEF_KEYPOINT_ALGO = KEYPOINT_SHI_TOMASI
     DEF_MIN_KEYPOINT_DIST = 30
 
     (
@@ -564,7 +564,7 @@ class VisualOdometry:
                      self.pose_estimation in (VisualOdometry.POSE_RANSAC_2D, VisualOdometry.POSE_RANSAC_MIXED)):
             # include all tracked keypoints, i.e. also 3d points
             # TODO: (3) better to compare rf post to nf prior?
-            scale = np.linalg.norm(rf.pose.prior.loc - nf.pose.prior.loc)  # if self.use_scale_correction else 0.01
+            scale = np.linalg.norm(rf.pose.prior.loc - nf.pose.prior.loc) if self.use_scale_correction else 1.0
             tmp = [(id, pt2d, rf.kps_uv[id])
                    for id, pt2d in nf.kps_uv.items()
                    if id in rf.kps_uv]

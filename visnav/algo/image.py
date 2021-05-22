@@ -26,13 +26,13 @@ class ImageProc:
         return cv2.add(image, noise_img[:, :, 3])
 
     @staticmethod
-    def crop_and_zoom_image(image, x_off, y_off, width, height, scale, trg_w_h=None, depth=None):
+    def crop_and_zoom_image(image, x_off, y_off, width, height, scale, trg_w_h=None, others=tuple()):
         tw, th = trg_w_h
         if scale is None:
             scale = min(th / height, tw / width)
 
         res = []
-        for img in [image] + ([] if depth is None else [depth]):
+        for img in [image] + list(others):
             imgc = cv2.resize(img[y_off:y_off + height, x_off:x_off + width], None, fx=scale, fy=scale,
                               interpolation=cv2.INTER_AREA)
             oh, ow = img.shape
@@ -59,7 +59,7 @@ class ImageProc:
                 imgd = imgc
             res.append(imgd)
 
-        if depth is not None:
+        if len(others) > 0:
             return res
         return res[0]
 
@@ -97,6 +97,24 @@ class ImageProc:
         rp = np.percentile(ImageProc.adjust_gamma(ref_image, 1 / image_gamma), percentile)
         image = cv2.convertScaleAbs(image, None, rp / ip, 0)
         return ImageProc.adjust_gamma(image, image_gamma)
+
+    @staticmethod
+    def normalize_brightness(image, quantiles=(0.0005, 0.9999), top_margin=1.2, src_gamma=1.0, gamma=1.0):
+        image = ImageProc.adjust_gamma(image, src_gamma, inverse=True)
+
+        bot_v, top_v = np.quantile(image, quantiles)
+        top_v = top_v * top_margin
+
+        if image.dtype == np.uint8:
+            sc = 255 / (top_v - bot_v)
+            image = cv2.convertScaleAbs(image, None, sc, -bot_v * sc)
+        elif image.dtype in (float, np.float32):
+            sc = 1 / (top_v - bot_v)
+            image = np.clip((image - bot_v) * sc, 0, 1)
+        else:
+            assert False, 'unsupported image dtype: %s' % image.dtype
+
+        return ImageProc.adjust_gamma(image, gamma)
 
     @staticmethod
     def default_preprocess(image, max=255):

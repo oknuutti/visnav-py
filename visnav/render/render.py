@@ -9,6 +9,8 @@ import numba as nb
 
 import moderngl
 
+from visnav.missions.bennu import BennuSystemModel
+
 try:
     from moderngl.ext.obj import Obj
 except:
@@ -70,7 +72,7 @@ class RenderEngine:
         [1.00, 0, 0, 0, 0, 0, 0],
     ]).T
 
-    def __init__(self, view_width, view_height, antialias_samples=0):
+    def __init__(self, view_width, view_height, antialias_samples=0, enable_extra_data=False):
         if RenderEngine._ctx is None:
             RenderEngine._ctx = moderngl.create_standalone_context()
 
@@ -78,9 +80,12 @@ class RenderEngine:
         self._width = view_width
         self._height = view_height
         self._samples = antialias_samples
+        self._enable_extra_data = enable_extra_data
 
         self._wireframe_prog = self._load_prog('wireframe.vert', 'wireframe.frag', 'wireframe2.geom')
         self._shadow_prog = self._load_prog('shadow.vert', 'shadow.frag')
+        if self._enable_extra_data:
+            self._extra_data_prog = self._load_prog('extra_data.vert', 'extra_data.frag')
         self._prog = self._load_prog('shader_v400.vert', 'shader_v400.frag')
 
         self._cbo = self._ctx.renderbuffer((view_width, view_height), samples=antialias_samples, dtype='f4')
@@ -102,6 +107,8 @@ class RenderEngine:
         self._objs = []
         self._s_vbos = []
         self._s_objs = []
+        self._e_vbos = []
+        self._e_objs = []
         self._w_vbos = []
         self._w_objs = []
         self._raw_objs = []
@@ -116,6 +123,8 @@ class RenderEngine:
     def __del__(self):
         self._wireframe_prog.release()
         self._shadow_prog.release()
+        if self._enable_extra_data:
+            self._extra_data_prog.release()
         self._prog.release()
         self._cbo.release()
         self._dbo.release()
@@ -134,6 +143,10 @@ class RenderEngine:
         for o in self._s_objs:
             o.release()
         for o in self._s_vbos:
+            o.release()
+        for o in self._e_objs:
+            o.release()
+        for o in self._e_vbos:
             o.release()
         for o in self._w_objs:
             o.release()
@@ -234,6 +247,9 @@ class RenderEngine:
             self._vbos[obj_idx].release()
             self._s_objs[obj_idx].release()
             self._s_vbos[obj_idx].release()
+            if self._enable_extra_data:
+                self._e_objs[obj_idx].release()
+                self._e_vbos[obj_idx].release()
             self._textures[obj_idx].release()
 
         texture = None
@@ -255,11 +271,19 @@ class RenderEngine:
         s_vbo = self._ctx.buffer(s_obj_bytes)
         s_obj = self._ctx.simple_vertex_array(self._shadow_prog, s_vbo, 'vertexPosition_modelFrame')
 
+        if self._enable_extra_data:
+            e_vbo = self._ctx.buffer(obj_bytes)
+            e_obj = self._ctx.simple_vertex_array(self._extra_data_prog, e_vbo, 'vertexPosition_modelFrame',
+                                                  'vertexNormal_modelFrame', 'aTexCoords')
+
         if obj_idx is None:
             self._vbos.append(vbo)
             self._objs.append(obj)
             self._s_vbos.append(s_vbo)
             self._s_objs.append(s_obj)
+            if self._enable_extra_data:
+                self._e_vbos.append(e_vbo)
+                self._e_objs.append(e_obj)
             self._textures.append(texture)
             self._raw_objs.append(object)
         else:
@@ -267,6 +291,9 @@ class RenderEngine:
             self._objs[obj_idx] = obj
             self._s_vbos[obj_idx] = s_vbo
             self._s_objs[obj_idx] = s_obj
+            if self._enable_extra_data:
+                self._e_vbos[obj_idx] = e_vbo
+                self._e_objs[obj_idx] = e_obj
             self._raw_objs[obj_idx] = object
             self._textures[obj_idx] = texture
 
@@ -314,7 +341,7 @@ class RenderEngine:
     def render_wireframe(self, obj_idxs, rel_pos_v, rel_rot_q, color):
         obj_idxs = [obj_idxs] if isinstance(obj_idxs, int) else obj_idxs
         rel_pos_v = np.array(rel_pos_v).reshape((-1, 3))
-        rel_rot_q = np.array(rel_rot_q).reshape((-1, 1))
+        rel_rot_q = np.array(rel_rot_q).reshape((-1,))
         color = np.array(color).reshape((-1, 3))
         assert len(obj_idxs) == rel_pos_v.shape[0] == rel_rot_q.shape[0], 'obj_idxs, rel_pos_v and rel_rot_q dimensions dont match'
 
@@ -326,7 +353,7 @@ class RenderEngine:
 
         # self._ctx.clear(depth=float('inf'))
         for i, obj_idx in enumerate(obj_idxs):
-            self._set_params(obj_idx, rel_pos_v[i], rel_rot_q[i], for_wireframe=True)
+            self._set_params(obj_idx, rel_pos_v[i], rel_rot_q[i], self._wireframe_prog)
             self._wireframe_prog['color'].value = tuple(color[i])
             self._w_objs[obj_idx].render()
 
@@ -337,6 +364,38 @@ class RenderEngine:
             fbo = self._fbo
 
         data = np.frombuffer(fbo.read(components=3, alignment=1), dtype='u1').reshape((self._height, self._width, 3))
+        data = np.flipud(data)
+
+        return data
+
+    def render_extra_data(self, obj_idxs, rel_pos_v, rel_rot_q, light_v):
+        assert self._enable_extra_data, 'RenderEngine constructed with enable_extra_data=False'
+
+        obj_idxs = [obj_idxs] if isinstance(obj_idxs, int) else obj_idxs
+        rel_pos_v = np.array(rel_pos_v).reshape((-1, 3))
+        rel_rot_q = np.array(rel_rot_q).reshape((-1,))
+        light_v = np.array(light_v)
+        assert len(obj_idxs) == rel_pos_v.shape[0] == rel_rot_q.shape[0], 'obj_idxs, rel_pos_v and rel_rot_q dimensions dont match'
+
+        self._fbo.use()
+        self._ctx.enable(moderngl.DEPTH_TEST)
+        self._ctx.enable(moderngl.CULL_FACE)
+        self._ctx.front_face = 'ccw'  # cull back faces
+        self._ctx.clear(np.nan, np.nan, np.nan, np.nan, float('inf'))
+
+        for i, obj_idx in enumerate(obj_idxs):
+            self._set_params(obj_idx, rel_pos_v[i], rel_rot_q[i], light_v, prog=self._extra_data_prog)
+            self._extra_data_prog['select'].value = 0  # 0: px model coords, 1: light incidence, emission, phase angle (cos)
+            self._e_objs[obj_idx].render()
+
+        if self._samples > 0:
+            self._ctx.copy_framebuffer(self._fbo2, self._fbo)
+            fbo = self._fbo2
+        else:
+            fbo = self._fbo
+
+        data = np.frombuffer(fbo.read(components=3, alignment=1, dtype='f4'), dtype='f4')\
+                 .reshape((self._height, self._width, 3))
         data = np.flipud(data)
 
         return data
@@ -359,14 +418,14 @@ class RenderEngine:
         self._ctx.enable(moderngl.DEPTH_TEST)
         self._ctx.enable(moderngl.CULL_FACE)
         self._ctx.front_face = 'ccw'  # cull back faces
-        self._ctx.clear(0, 0, 0, float('inf'))
+        self._ctx.clear(0, 0, 0, 0, float('inf'))
         if shadows:
             self._shadow_map.use(RenderEngine._LOC_SHADOW_MAP)
             self._prog['shadow_map'].value = RenderEngine._LOC_SHADOW_MAP
 
         for i, obj_idx in enumerate(obj_idxs):
             self._set_params(obj_idx, rel_pos_v[i], rel_rot_q[i], light_v, shadow_mvps,
-                             textures, reflection, False, flux_density)
+                             textures, reflection, prog=self._prog, flux_density=flux_density)
             self._objs[obj_idx].render()
 
         if self._samples > 0:
@@ -413,36 +472,43 @@ class RenderEngine:
         return (data, depth) if get_depth else data
 
     def _set_params(self, obj_idx, rel_pos_v, rel_rot_q, light_v=None, shadow_mvps=None, use_textures=True,
-                    reflection=REFLMOD_LUNAR_LAMBERT, for_wireframe=False, flux_density=False):
+                    reflection=REFLMOD_LUNAR_LAMBERT, prog=None, flux_density=False):
 
         self._model_mx = np.identity(4)
         self._model_mx[:3, :3] = quaternion.as_rotation_matrix(rel_rot_q)
         self._model_mx[:3, 3] = rel_pos_v
 
-        prog = self._wireframe_prog if for_wireframe else self._prog
+        prog = prog or self._prog
         mv = self._view_mx.dot(self._model_mx)
         mvp = self._proj_mx.dot(mv)
         prog['mvp'].write((mvp.T).astype('float32').tobytes())
 
-        if not for_wireframe:
+        if 'mv' in prog:
             prog['mv'].write((mv.T).astype('float32').tobytes())
+
+        if 'use_texture' in prog:
             use_texture = use_textures and self._textures[obj_idx] is not None
             prog['use_texture'].value = use_texture
             if use_texture:
                 self._textures[obj_idx].use(RenderEngine._LOC_TEXTURE)
                 prog['texture_map'].value = RenderEngine._LOC_TEXTURE
 
+        if 'reflection_model' in prog:
             prog['use_flux_density'].value = flux_density is not False
             prog['brightness_coef'].value = 1 if flux_density else 0.65
-            prog['lightDirection_viewFrame'].value = tuple(-light_v)  # already in view frame
             prog['reflection_model'].value = reflection
             prog['model_coefs'].value = RenderEngine.REFLMOD_PARAMS[reflection]
 
+        if 'lightDirection_viewFrame' in prog:
+            prog['lightDirection_viewFrame'].value = tuple(-light_v)  # already in view frame
+
+        if 'use_shadows' in prog:
             use_shadows = shadow_mvps is not None
             prog['use_shadows'].value = use_shadows
             if use_shadows:
                 self._prog['shadow_mvp'].write(shadow_mvps[obj_idx].T.astype('float32').tobytes())
 
+        if 'reflection_model' in prog:
             if reflection == RenderEngine.REFLMOD_HAPKE and RenderEngine.REFLMOD_PARAMS[reflection][9] % 2 > 0:
                 hapke_K = self._ctx.texture((7, 19), 1, data=RenderEngine.HAPKE_K.T.astype('float32').tobytes(), alignment=1, dtype='f4')
                 hapke_K.use(RenderEngine._LOC_HAPKE_K)
@@ -552,10 +618,11 @@ class RenderEngine:
 if __name__ == '__main__':
     from visnav.settings import *
     import cv2
-    sm = DidymosSystemModel(use_narrow_cam=False, target_primary=False, hi_res_shape_model=False)
+    sm = BennuSystemModel(hi_res_shape_model=True)
+#    sm = DidymosSystemModel(use_narrow_cam=False, target_primary=False, hi_res_shape_model=False)
 #    sm = RosettaSystemModel()
     re = RenderEngine(sm.cam.width, sm.cam.height, antialias_samples=16)
-    re.set_frustum(sm.cam.x_fov, sm.cam.y_fov, 0.05, 2)
+    re.set_frustum(sm.cam.x_fov, sm.cam.y_fov, sm.min_distance*0.2, sm.max_distance*1.1)
     pos = [0, 0, -sm.min_med_distance * 1]
     q = tools.angleaxis_to_q((math.radians(20), 0, 1, 0))
 
@@ -611,8 +678,7 @@ if __name__ == '__main__':
             cv2.waitKey()
 
     elif True:
-        RenderEngine.REFLMOD_PARAMS[RenderEngine.REFLMOD_HAPKE] = DidymosPrimary.HAPKE_PARAMS
-        RenderEngine.REFLMOD_PARAMS[RenderEngine.REFLMOD_LUNAR_LAMBERT] = DidymosPrimary.LUNAR_LAMBERT_PARAMS
+        RenderEngine.REFLMOD_PARAMS = sm.asteroid.reflmod_params
         imgs = ()
         i = 1
         th = math.radians(100)

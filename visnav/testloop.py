@@ -49,7 +49,7 @@ class TestLoop:
                  uniform_distance_gen=UNIFORM_DISTANCE_GENERATION,
                  operation_zone_only=False, state_generator=None, cache_path=None,
                  sm_noise=0, sm_noise_len_sc=SHAPE_MODEL_NOISE_LEN_SC,
-                 navcam_cache_id='', save_depth=False,
+                 navcam_cache_id='', save_depth=False, save_coords=False,
                  traj_len=1, traj_prop_dt=60, only_populate_cache=ONLY_POPULATE_CACHE,
                  real_sm_noise=0, real_sm_noise_len_sc=SHAPE_MODEL_NOISE_LEN_SC,
                  real_tx_noise=0, real_tx_noise_len_sc=SHAPE_MODEL_NOISE_LEN_SC,
@@ -60,7 +60,8 @@ class TestLoop:
                  hapke_shoe=None, hapke_shoe_w=None,
                  hapke_cboe=None, hapke_cboe_w=None,
                  noise_time=0, noise_ast_rot_axis=0, noise_ast_phase_shift=0, noise_sco_lat=0,
-                 noise_sco_lon=0, noise_sco_rot=0, noise_lateral=0, noise_altitude=0
+                 noise_sco_lon=0, noise_sco_rot=0, noise_lateral=0, noise_altitude=0,
+                 noise_phase_angle=0, noise_light_dir=0, ext_noise_dist=False
                  ):
 
         self.system_model = system_model
@@ -97,6 +98,7 @@ class TestLoop:
         self.hapke_cboe = hapke_cboe
         self.hapke_cboe_w = hapke_cboe_w
         self.save_depth = save_depth
+        self.save_coords = save_coords
 
         self.traj_len = traj_len
         self.traj_prop_dt = traj_prop_dt
@@ -121,6 +123,10 @@ class TestLoop:
         self._synth_navcam = None
         self._hires_obj_idx = None
 
+        # instead of sampling ast, s/c orient and light direction from gaussians with given sd,
+        # sample uniformly: y ~ [-2*sd, 2*sd], x = sqrt(y)
+        self._ext_noise_dist = ext_noise_dist
+
         # gaussian sd in seconds
         self._noise_time = noise_time     # _noise_ast_phase_shift does practically same thing
         
@@ -132,6 +138,10 @@ class TestLoop:
         self._noise_sco_lat = noise_sco_lat   # in deg, 95% within 2x this
         self._noise_sco_lon = noise_sco_lon   # in deg, 95% within 2x this
         self._noise_sco_rot = noise_sco_rot   # in deg, 95% within 2x this
+
+        # light direction noise, gaussian sd in degrees
+        self._noise_phase_angle = noise_phase_angle
+        self._noise_light_dir = noise_light_dir
 
         # s/c position noise, gaussian sd in km per km of distance
         self.enable_initial_location = True
@@ -278,34 +288,78 @@ class TestLoop:
 
         self._close_log(times-skip)
 
+    @staticmethod
+    def _ext_rand(min_v, max_v=None, zero=0, ext_coef=2):
+        if max_v is None:
+            max_v = min_v
+            min_v = zero - max_v
+
+        x = random.random() ** (1 / ext_coef)  # get values that are closer to extremes
+        a = (min_v - zero) if random.random() > 0.5 else (max_v - zero)
+        return a * x
+
     def add_noise(self, sm):
         rotation_noise = True if self._state_list is None else self._rotation_noise
         
         ## add measurement noise to
+        # - direction of light by rotating the whole system around the sun
+        if self._noise_phase_angle > 0 or self._noise_light_dir > 0:
+            if self._ext_noise_dist:
+                noise_ph = self._ext_rand(2 * rad(self._noise_phase_angle))
+                noise_na = self._ext_rand(2 * rad(self._noise_light_dir))
+            else:
+                noise_ph = np.random.normal(0, rad(self._noise_phase_angle))
+                noise_na = np.random.normal(0, rad(self._noise_light_dir))
+
+            cam_axis = tools.q_times_v(sm.spacecraft_q, np.array([1, 0, 0]))
+            light_v = tools.normalize_v(sm.asteroid.position(sm.time.value))
+            axis_ph = np.cross(cam_axis, light_v)
+            ph_q = tools.angleaxis_to_q(np.array([noise_ph, *axis_ph]))
+            sm.rotate_system(ph_q)
+
+            axis_na = tools.q_times_v(sm.spacecraft_q, np.array([1, 0, 0]))
+            na_q = tools.angleaxis_to_q(np.array([noise_na, *axis_na]))
+            sm.rotate_system(na_q)
+
         # - datetime (seconds)
         if rotation_noise:
-            meas_time = sm.time.real_value + np.random.normal(0, self._noise_time)
+            if self._ext_noise_dist:
+                noise_t = self._ext_rand(2*self._noise_time)
+            else:
+                noise_t = np.random.normal(0, self._noise_time)
+            meas_time = sm.time.real_value + noise_t
             sm.time.value = meas_time
             assert np.isclose(sm.time.value, meas_time), 'Failed to set time value'
 
         # - asteroid state estimate
-        ax_lat, ax_lon, ax_phs = map(rad, sm.real_asteroid_axis)
         noise_da = np.random.uniform(0, rad(self._noise_ast_rot_axis))
-        noise_dd = np.random.uniform(0, 2*math.pi)
+        noise_dd = np.random.uniform(0, 2 * math.pi)
+        if self._ext_noise_dist:
+            noise_da = np.sqrt(noise_da)
+            noise_ph = self._ext_rand(2*rad(self._noise_ast_phase_shift))
+        else:
+            noise_ph = np.random.normal(0, rad(self._noise_ast_phase_shift))
+        ax_lat, ax_lon, ax_phs = map(rad, sm.real_asteroid_axis)
         meas_ax_lat = ax_lat + noise_da*math.sin(noise_dd)
         meas_ax_lon = ax_lon + noise_da*math.cos(noise_dd)
-        meas_ax_phs = ax_phs + np.random.normal(0, rad(self._noise_ast_phase_shift))
+        meas_ax_phs = ax_phs + noise_ph
         if rotation_noise:
             sm.asteroid_axis = map(deg, (meas_ax_lat, meas_ax_lon, meas_ax_phs))
 
         # - spacecraft orientation measure
+        if self._ext_noise_dist:
+            noise_lat = self._ext_rand(2*rad(self._noise_sco_lat))
+            noise_lon = self._ext_rand(2*rad(self._noise_sco_lon))
+            noise_rot = self._ext_rand(2*rad(self._noise_sco_rot))
+        else:
+            noise_lat = np.random.normal(0, rad(self._noise_sco_lat))
+            noise_lon = np.random.normal(0, rad(self._noise_sco_lon))
+            noise_rot = np.random.normal(0, rad(self._noise_sco_rot))
+
         sc_lat, sc_lon, sc_rot = map(rad, sm.real_spacecraft_rot)
-        meas_sc_lat = max(-math.pi/2, min(math.pi/2, sc_lat
-                + np.random.normal(0, rad(self._noise_sco_lat))))
-        meas_sc_lon = wrap_rads(sc_lon 
-                + np.random.normal(0, rad(self._noise_sco_lon)))
-        meas_sc_rot = wrap_rads(sc_rot
-                + np.random.normal(0, rad(self._noise_sco_rot)))
+        meas_sc_lat = max(-math.pi/2, min(math.pi/2, sc_lat + noise_lat))
+        meas_sc_lon = wrap_rads(sc_lon + noise_lon)
+        meas_sc_rot = wrap_rads(sc_rot + noise_rot)
         if rotation_noise:
             sm.spacecraft_rot = map(deg, (meas_sc_lat, meas_sc_lon, meas_sc_rot))
         
@@ -321,11 +375,17 @@ class TestLoop:
     def _noisy_sc_position(self, sm):
         x, y, z = sm.real_spacecraft_pos
         d = np.linalg.norm((x, y, z))
-        return (
-            x + d * np.random.normal(0, math.tan(math.radians(self._noise_lateral))),
-            y + d * np.random.normal(0, math.tan(math.radians(self._noise_lateral))),
-            z + d * np.random.normal(0, self._noise_altitude),
-        )
+
+        if self._ext_noise_dist:
+            nx = self._ext_rand(2 * math.tan(math.radians(self._noise_lateral)))
+            ny = self._ext_rand(2 * math.tan(math.radians(self._noise_lateral)))
+            nz = self._ext_rand(2 * self._noise_altitude)
+        else:
+            nx = np.random.normal(0, math.tan(math.radians(self._noise_lateral)))
+            ny = np.random.normal(0, math.tan(math.radians(self._noise_lateral)))
+            nz = np.random.normal(0, self._noise_altitude)
+
+        return x + d * nx, y + d * ny, z + d * nz
 
     def _initial_state(self, sm):
         return {
@@ -333,6 +393,7 @@ class TestLoop:
             'ast_axis': sm.asteroid_axis,
             'sc_rot': sm.spacecraft_rot,
             'sc_pos': sm.spacecraft_pos,
+            'ast_pos': sm.asteroid.real_position,
         }
     
     def load_state(self, sm, i):
@@ -399,7 +460,8 @@ class TestLoop:
     def render_navcam_image_static(sm, renderer, obj_idxs, rel_pos_v=None, rel_rot_q=None, light_v=None, sc_q=None,
                                    sun_distance=None, exposure=None, gain=None, gamma=1.8, auto_gain=True,
                                    use_shadows=True, use_textures=False, reflmod_params=None, cam=None, fluxes_only=False,
-                                   stars=True, lens_effects=True, star_db=None, particles=None, return_depth=False):
+                                   stars=True, lens_effects=True, star_db=None, particles=None, return_depth=False,
+                                   return_coords=False):
 
         if rel_pos_v is None:
             rel_pos_v = sm.spacecraft_pos
@@ -428,6 +490,9 @@ class TestLoop:
         object_flux, depth = renderer.render(obj_idxs, rel_pos_v, rel_rot_q, light_v, get_depth=True,
                                              shadows=use_shadows, textures=use_textures, reflection=model,
                                              gamma=1.0, flux_density=False if auto_gain else solar_flux_density)
+
+        if return_coords:
+            coords = renderer.render_extra_data(obj_idxs, rel_pos_v, rel_rot_q, light_v)
 
         if np.any(np.isnan(object_flux)):
             print('NaN(s) encountered in rendered image!')
@@ -483,9 +548,12 @@ class TestLoop:
             cv2.waitKey()
             quit()
 
+        ret = [img]
         if return_depth:
-            return img, depth
-        return img
+            ret.append(depth)
+        if return_coords:
+            ret.append(coords)
+        return ret
 
     def render_navcam_image(self, sm, i, traj_len=1, dt=60):
         use_textures = sm.asteroid.hires_target_model_file_textures or self.real_tx_noise > 0
@@ -495,8 +563,9 @@ class TestLoop:
 
         if self._synth_navcam is None:
             update_model = True
-            self._synth_navcam = RenderEngine(sm.cam.width, sm.cam.height, antialias_samples=16)
-            self._synth_navcam.set_frustum(sm.cam.x_fov, sm.cam.y_fov, sm.min_altitude, sm.max_distance)
+            self._synth_navcam = RenderEngine(sm.cam.width, sm.cam.height, antialias_samples=16,
+                                              enable_extra_data=self.save_coords)
+            self._synth_navcam.set_frustum(sm.cam.x_fov, sm.cam.y_fov, sm.min_altitude*.2, sm.max_distance*1.1)
             if use_textures and not sm.asteroid.hires_target_model_file_textures:
                 sm.asteroid.real_shape_model.texfile = None
                 # TODO: customize the size, affects performance quite a lot
@@ -529,6 +598,7 @@ class TestLoop:
         particles = None
         cache_files = []
         single = traj_len == 1
+        px_s = 2*math.tan(max(math.radians(sm.cam.x_fov) / sm.cam.width, math.radians(sm.cam.y_fov) / sm.cam.height)/2)
 
         for j in range(traj_len):
             sm.swap_values_with_real_vals()
@@ -550,16 +620,32 @@ class TestLoop:
 
                 particles = Particles(sm.cam, None, None, cones=cones, haze=haze)
 
-            img, depth = TestLoop.render_navcam_image_static(sm, self._synth_navcam, self._hires_obj_idx,
-                                                             use_textures=use_textures, reflmod_params=reflmod_params,
-                                                             particles=particles, return_depth=True)
+            ret = TestLoop.render_navcam_image_static(sm, self._synth_navcam, self._hires_obj_idx, gamma=1.0,
+                                                      use_textures=use_textures, reflmod_params=reflmod_params,
+                                                      particles=particles, return_depth=True,
+                                                      return_coords=self.save_coords)
+            if self.save_coords:
+                img, depth, coords = ret
+            else:
+                img, depth = ret
+            depth[depth >= 0.99 * sm.max_distance] = np.nan
+            img = ImageProc.normalize_brightness(img, gamma=1.8)
 
             sm.swap_values_with_real_vals()
 
-            cache_files.append(self.cache_file(i, postfix=('' if single else ('%d' % j))) + '.png')
+            fname = self.cache_file(i, postfix=('' if single else ('%d' % j)))
+            cache_files.append(fname + '.png')
             cv2.imwrite(cache_files[j], img, [cv2.IMWRITE_PNG_COMPRESSION, 9])
+
             if self.save_depth:
-                cv2.imwrite(cache_files[j][:-4]+'_d.exr', depth.astype(np.float32), (cv2.IMWRITE_EXR_TYPE, cv2.IMWRITE_EXR_TYPE_FLOAT))
+                cv2.imwrite(fname+'.d.exr', depth.astype(np.float32),
+                            (cv2.IMWRITE_EXR_TYPE, cv2.IMWRITE_EXR_TYPE_FLOAT))
+
+            if self.save_coords:
+                cv2.imwrite(fname+'.xyz.exr', coords.astype(np.float32),
+                            (cv2.IMWRITE_EXR_TYPE, cv2.IMWRITE_EXR_TYPE_FLOAT))
+                cv2.imwrite(fname + '.s.exr', (depth * px_s).astype(np.float32),
+                            (cv2.IMWRITE_EXR_TYPE, cv2.IMWRITE_EXR_TYPE_FLOAT))
 
             if not single:
                 sm.save_state(self.cache_file(i, skip_cache_id=True, postfix=str(j)))

@@ -1,5 +1,8 @@
 import re
 import sys
+
+from visnav.missions.bennu import BennuSystemModel
+
 sys.tracebacklimit = 10
 
 from scipy import optimize
@@ -10,21 +13,23 @@ from visnav.missions.rosetta import RosettaSystemModel
 from visnav.testloop import TestLoop
 
 
-def get_system_model(mission, hi_res_shape_model=False):
+def get_system_model(mission, hi_res_shape_model=False, res_mult=1.0):
     rose = re.match(r'^rose(\d{3})?$', mission)
 
     if rose:
         mission = 'rose'
         batch = rose[1] if rose[1] else '006'
-        sm = RosettaSystemModel(hi_res_shape_model=hi_res_shape_model, rosetta_batch='mtp'+batch)
+        sm = RosettaSystemModel(hi_res_shape_model=hi_res_shape_model, rosetta_batch='mtp'+batch, res_mult=res_mult)
+    elif mission == 'orex':
+        sm = BennuSystemModel(hi_res_shape_model=hi_res_shape_model, res_mult=res_mult)
     elif mission == 'didy1n':
-        sm = DidymosSystemModel(target_primary=True, hi_res_shape_model=hi_res_shape_model)
+        sm = DidymosSystemModel(target_primary=True, hi_res_shape_model=hi_res_shape_model, res_mult=res_mult)
     elif mission == 'didy1w':
-        sm = DidymosSystemModel(target_primary=True, hi_res_shape_model=hi_res_shape_model, use_narrow_cam=False)
+        sm = DidymosSystemModel(target_primary=True, hi_res_shape_model=hi_res_shape_model, use_narrow_cam=False, res_mult=res_mult)
     elif mission == 'didy2n':
-        sm = DidymosSystemModel(target_primary=False, hi_res_shape_model=hi_res_shape_model)
+        sm = DidymosSystemModel(target_primary=False, hi_res_shape_model=hi_res_shape_model, res_mult=res_mult)
     elif mission == 'didy2w':
-        sm = DidymosSystemModel(target_primary=False, hi_res_shape_model=hi_res_shape_model, use_narrow_cam=False)
+        sm = DidymosSystemModel(target_primary=False, hi_res_shape_model=hi_res_shape_model, use_narrow_cam=False, res_mult=res_mult)
     else:
         assert False, 'Unknown mission given as argument: %s' % mission
     assert mission == sm.mission_id, 'wrong system model mission id'

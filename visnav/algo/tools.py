@@ -599,7 +599,7 @@ def mv_normal(mean, cov=None, L=None, size=None):
 
 
 def point_cloud_vs_model_err(points: np.ndarray, model) -> np.ndarray:
-    faces = np.array([f[0] for f in model.faces], dtype='uint')
+    faces = model.faces   # np.array([f[0] for f in model.faces], dtype='uint')
     vertices = np.array(model.vertices)
     errs = get_model_errors(points, vertices, faces)
     return errs
@@ -689,7 +689,7 @@ def get_model_errors(points, vertices, faces):
     devs = np.empty(points.shape[0])
     for i in nb.prange(count):
         vx = points[i, :]
-        err = intersections(faces, vertices, np.array(((0, 0, 0), vx)))
+        err = intersections(faces, vertices.astype(np.float64), np.array(((0, 0, 0), vx)))
         if math.isinf(err):  # len(pts) == 0:
             print('no intersections!')
             continue
@@ -891,7 +891,10 @@ def texture_noise(model, support=None, L=None, noise_sd=SHAPE_MODEL_NOISE_LV['lo
         err1 *= err_coef
 
     noisy_tex = tex + err0 + err1
-    noisy_tex /= np.max(noisy_tex)
+
+    min_v, max_v = np.quantile(noisy_tex, (0.0001, 0.9999))
+    min_v = min(0, min_v)
+    noisy_tex = (np.clip(noisy_tex, min_v, max_v) - min_v) / (max_v - min_v)
 
     if 0:
         import matplotlib.pyplot as plt
@@ -1008,8 +1011,7 @@ def points_with_noise(points, support=None, L=None, noise_lv=SHAPE_MODEL_NOISE_L
     if L is None:
         kernel = 0.6 * noise_lv * Matern(length_scale=len_sc * max_rng, nu=1.5) \
                  + 0.4 * noise_lv * Matern(length_scale=0.1 * len_sc * max_rng, nu=1.5) \
-                 + WhiteKernel(
-            noise_level=1e-5 * noise_lv * max_rng)  # white noise for positive definite covariance matrix only
+                 + WhiteKernel(noise_level=1e-5 * noise_lv * max_rng)  # white noise for positive definite cov mx only
         y_cov = kernel(support - mean)
 
     # sample gp
@@ -1040,10 +1042,11 @@ def points_with_noise(points, support=None, L=None, noise_lv=SHAPE_MODEL_NOISE_L
             #     raise IndexError('%s,%s,%s'%(err.shape, full_err.shape, points.shape)) from e
 
     # extra high frequency noise
-    # white_noise = 1 if True else np.exp(np.random.normal(scale=0.2*noise_lv*max_rng, size=(len(full_err),1)))
+    # white_noise = 1 if False else np.exp(np.random.normal(scale=0.2*noise_lv*max_rng, size=(len(full_err),1)))
+    white_noise = 0 if 0 else np.random.normal(scale=0.0003*max_rng, size=(len(full_err), 1 if only_z else 3))
 
     if only_z:
-        add_err_z = (max_rng / 2) * (full_err - 1)
+        add_err_z = (max_rng / 2) * (full_err - 1) + white_noise
         add_err = np.concatenate((np.zeros((len(full_err), 2)), add_err_z), axis=1)
         noisy_points = points + add_err
         devs = np.abs(noisy_points[:, 2] - points[:, 2]) / (max_rng / 2)
@@ -1052,7 +1055,7 @@ def points_with_noise(points, support=None, L=None, noise_lv=SHAPE_MODEL_NOISE_L
         # noisy_points = (points-mean)*full_err*white_noise +mean
         # r = np.sqrt(np.sum((points - mean)**2, axis=-1)).reshape(-1, 1)
         # noisy_points = (points - mean) * (1 + np.log(full_err)/r) + mean
-        noisy_points = (points - mean) * full_err + mean
+        noisy_points = (points - mean) * full_err + mean + white_noise
         devs = np.sqrt(np.sum((noisy_points - points) ** 2, axis=-1) / np.sum((points - mean) ** 2, axis=-1))
 
     if DEBUG or not BATCH_MODE:
