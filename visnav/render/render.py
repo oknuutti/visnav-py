@@ -11,10 +11,7 @@ import moderngl
 
 from visnav.missions.bennu import BennuSystemModel
 
-try:
-    from moderngl.ext.obj import Obj
-except:
-    from ModernGL.ext.obj import Obj
+from objloader import Obj
 
 from visnav.algo import tools
 from visnav.algo.image import ImageProc
@@ -75,6 +72,9 @@ class RenderEngine:
     def __init__(self, view_width, view_height, antialias_samples=0, enable_extra_data=False):
         if RenderEngine._ctx is None:
             RenderEngine._ctx = moderngl.create_standalone_context()
+
+        view_width = int(view_width)
+        view_height = int(view_height)
 
         self._ctx = RenderEngine._ctx
         self._width = view_width

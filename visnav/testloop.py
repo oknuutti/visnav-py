@@ -111,7 +111,7 @@ class TestLoop:
         os.makedirs(self.cache_path, exist_ok=True)
 
         self.render_engine = RenderEngine(system_model.view_width, system_model.view_height)
-        self.obj_idx = None   #self.render_engine.load_object(self.system_model.asteroid.real_shape_model, smooth=self._smooth_faces)
+        self.render_engine.load_object(self.system_model.asteroid.real_shape_model, smooth=self._smooth_faces)
 
         self.keypoint = KeypointAlgo(self.system_model, self.render_engine, 0, est_real_ast_orient=est_real_ast_orient)
         self.keypoint.RENDER_TEXTURES = self.system_model.asteroid.hires_target_model_file_textures
