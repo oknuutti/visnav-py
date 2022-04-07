@@ -19,9 +19,8 @@ setup(
     package_data={'visnav.render': ['*.frag', '*.vert', '*.geom']},
 
     # Declare your packages' dependencies here, for eg:
-    install_requires=['moderngl>=5.5.0', 'moderngl.ext.obj>=1.0.0', 'scipy', 'numpy', 'astropy', 'numba>=0.39.0',
-                      # 'opencv', 'quaternion'  --these didn't work, conda versions were not noticed by pip
-                      ],
+    install_requires=['moderngl>=5.5.0', 'scipy', 'numpy', 'astropy', 'numba>=0.39.0',
+                      'opencv-python', 'numpy-quaternion', 'objloader'],
 
     author=__author__,
     author_email='olli.knuuttila@gmail.com',
