@@ -264,6 +264,7 @@ class ApiServer:
                                                       rel_pos_v, rel_rot_q, light_v, sc_q, sun_distance,
                                                       exposure=exp, gain=gain, auto_gain=False,
                                                       gamma=1.0, use_shadows=True, use_textures=True)
+            img = img[0]
             if self._autolevel:
                 v = np.percentile(img, 100 - 0.0003)
                 level_trg = level * 170 / v

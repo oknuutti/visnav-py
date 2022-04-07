@@ -3,21 +3,26 @@ import os
 
 import cv2
 import numpy as np
+import quaternion
 
 from scipy.interpolate import interp1d, interp2d
-from scipy.optimize import minimize
+from scipy.optimize import minimize, least_squares
 import matplotlib.pyplot as plt
 
 from visnav.algo import tools
 from visnav.algo.base import AlgorithmBase
 from visnav.algo.image import ImageProc
+from visnav.algo.keypoint import KeypointAlgo
+from visnav.algo.model import SystemModel
 from visnav.iotools import lblloader
 from visnav.iotools.objloader import ShapeModel
 from visnav.missions.didymos import DidymosPrimary
+from visnav.missions.itokawa import ItokawaSystemModel
 from visnav.missions.rosetta import RosettaSystemModel
 from visnav.render.render import RenderEngine
 
 from visnav.settings import *
+
 
 def Lfun(x, p):
     L = x[0]
@@ -26,9 +31,103 @@ def Lfun(x, p):
     return L
 
 
-def est_refl_model(hapke=True, iters=1, init_noise=0.0, verbose=True):
+def est_itokawa_model(refl_model, use_ls=False, hapke=True, adjust_pose=False, iters=1, init_noise=0.0, verbose=True):
+    sm = ItokawaSystemModel(hi_res_shape_model=True)
+    sm.view_width = sm.cam.width
+    img_file = 'st_2422895458_v_vf'
+
+    imgs = {    # phase angle, exposure
+        img_file: 0.087,   # 16.7, 0.087s
+    }
+
+    if 0:
+        # initial pose from SISPO config json
+        rel_p = np.array([146226188132.0, -68812322442.0, -477863711.0]) \
+                - np.array([146226194732.0, -68812326932.0, -477863381.0])
+        sm.spacecraft_q = tools.angleaxis_to_q([1.847799, -0.929873, 0.266931, -0.253146])
+        sm.spacecraft_pos = tools.q_times_v(SystemModel.sc2gl_q.conj() * sm.spacecraft_q.conj(), -rel_p * 0.001)
+        sm.asteroid.real_position = np.array([146226194732.0, -68812326932.0, -477863381.0])
+        sm.asteroid_q = tools.eul_to_q((math.radians(90),), 'z')
+        sm.real_asteroid_axis = [1, 0, 0]
+        sm.real_asteroid_q = quaternion.one
+        sm.real_spacecraft_q = quaternion.one
+        sm.real_spacecraft_pos = [0, 0, -100]
+        sm.real_spacecraft_q = quaternion.one
+        sm.time.real_value = 0
+        sm.swap_values_with_real_vals()
+        sm.save_state(os.path.join(sm.asteroid.image_db_path, img_file + '.lbl'))
+        sm.swap_values_with_real_vals()
+
+        re = RenderEngine(sm.view_width, sm.view_height, antialias_samples=0)
+        obj_idx = re.load_object(sm.asteroid.real_shape_model, smooth=False)
+        ab = AlgorithmBase(sm, re, obj_idx)
+        synth = ab.render(shadows=True, reflection=RenderEngine.REFLMOD_HAPKE, gamma=1, textures=False)
+        real = cv2.imread(os.path.join(sm.asteroid.image_db_path, img_file + '.png'), cv2.IMREAD_GRAYSCALE)
+        cv2.imshow('real vs fake', np.concatenate((cv2.resize(real, synth.shape), synth), axis=1))
+        cv2.waitKey()
+        quit()
+    if 0:
+        # PSF estimation
+        #   extracted from fig 18, v-band, https://www.sciencedirect.com/science/article/abs/pii/S0019103510000023
+        #   using https://apps.automeris.io/wpd/
+        psf = np.array([0.43052, 0.85239,
+                        0.67939, 0.63180,
+                        0.96927, 0.41543,
+                        1.2806, 0.26510,
+                        1.5518, 0.16749,
+                        1.8095, 0.10582,
+                        2.2352, 0.051574,
+                        2.7611, 0.020587,
+                        3.1737, 0.0083832,
+                        3.6655, 0.0046986
+                        ]).reshape((-1, 2))
+
+        def gauss(x, sig):
+            return np.exp(-np.power(x, 2.) / (2 * np.power(sig, 2.)))
+
+        def cost(x):
+            return np.log(psf[:, 1]) - np.log(x[0] * gauss(psf[:, 0], x[1]) + (1 - x[0]) * gauss(psf[:, 0], x[2]))
+
+        from scipy.optimize import least_squares
+        res = least_squares(cost, (0.9, 0.8, 2.0))
+        print('res: ' % (res.x,))
+
+        import matplotlib.pyplot as plt
+        plt.scatter(psf[:, 0], psf[:, 1])
+        plt.gca().loglog()
+        plt.xlim((0.1, 10))
+        plt.ylim((1e-3, 1))
+        x = np.exp(np.linspace(np.log(1e-2), np.log(10), 100))
+        plt.plot(x, res.x[0] * gauss(x, res.x[1]) + (1 - res.x[0]) * gauss(x, res.x[2]))
+        plt.show()
+
+    init_poses = {
+        # 'st_2422895458_v_vf': [2.02553e-02, -4.04985e-03, -7.98449e+00, 5.53892e+00, 2.06534e-02, -2.72958e+00,
+        #                        -4.38323e-03, -4.39473e-01],  # => 10.48100,
+        # 'st_2422895458_v_vf': [2.03997e-02, -4.54192e-03, -7.97903e+00, 5.53755e+00, 2.04618e-02, -2.73315e+00,
+        #                        -4.18826e-03, -4.34453e-01],  # => 9.66055 => 9.378393
+        # 'st_2422895458_v_vf': [2.03239e-02, -4.51303e-03, -7.97817e+00, 5.51440e+00, 2.41751e-02, -2.77959e+00,
+        #                        -2.43157e-03, -4.33176e-01],  # => 9.24684,  9.094556
+        'st_2422895458_v_vf': [2.03795e-02, -4.56515e-03, -7.97761e+00, 5.51429e+00, 2.48090e-02, -2.78167e+00,
+                               -2.39040e-03, -4.31989e-01],  # => 9.04088 => ,
+    }
+
+    if refl_model:
+        x = est_model(sm, imgs, refl_model, use_ls, hapke=True, init_poses=init_poses, iters=iters,
+                      init_noise=init_noise, verbose=True)
+    else:
+        x = []
+        for file, exp in imgs.items():
+            imgs = {file: exp}
+            x_, err = est_model(sm, imgs, refl_model, use_ls, hapke=True, init_poses=init_poses, iters=iters,
+                                adjust_pose=adjust_pose, init_noise=init_noise, verbose=verbose)
+            print("'%s': [%s] => %.5f," % (file, ', '.join(['%.5e' % f for f in x_[0]]), err))
+            x.append(x_[0])
+    return x
+
+
+def est_rosetta_model(refl_model, use_ls=False, hapke=True, iters=1, init_noise=0.0, verbose=True):
     sm = RosettaSystemModel()
-    imgsize = (512, 512)
     imgs = {
         'ROS_CAM1_20140831T104353': 3.2,   # 60, 3.2s
         'ROS_CAM1_20140831T140853': 3.2,   # 62, 3.2s
@@ -51,87 +150,263 @@ def est_refl_model(hapke=True, iters=1, init_noise=0.0, verbose=True):
         'ROS_CAM1_20140827T021834': 3.2,   # 157, 3.2s
         'ROS_CAM1_20140826T221834': 2.8,   # 160, 2.8s
     }
+    init_poses = {
+        'ROS_CAM1_20140831T104353': [2.86728e+00, -3.29380e+00, -6.93154e+01, 8.50184e-01, 7.69297e-01, 4.18987e+00,
+                                     -4.26772e-01, -1.30608e+00],
+        'ROS_CAM1_20140831T140853': [2.82040e+00, -3.16094e+00, -6.60739e+01, 5.10328e+00, -1.26288e+00, 2.59983e+00,
+                                     -4.96884e-01, -1.07037e+00],
+        'ROS_CAM1_20140831T103933': [2.87641e+00, 2.20805e+00, -6.98097e+01, 9.29692e-01, 6.71018e-01, 3.89043e+00,
+                                     -5.05890e-01, -1.15714e+00],
+        'ROS_CAM1_20140831T022253': [-2.37373e+00, 2.17973e+00, -6.68176e+01, 5.19087e+00, -2.52479e+00, -1.17818e+00,
+                                     -4.91720e-01, -1.17365e+00],
+        'ROS_CAM1_20140821T100719': [1.73006e-01, -2.38229e-01, -7.25163e+01, -1.78245e-01, 5.16713e-01, 1.46140e+00,
+                                     -4.96074e-01, -1.22225e+00],
+        'ROS_CAM1_20140821T200718': [7.88705e-02, -4.66685e-01, -6.68539e+01, -5.51790e-01, -1.81700e+00, -8.97430e-01,
+                                     -4.30595e-01, -1.11678e+00],
+        'ROS_CAM1_20140822T113854': [2.50132e+00, -2.41133e+00, -6.01961e+01, -7.01139e-02, 5.66697e-01, 2.17266e+00,
+                                     -4.85382e-01, -1.09542e+00],
+        'ROS_CAM1_20140823T021833': [-2.31681e+00, -2.36285e+00, -5.95774e+01, 3.27741e-01, 6.79246e-01, 3.19829e+00,
+                                     -5.03423e-01, -1.17515e+00],
+        'ROS_CAM1_20140819T120719': [5.51455e-02, -1.46443e-02, -7.83410e+01, 5.27990e-01, 8.24076e-01, 3.91783e+00,
+                                     -4.77252e-01, -1.13768e+00],
+        'ROS_CAM1_20140824T021833': [-2.58337e+00, -2.73790e+00, -6.70307e+01, 1.68083e-01, 6.58562e-01, 2.91220e+00,
+                                     -4.63205e-01, -1.16574e+00],
+        'ROS_CAM1_20140824T020853': [2.71176e+00, -2.70252e+00, -6.67518e+01, 1.39304e-01, 6.78840e-01, 2.53165e+00,
+                                     -4.68647e-01, -1.13073e+00],
+        'ROS_CAM1_20140824T103934': [2.71632e+00, 2.58758e+00, -6.91670e+01, 1.93910e+00, -1.89599e+00, -5.11456e+00,
+                                     -3.80947e-01, -1.12699e+00],
+        'ROS_CAM1_20140818T230718': [-7.51678e-01, -3.42611e-01, -7.87677e+01, 3.21518e-01, 6.73784e-01, 2.80083e+00,
+                                     -5.26223e-01, -1.10787e+00],
+        'ROS_CAM1_20140824T220434': [2.24894e+00, 2.28264e+00, -6.03868e+01, 3.98722e+00, -2.55235e+00, -3.74485e+00,
+                                     -4.08233e-01, -1.21924e+00],
+        'ROS_CAM1_20140828T020434': [2.26508e+00, 2.18112e+00, -6.09602e+01, 1.14413e+00, -1.57632e+00, -4.69158e+00,
+                                     -4.78622e-01, -1.13032e+00],
+        'ROS_CAM1_20140827T140434': [2.64506e+00, 2.46440e+00, -6.75340e+01, -2.51789e-01, 4.34034e-01, 1.36745e+00,
+                                     -4.82309e-01, -1.10132e+00],
+        'ROS_CAM1_20140827T141834': [-2.73206e+00, -2.89021e+00, -6.78508e+01, -2.28200e-01, 4.44550e-01, 1.52755e+00,
+                                     -4.85886e-01, -1.10526e+00],
+        'ROS_CAM1_20140827T061834': [-2.61793e+00, -2.99875e+00, -6.82736e+01, 5.26060e-01, 6.02144e-01, 3.69438e+00,
+                                     -5.19115e-01, -1.05481e+00],
+        'ROS_CAM1_20140827T021834': [-2.57562e+00, -2.76749e+00, -6.51906e+01, -1.89664e-01, 4.56566e-01, 1.69570e+00,
+                                     -5.10384e-01, -1.09044e+00],
+        'ROS_CAM1_20140826T221834': [-2.38290e+00, -2.65574e+00, -6.27370e+01, 4.71862e+00, -9.08792e-01, 3.43537e+00,
+                                     -4.60109e-01, -1.12087e+00],
+    }
+    if refl_model:
+        x, err = est_model(sm, imgs, refl_model, use_ls, hapke=True, init_poses=init_poses, iters=1, init_noise=0.0,
+                           verbose=True)
+    else:
+        x = []
+        for file, exp in imgs.items():
+            imgs = {file: exp}
+            x_, err = est_model(sm, imgs, refl_model, use_ls, hapke=True, init_poses=init_poses, iters=1,
+                                init_noise=0.0, verbose=False)
+            print("'%s': [%s] => %.5f," % (file, ', '.join(['%.5e' % f for f in x_[0]]), err))
+            x.append(x_[0])
+    return x
+
+
+def est_model(sm, imgs, refl_model=True, use_ls=False, hapke=True, init_poses=None, adjust_pose=False, iters=1, init_noise=0.0, verbose=True):
+    map_u = None
+    if sm.cam.dist_coefs is not None and np.any(np.array(sm.cam.dist_coefs) != 0):
+        cam_mx = sm.cam.intrinsic_camera_mx()
+        map_u, map_v = cv2.initUndistortRectifyMap(cam_mx, np.array(sm.cam.dist_coefs), None,
+                                                   cam_mx, (sm.cam.width, sm.cam.height), cv2.CV_16SC2)
 
     target_exposure = np.min(list(imgs.values()))
+    is_ros = True
     for img, exposure in imgs.items():
-        real = cv2.imread(os.path.join(sm.asteroid.image_db_path, img + '_P.png'), cv2.IMREAD_GRAYSCALE)
-        real = ImageProc.adjust_gamma(real, 1/1.8)
+        imgfile = os.path.join(sm.asteroid.image_db_path, img + '_P.png')
+        is_ros = os.path.exists(imgfile)    # TODO: remove quick hack to support itokawa instead of only 67p
+
+        real = cv2.imread(imgfile if is_ros else imgfile[:-6]+'.png', cv2.IMREAD_GRAYSCALE)
+        if is_ros:
+            real = ImageProc.adjust_gamma(real, 1/1.8)
+
+        if map_u is not None:
+            real = cv2.remap(real, map_u, map_v, interpolation=cv2.INTER_CUBIC)
+            if 1:
+                cv2.imwrite(imgfile[:-4]+'_undist.png', real)
+
         #dark_px_lim = np.percentile(real, 0.1)
         #dark_px = np.mean(real[real<=dark_px_lim])
-        real = cv2.resize(real, imgsize)
+        real = cv2.resize(real, (sm.view_width, sm.view_height))
         # remove dark pixel intensity and normalize based on exposure
         #real = real - dark_px
         #real *= (target_exposure / exposure)
         imgs[img] = real
 
-    re = RenderEngine(*imgsize, antialias_samples=0)
-    obj_idx = re.load_object(sm.asteroid.hires_target_model_file, smooth=False)
-    ab = AlgorithmBase(sm, re, obj_idx)
-
     model = RenderEngine.REFLMOD_HAPKE if hapke else RenderEngine.REFLMOD_LUNAR_LAMBERT
-    defs = RenderEngine.REFLMOD_PARAMS[model]
 
-    if hapke:
-        # L, th, w, b (scattering anisotropy), c (scattering direction from forward to back), B0, hs
-        #real_ini_x = [515, 16.42, 0.3057, 0.8746]
-        sppf_n = 2
-        real_ini_x = defs[:2] + defs[3:3+sppf_n]
-        scales = np.array((500, 20, 3e-1, 3e-1))[:2+sppf_n]
-    else:
-        ll_poly = 5
-        #real_ini_x = np.array(defs[:7])
-        real_ini_x = np.array((9.95120e-01, -6.64840e-03, 3.96267e-05, -2.16773e-06, 2.08297e-08, -5.48768e-11, 1))  # theta=20
-        real_ini_x = np.hstack((real_ini_x[0:ll_poly+1], (real_ini_x[-1],)))
-        scales = np.array((3e-03, 2e-05, 1e-06, 1e-08, 5e-11, 1))
-        scales = np.hstack((scales[0:ll_poly], (scales[-1],)))
+    re = RenderEngine(sm.view_width, sm.view_height, antialias_samples=16)
+    obj_idx = re.load_object(sm.asteroid.hires_target_model_file, smooth=False)
+    ab = KeypointAlgo(sm, re, obj_idx)
+    KeypointAlgo.MAX_FEATURES = 1000
+    KeypointAlgo.DEF_RANSAC_ERROR = 2
+    KeypointAlgo.DISCARD_OFF_OBJECT_FEATURES = True
+    ab.RENDER_TEXTURES = False
+    ab.RENDER_REFLECTION_MODEL = model
+    ab.RENDER_PSF_PARAMS = sm.cam.point_spread_fn
+    ab.REFINE_RANSAC_RESULT = True
 
-    def set_params(x):
+    defs = sm.asteroid.reflmod_params[model]
+
+    def set_refl_params(sm, x):
         if hapke:
             # optimize J, th, w, b, (c), B_SH0, hs
-            xsc = list(np.array(x) * scales)
+            # 8.41668e+02, 9.16458e+00, -1.01511e-01, 1.06246e-04
+            # 1.1001e+03, 1.5932e+01, 5.6303e-03, 2.8213e-04
+            # 8.78012e+02, 2.33807e+01, -1.56845e-01
+            xsc = np.abs(x)
+            if sppf_n == 1:
+                xsc[2] = x[2]
+            xsc = list(xsc)
             vals = xsc[:2] + [defs[2]] + xsc[2:] + defs[len(xsc)+1:]
         else:
             vals = [1] + list(np.array(x)[:-1] * scales[:-1]) + [0]*(5-ll_poly) + [x[-1]*scales[-1], 0, 0, 0]
-        RenderEngine.REFLMOD_PARAMS[model] = vals
+        sm.asteroid.reflmod_params[model] = vals
+
+    def set_pose_params(sm, x_all, i, file):
+        # get sc orientation
+        lbl_file = os.path.join(sm.asteroid.image_db_path, file + ('.LBL' if is_ros else '.lbl'))
+        lblloader.load_image_meta(lbl_file, sm)
+        sm.swap_values_with_real_vals()
+
+        # optimize rel_loc, rel_rot, light
+        xsc = list(x_all)
+        x = xsc[9*i: 9*i + 9]
+        sm.spacecraft_pos = x[0:3]
+        sm.asteroid_q = tools.angleaxis_to_q(x[3:6])
+        sm.asteroid.real_position = tools.spherical2cartesian(*x[6:8], np.linalg.norm(sm.asteroid.real_position))
+
+    if refl_model:
+        if hapke:
+            # L, th, w, b (scattering anisotropy), c (scattering direction from forward to back), B0, hs
+            sppf_n = 1
+            if 0:
+                real_ini_x = [715, 16.42, 0.3057, 0.8746]
+            else:
+                real_ini_x = defs[:2] + defs[3:3+sppf_n]
+            scales = np.array((500, 20, 3e-1, 3e-1))[:2+sppf_n]
+        else:
+            ll_poly = 5
+            #real_ini_x = np.array(defs[:7])
+            real_ini_x = np.array((9.95120e-01, -6.64840e-03, 3.96267e-05, -2.16773e-06, 2.08297e-08, -5.48768e-11, 1))  # theta=20
+            real_ini_x = np.hstack((real_ini_x[0:ll_poly+1], (real_ini_x[-1],)))
+            scales = np.array((3e-03, 2e-05, 1e-06, 1e-08, 5e-11, 1))
+            scales = np.hstack((scales[0:ll_poly], (scales[-1],)))
+    else:
+        def params_from_sm(sm):
+            loc = sm.spacecraft_pos
+            rot = tools.q_to_angleaxis(sm.asteroid_q, compact=True)
+            light = tools.cartesian2spherical(*sm.asteroid.real_position)
+            return [*loc, *rot, *light[:2]]
+
+        x, s = [], []
+        for i, (file, real) in enumerate(imgs.items()):
+            if file not in init_poses:
+                lbl_file = os.path.join(sm.asteroid.image_db_path, file + ('.LBL' if is_ros else '.lbl'))
+                lblloader.load_image_meta(lbl_file, sm)
+                sm.swap_values_with_real_vals()
+                x_ = params_from_sm(sm)
+            else:
+                x_ = init_poses[file]
+                if 1:
+                    set_pose_params(sm, x_, 0, file)
+                    to_sispo(sm, ab)
+                    quit()
+
+            if adjust_pose:
+                set_pose_params(sm, x_, 0, file)
+                # ab._pause = True
+                ab.solve_pnp(real, feat=KeypointAlgo.AKAZE, init_z=x_[2],
+                            #detector_params={'qualityLevel': 0.05, 'minDistance': 10})
+                             detector_params={'nOctaves': 1, 'nOctaveLayers': 1, 'threshold': 0.0001})
+                x_ = params_from_sm(sm)
+                print('first: %s' % (x_,))
+            x.append(x_)
+            s.append([1]*3 + [np.pi/180]*3 + [3*np.pi/180]*2)
+        real_ini_x = np.array(x).flatten()
+        scales = np.array(s).flatten()
 
     # debug 1: real vs synth, 2: err img, 3: both
-    def costfun(x, debug=0, verbose=True):
-        set_params(x)
-        err = 0
-        for file, real in imgs.items():
-            lblloader.load_image_meta(os.path.join(sm.asteroid.image_db_path, file + '.LBL'), sm)
-            sm.swap_values_with_real_vals()
-            synth2 = ab.render(shadows=True, reflection=model, gamma=1)
-            err_img = (synth2.astype('float') - real)**2
-            lim = np.percentile(err_img, 99)
-            err_img[err_img > lim] = 0
-            err += np.mean(err_img)
-            if debug:
-                if debug%2:
-                    cv2.imshow('real vs synthetic', np.concatenate((real.astype('uint8'), 255*np.ones((real.shape[0], 1), dtype='uint8'), synth2), axis=1))
-                if debug>1:
-                    err_img = err_img**0.2
-                    cv2.imshow('err', err_img/np.max(err_img))
-                cv2.waitKey()
-        err /= len(imgs)
-        if verbose:
-            print('%s => %f' % (', '.join(['%.4e' % i for i in np.array(x)*scales]), err))
-        return err
+    def costfun(x, refl_model, ls=False, debug=0, verbose=True):
+        if refl_model:
+            set_refl_params(sm, np.array(x) * scales)
 
-    best_x = None
+        err = []
+        for i, (file, real) in enumerate(imgs.items()):
+            if refl_model:
+                if file not in init_poses:
+                    lbl_file = os.path.join(sm.asteroid.image_db_path, file + ('.LBL' if is_ros else '.lbl'))
+                    lblloader.load_image_meta(lbl_file, sm)
+                    sm.swap_values_with_real_vals()
+                else:
+                    set_pose_params(sm, init_poses[file], 0, file)
+            else:
+                set_pose_params(sm, np.array(x) * scales, i, file)
+
+            synth2 = ab.render(shadows=True, reflection=model, gamma=1, textures=False)
+            synth2 = ImageProc.apply_point_spread_fn(synth2, **sm.cam.point_spread_fn)
+            err_img = synth2.astype('float') - real
+            if not ls:
+                if 0:
+                    err_img = err_img ** 2
+                    lim = np.percentile(err_img, 99)
+                    err_img[err_img > lim] = 0
+                else:
+                    err_img = tools.pseudo_huber_loss(err_img, 10)  # 10 DN error still considered normal
+            err.append(err_img)
+
+            if debug:
+                if debug % 2:
+                    # cv2.imshow('real vs synthetic', np.concatenate((real.astype('uint8'), 255*np.ones((real.shape[0], 1), dtype='uint8'), synth2), axis=1))
+                    fig, axs = plt.subplots(1, 3, sharex=True, sharey=True)
+                    axs[0].imshow(real.astype('uint8'), cmap='gray', vmin=0, vmax=255)
+                    axs[1].imshow(synth2, cmap='gray', vmin=0, vmax=255)
+                    axs[2].imshow(np.abs(synth2.astype('float') - real))
+                elif debug > 1:
+                    # err_img = (err_img ** 2) ** 0.2
+                    # cv2.imshow('err', err_img/np.max(err_img))
+                    plt.figure()
+                    plt.imshow(np.abs(synth2.astype('float') - real))
+                # cv2.waitKey()
+                plt.tight_layout()
+                plt.show()
+
+        err = np.array(err).flatten()
+        err_mean = np.mean(err)
+
+        if verbose:
+            print('%s => %f' % (', '.join(['%.4e' % i for i in np.array(x) * scales]), err_mean))
+
+        return err if ls else err_mean
+
+    best_x = real_ini_x/scales
     best_err = float('inf')
+    init_noise = init_noise if iters > 1 else 0
     for i in range(iters):
-        if hapke:
-            ini_x = tuple(real_ini_x + init_noise*np.random.normal(0, 1, (len(scales),))*scales)
+        if refl_model:
+            if hapke:
+                ini_x = tuple(real_ini_x + init_noise*np.random.normal(0, 1, (len(scales),))*scales)
+            else:
+                ini_x = tuple(real_ini_x[1:-1]/real_ini_x[0] + init_noise*np.random.normal(0, 1, (len(scales)-1,))*scales[:-1]) + (real_ini_x[-1]*real_ini_x[0],)
         else:
-            ini_x = tuple(real_ini_x[1:-1]/real_ini_x[0] + init_noise*np.random.normal(0, 1, (len(scales)-1,))*scales[:-1]) + (real_ini_x[-1]*real_ini_x[0],)
+            ini_x = tuple(real_ini_x + init_noise*np.random.normal(0, 1, (len(scales),))*scales)
 
         if verbose:
             print('\n\n\n==== i:%d ====\n'%i)
-        res = minimize(costfun, tuple(ini_x/scales), args=(0, verbose),
-                        #method="BFGS", options={'maxiter': 10, 'eps': 1e-3, 'gtol': 1e-3})
-                        method="Nelder-Mead", options={'maxiter': 120, 'xtol': 1e-4, 'ftol': 1e-4})
-                        #method="COBYLA", options={'rhobeg': 1.0, 'maxiter': 200, 'disp': False, 'catol': 0.0002})
+        if not use_ls:
+            res = minimize(costfun, tuple(ini_x/scales), args=(refl_model, False, 0, verbose),
+                            #method="BFGS", options={'maxiter': 10, 'eps': 1e-3, 'gtol': 1e-3})
+                            method="Nelder-Mead", options={'maxiter': 100, 'xtol': 1e-3, 'ftol': 1e-3})
+                            #method="COBYLA", options={'rhobeg': 1.0, 'maxiter': 200, 'disp': False, 'catol': 0.0002})
+        else:
+            res = least_squares(costfun, tuple(ini_x/scales), args=(refl_model, True, 0, verbose),
+                                verbose=2, max_nfev=100, ftol=1e-3, xtol=1e-3, method='trf', # jac_sparsity=A,
+                                x_scale='jac', jac='2-point', loss='linear' if 0 else 'huber', f_scale=10.0)  #huber_coef,
+                                # tr_solver='lsmr',
+
         if not verbose:
             print('%s => %f' % (', '.join(['%.5e' % i for i in np.array(res.x)*scales]), res.fun))
 
@@ -140,19 +415,27 @@ def est_refl_model(hapke=True, iters=1, init_noise=0.0, verbose=True):
             best_x = res.x
 
     if verbose:
-        costfun(best_x, 3, verbose=True)
+        best_err = costfun(best_x, refl_model, False, debug=5, verbose=True)
 
-    if hapke:
-        x = tuple(best_x * scales)
+    if refl_model:
+        if hapke:
+            xsc_ = best_x * scales
+            xsc = np.abs(xsc_)
+            if sppf_n == 1:
+                xsc[2] = xsc_[2]
+            x = tuple(xsc)
+        else:
+            x = (1,) + tuple(best_x * scales)
+            if verbose:
+                p = np.linspace(0, 160, 100)
+                L = get_graph_L(20, p)
+                plt.plot(p, L, p, Lfun(x[:-1], p))
+                plt.show()
     else:
-        x = (1,) + tuple(best_x * scales)
-        if verbose:
-            p = np.linspace(0, 160, 100)
-            L = get_graph_L(20, p)
-            plt.plot(p, L, p, Lfun(x[:-1], p))
-            plt.show()
+        xsc = best_x * scales
+        x = [xsc[9*i:9*i+9] for i in range(len(imgs))]
 
-    return x
+    return x, best_err
 
 
 def match_ll_with_hapke(img_n=20, iters=1, init_noise=0.0, verbose=True, hapke_params=None, ini_params=None):
@@ -375,8 +658,44 @@ def estimate_hapke_k_polynomial():
     plt.show()
 
 
+def to_sispo(sm, ab=None):
+    # FROM:
+    # rel_p = np.array([146226188132.0, -68812322442.0, -477863711.0]) \
+    #         - np.array([146226194732.0, -68812326932.0, -477863381.0])
+    # sm.spacecraft_q = tools.angleaxis_to_q([1.847799, -0.929873, 0.266931, -0.253146])
+    # sm.spacecraft_pos = tools.q_times_v(SystemModel.sc2gl_q.conj() * sm.spacecraft_q.conj(), -rel_p * 0.001)
+    # sm.asteroid.real_position = np.array([146226194732.0, -68812326932.0, -477863381.0])
+    # sm.asteroid_q = tools.eul_to_q((math.radians(90),), 'z')
+
+    # TO:
+    ast_q0 = quaternion.one  #tools.eul_to_q((math.radians(90),), 'z')
+    ast_qd = ast_q0.conj() * sm.asteroid_q
+    ast_pos = tools.q_times_v(ast_qd.conj(), sm.asteroid.real_position)
+    sc_q1 = ast_qd.conj() * sm.spacecraft_q
+    sc_pos = ast_pos + tools.q_times_v(sc_q1 * SystemModel.sc2gl_q, -np.array(sm.spacecraft_pos) * 1000)
+
+    print('spacecraft:')
+    print('    "r": [%s],' % (', '.join(['%.1f' % v for v in sc_pos]),))
+    print('    "angleaxis": [%s]' % (tools.q_to_angleaxis(sc_q1),))
+    print('sssb:')
+    print('    "att": {"RA": 0, "Dec": 90, "ZLRA": 0}')
+    print('    "trj": {"r": [%s]}' % (', '.join(['%.1f' % v for v in ast_pos]),))
+
+    if ab is not None:
+        sm.asteroid_q = ast_q0
+        sm.spacecraft_q = sc_q1
+        sm.asteroid.real_position = ast_pos
+        img = ab.render(shadows=True, reflection=2, gamma=1, textures=False)
+        img = ImageProc.apply_point_spread_fn(img, **sm.cam.point_spread_fn)
+        img = ImageProc.distort_image(img, sm.cam)
+
+        cv2.imwrite('synth-img-1.exr', img.astype(np.float32), (cv2.IMWRITE_EXR_TYPE, cv2.IMWRITE_EXR_TYPE_FLOAT))
+        plt.imshow(img)
+        plt.show()
+
+
 if __name__ == '__main__':
-    if True:
+    if False:
         match_ll_with_hapke(hapke_params=DidymosPrimary.HAPKE_PARAMS, ini_params=DidymosPrimary.LUNAR_LAMBERT_PARAMS)
     elif False:
         estimate_hapke_k_polynomial()
@@ -388,8 +707,20 @@ if __name__ == '__main__':
         x = est_refl_model(hapke=True, iters=5, init_noise=0.3, verbose=False)
         print(', '.join(['%.5e' % f for i, f in enumerate(x)]))
         #print("== LL ==")
-        #x = est_refl_model(hapke=False, iters=5, init_noise=0.3, verbose=False)
+        #x = est_model(hapke=False, iters=5, init_noise=0.3, verbose=False)
         #print(', '.join(['%.5e'%f for i, f in enumerate(x)]))
+    elif 0:
+        x = est_rosetta_model(refl_model=False, hapke=True, use_ls=False)
+        print('\n'.join(['[%s],' % ', '.join(['%.5e' % f for f in _x]) for _x in x]))
+    elif 0:
+        x = est_rosetta_model(refl_model=True, hapke=True, use_ls=False)
+        print(', '.join(['%.5e' % f for i, f in enumerate(x)]))
+    elif 0:
+        x = est_itokawa_model(refl_model=True, hapke=True, use_ls=False, verbose=True,
+                              iters=1, init_noise=0.003)
+        print(', '.join(['%.5e' % f for f in x]))
     else:
-        x = est_refl_model(hapke=True)
-        print(', '.join(['%.5e'%f for i, f in enumerate(x)]))
+        x = est_itokawa_model(refl_model=False, hapke=True, use_ls=False, verbose=True,
+                              adjust_pose=False, iters=1, init_noise=0.003)
+        print('\n'.join(['[%s],' % ', '.join(['%.5e' % f for f in _x]) for _x in x]))
+

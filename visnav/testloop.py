@@ -11,6 +11,7 @@ from decimal import *
 import numpy as np
 import quaternion
 import cv2
+from tqdm import tqdm
 
 from visnav.algo.centroid import CentroidAlgo
 from visnav.algo.image import ImageProc
@@ -167,7 +168,8 @@ class TestLoop:
         self._L = (None, None)
         self._shape_model = None
         self._hires_L = (None, None)
-        self._tx_rand_support = None
+        self._lo_res_support = None
+        self._hi_res_support = None
         self._state_list = None
         self._rotation_noise = None
         self._loaded_sm_noise = None
@@ -202,10 +204,7 @@ class TestLoop:
         # write logfile header
         self._init_log(log_prefix)
 
-        for i in range(skip, times):
-            # print out progress
-            tools.show_progress(times - skip, i - skip)
-
+        for i in tqdm(list(range(skip, times))):
             # maybe generate new noise for shape model
             sm_noise = 0
             if self._smn_cache_id or self._constant_sm_noise:
@@ -265,6 +264,14 @@ class TestLoop:
                 #     print(stat)
                 # input("Press Enter to continue...")
                 self._maybe_exit()
+
+            if isinstance(imgfile, str):
+                img = cv2.imread(imgfile, cv2.IMREAD_UNCHANGED)
+                if img.dtype == np.uint16:
+                    img = (img / 256).astype(np.uint8)
+                img = cv2.resize(img, (sm.view_width, sm.view_height), interpolation=cv2.INTER_AREA)
+                outfile = os.path.join(self.cache_path, os.path.basename(imgfile))
+                cv2.imwrite(outfile, img, [cv2.IMWRITE_PNG_COMPRESSION, 9])
 
             if self.only_populate_cache:
                 continue
@@ -449,6 +456,16 @@ class TestLoop:
             with open(fname, 'rb') as fh:
                 noisy_model, self._loaded_sm_noise = pickle.load(fh)
             self._shape_model = objloader.ShapeModel(data=noisy_model)
+
+            supports = {'': ['_hi_res_support'], 'lo': ['_lo_res_support']}
+            supports[self._smn_cache_id].append(self._shape_model)
+            for k, p in supports.items():
+                if len(p) == 1:
+                    with open(sm.asteroid.constant_noise_shape_model[k], 'rb') as fh:
+                        noisy_model, self._loaded_sm_noise = pickle.load(fh)
+                    p.append(objloader.ShapeModel(data=noisy_model))
+                setattr(self, p[0], p[1])
+
             i = self.render_engine.load_object(self._shape_model, self.obj_idx, smooth=self._smooth_faces)
             self.obj_idx = i if self.obj_idx is None else self.obj_idx
         except (FileNotFoundError, EOFError):
@@ -577,14 +594,11 @@ class TestLoop:
         #         - Also: caching the vertices would take too much space, so no caching
         if self.real_sm_noise > 0 or tx_randomize:
             update_model = True
-            Sv = np.array(self._shape_model.vertices) if self.real_sm_noise > 0 else None
-            if tx_randomize and self._tx_rand_support is None:
-                fname = sm.asteroid.constant_noise_shape_model['lo']
-                with open(fname, 'rb') as fh:
-                    sup, _ = pickle.load(fh)
-                self._tx_rand_support = objloader.ShapeModel(data=sup)
+            Sv = (np.array(self._lo_res_support.vertices),
+                  np.array(self._hi_res_support.vertices)) if self.real_sm_noise > 0 else None
+            tx_sup = self._lo_res_support if tx_randomize else None
             model, _, self._hires_L = \
-                tools.apply_noise(sm.asteroid.real_shape_model, support=(Sv, self._tx_rand_support), L=self._hires_L,
+                tools.apply_noise(sm.asteroid.real_shape_model, support=(Sv, tx_sup), L=self._hires_L,
                                   noise_lv=self.real_sm_noise, len_sc=self.real_sm_noise_len_sc,
                                   tx_noise=self.real_tx_noise if use_textures else 0,
                                   tx_noise_len_sc=self.real_tx_noise_len_sc,

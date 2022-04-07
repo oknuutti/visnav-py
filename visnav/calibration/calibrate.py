@@ -675,7 +675,7 @@ class Optimizer:
 
             _, _, gain_adj0, _ = decode(prior_x)
 #            err = tuple(tools.pseudo_huber_loss(STAR_CALIB_HUBER_COEF, (measured_du - expected_du) * 2 / (expected_du + measured_du)) * np.array(weights))
-            err = tuple(tools.pseudo_huber_loss(STAR_CALIB_HUBER_COEF, np.log10(expected_du) - np.log10(measured_du)) * np.array(weights))
+            err = tuple(tools.pseudo_huber_loss(np.log10(expected_du) - np.log10(measured_du), STAR_CALIB_HUBER_COEF) * np.array(weights))
 
             n = 3*len(c_qeff_coefs[0])
 

@@ -34,31 +34,34 @@ if __name__ == '__main__':
     sc = 1000  # bennu in meters, ryugu & 67P in km
 
     # load shape models
-    obj_fr = objloader.ShapeModel(fname=full_res_model)
     obj = objloader.ShapeModel(fname=infile)
 
-    timer = tools.Stopwatch()
-    timer.start()
-    devs = tools.point_cloud_vs_model_err(np.array(obj_fr.vertices), obj)
-    timer.stop()
-    # doesnt work: tools.intersections.parallel_diagnostics(level=4)
+    if 1:
+        obj_fr = objloader.ShapeModel(fname=full_res_model)
+        timer = tools.Stopwatch()
+        timer.start()
+        devs = tools.point_cloud_vs_model_err(np.array(obj_fr.vertices), obj)
+        timer.stop()
+        # doesnt work: tools.intersections.parallel_diagnostics(level=4)
 
-    p50 = np.median(devs)
-    p68, p95, p99 = np.percentile(np.abs(devs-p50), (68, 95, 99.7))
+        p50 = np.median(devs)
+        p68, p95, p99 = np.percentile(np.abs(devs-p50), (68, 95, 99.7))
 
-    idxs = np.abs(devs-p50) < p95
-    clean_devs = devs[idxs]
-    dev_mean = np.mean(clean_devs)
-    dev_std = np.std(clean_devs)
-    print('\n\n(%.2fms/vx) dev mean %.6fm/%.6fm, std %.6fm/%.6fm, 2s %.6fm/%.6fm, 3s %.6fm/%.6fm' % tuple(
-        map(lambda x: sc*x, (
-            timer.elapsed/len(obj_fr.vertices),
-            dev_mean, p50,
-            dev_std*1, p68,
-            dev_std*2, p95,
-            dev_std*3, p99,
+        idxs = np.abs(devs-p50) < p95
+        clean_devs = devs[idxs]
+        dev_mean = np.mean(clean_devs)
+        dev_std = np.std(clean_devs)
+        print('\n\n(%.2fms/vx) dev mean %.6fm/%.6fm, std %.6fm/%.6fm, 2s %.6fm/%.6fm, 3s %.6fm/%.6fm' % tuple(
+            map(lambda x: sc*x, (
+                timer.elapsed/len(obj_fr.vertices),
+                dev_mean, p50,
+                dev_std*1, p68,
+                dev_std*2, p95,
+                dev_std*3, p99,
+            ))
         ))
-    ))
+    else:
+        dev_mean = float('nan')
 
     with open(outfile, 'wb') as fh:
         pickle.dump((obj.as_dict(), dev_mean), fh, -1)

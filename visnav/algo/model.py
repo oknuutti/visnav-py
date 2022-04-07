@@ -425,6 +425,7 @@ class SystemModel(ABC):
             tmp = p.value
             p.value = p.real_value
             p.real_value = tmp
+        self.update_asteroid_model()
 
     def calc_shift_err(self):
         est_vertices = self.sc_asteroid_vertices()
@@ -831,7 +832,7 @@ class Camera:
         self.dark_noise_sd = dark_noise_sd or 60 / 1e5 * self.px_saturation_e
         self.readout_noise_sd = readout_noise_sd or 2 / 1e5 * self.px_saturation_e
         self.gain = None
-        self.point_spread_fn = point_spread_fn
+        self.point_spread_fn = point_spread_fn if isinstance(point_spread_fn, (dict, None.__class__)) else {'ratio': point_spread_fn}
         self.scattering_coef = scattering_coef
         self.exclusion_angle_x = exclusion_angle_x
         self.exclusion_angle_y = exclusion_angle_y
@@ -1118,7 +1119,8 @@ class Camera:
         return electrons
 
     def sense(self, flux_density, exposure=1, gain=1, add_noise=True):
-        flux_density = ImageProc.apply_point_spread_fn(flux_density, ratio=self.point_spread_fn)
+        if self.point_spread_fn is not None:
+            flux_density = ImageProc.apply_point_spread_fn(flux_density, **self.point_spread_fn)
         electrons = self.electrons(flux_density, exposure=exposure)
 
         if add_noise:

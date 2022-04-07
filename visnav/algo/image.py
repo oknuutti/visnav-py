@@ -223,29 +223,45 @@ class ImageProc:
             adj_img[I] = (img[I] / th) if inverse else (th * img[I])
             adj_img[nI] = (((img[nI] + a) / alpha) ** gamma) if inverse else (alpha * img[nI] ** (1 / gamma) - a)
             adj_img = (adj_img * max_val).reshape(image.shape).astype(image.dtype)
-            # adj_img = np.round(adj_img * max_val).reshape(image.shape).astype(image.dtype)
+            # adj_img = n_p.round(adj_img * max_val).reshape(image.shape).astype(image.dtype)
 
         return adj_img
 
     @staticmethod
-    def apply_point_spread_fn(img, ratio):
-        # ratio is how many % of power on central pixel
-        sd = 1 / math.sqrt(2 * math.pi * ratio)
-        size = 1 + 2 * math.ceil(sd * 2)
-        kernel = ImageProc.gkern2d(size, sd)
+    def apply_point_spread_fn(img, ratio=None, sd=None, weight=None):
+        dtype = float
+
+        if isinstance(sd, (tuple, list)):
+            assert len(weight) == len(sd), 'weight needs to be same length as sd'
+            assert np.isclose(np.sum(weight), 1.0), 'weights need to sum to one'
+            max_sd = np.max(sd)
+            size = 1 + 2 * math.ceil(max_sd * 2)
+            kernel = np.zeros((size, size), dtype=dtype)
+            for w, sd_ in zip(weight, sd):
+                kernel += w * ImageProc.gkern2d(size, sd_, dtype=dtype)
+        else:
+            if ratio is not None:
+                # ratio is how many % of power on central pixel
+                sd = 1 / math.sqrt(2 * math.pi * ratio)
+            else:
+                assert sd is not None, 'either give ratio or sd'
+                sd = sd
+            size = 1 + 2 * math.ceil(sd * 2)
+            kernel = ImageProc.gkern2d(size, sd, dtype=dtype)
+
         cv2.filter2D(img, -1, kernel, img)
         return img
 
     @staticmethod
     @lru_cache(maxsize=5)
-    def gkern2d(l=5, sig=1.):
+    def gkern2d(l=5, sig=1., dtype=float):
         """
         creates gaussian kernel with side length l and a sigma of sig
         """
         w, h = (l[0], l[1]) if '__iter__' in dir(l) else (l, l)
         sx, sy = (sig[0], sig[1]) if '__iter__' in dir(sig) else (sig, sig)
-        ax = np.arange(-w // 2 + 1., w // 2 + 1.)
-        ay = np.arange(-h // 2 + 1., h // 2 + 1.)
+        ax = np.arange(-w // 2 + 1., w // 2 + 1., dtype=dtype)
+        ay = np.arange(-h // 2 + 1., h // 2 + 1., dtype=dtype)
         xx, yy = np.meshgrid(ax, ay)
         kernel = np.exp(-((xx / sx) ** 2 + (yy / sy) ** 2) / 2)
         return kernel / np.sum(kernel)
@@ -429,3 +445,32 @@ class ImageProc:
             cv2.waitKey()
 
         return nxcorr
+
+    @staticmethod
+    def distort_image(image, cam):
+        uu, vv = np.meshgrid(np.arange(image.shape[1]), np.arange(image.shape[0]))
+        uv = np.stack((uu, vv), axis=2)
+        inv_map_uv = cam.distort(uv.reshape((-1, 2)), cam.dist_coefs, cam.intrinsic_camera_mx(),
+                                 cam.inv_intrinsic_camera_mx()).astype(np.float32).reshape(uv.shape)
+        map_uv = ImageProc.invert_uv_map(inv_map_uv, uu.shape).astype(np.float32)
+        distorted = cv2.remap(image, map_uv[:, :, 0], map_uv[:, :, 1], interpolation=cv2.INTER_CUBIC)
+        return distorted
+
+    @staticmethod
+    def invert_uv_map(map_uv, shape):
+        from visnav.algo.tools import NearestKernelNDInterpolator
+
+        vv, uu = np.meshgrid(np.arange(map_uv.shape[0]), np.arange(map_uv.shape[1]))
+        uv = np.stack((vv, uu), axis=2).astype(float)
+        uv -= np.array(vv.shape).reshape((1, 1, 2))/2 - 0.5
+
+        interp_u = NearestKernelNDInterpolator(uv.reshape((-1, 2)), map_uv[:, :, 0].reshape((-1, 1)), k_nearest=4, kernel='linear')
+        interp_v = NearestKernelNDInterpolator(uv.reshape((-1, 2)), map_uv[:, :, 1].reshape((-1, 1)), k_nearest=4, kernel='linear')
+
+        vv, uu = np.meshgrid(np.arange(shape[0]), np.arange(shape[1]))
+        uv = np.stack((vv, uu), axis=2).astype(float)
+        uv -= np.array(vv.shape).reshape((1, 1, 2))/2 - 0.5
+
+        inv_map_u = interp_u(uv.reshape((-1, 2))).reshape(shape)
+        inv_map_v = interp_v(uv.reshape((-1, 2))).reshape(shape)
+        return np.stack((inv_map_u, inv_map_v), axis=2)

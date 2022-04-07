@@ -71,10 +71,10 @@ class ChuryumovGerasimenko(Asteroid):
     # the rest are optimized using approx-lunar-lambert.py
     HAPKE_PARAMS = [
         # J, brightness scaling
-        553.38,
+        553.38,  # was: 553.38,
 
         # th_p, average surface slope (deg), effective roughness, theta hat sub p
-        27.07,  # vs 15 in Fornasier
+        27.07,  # was: 27.07,  # vs 15 in Fornasier
 
         # w, single scattering albedo (w, omega, SSA), range 0-1
         0.034,
@@ -82,7 +82,7 @@ class ChuryumovGerasimenko(Asteroid):
         # b, SPPF asymmetry parameter (sometimes g?),
         #   if single-term HG, range is [-1, 1], from backscattering to isotropic to forward scattering
         #   if two-term HG (c>0), range is [0, 1], from isotropic to scattering in a single direction
-        -0.078577,
+        -0.078577,  # was: -0.078577,
 
         # c, second HG term for a more complex SPPF. Range [0, 1], from forward scattering to backward scattering.
         0,

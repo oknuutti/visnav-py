@@ -620,7 +620,7 @@ if __name__ == '__main__':
     import cv2
     sm = BennuSystemModel(hi_res_shape_model=True)
 #    sm = DidymosSystemModel(use_narrow_cam=False, target_primary=False, hi_res_shape_model=False)
-#    sm = RosettaSystemModel()
+#    sm = RosettaSystemModel(hi_res_shape_model=True)
     re = RenderEngine(sm.cam.width, sm.cam.height, antialias_samples=16)
     re.set_frustum(sm.cam.x_fov, sm.cam.y_fov, sm.min_distance*0.2, sm.max_distance*1.1)
     pos = [0, 0, -sm.min_med_distance * 1]
@@ -692,7 +692,8 @@ if __name__ == '__main__':
                 if hapke and j == 1:
                     RenderEngine.REFLMOD_PARAMS[model][9] = 1
                 light = tools.q_times_v(tools.ypr_to_q(th, 0, 0), np.array([0, 0, -1]))
-                image = re.render(obj_idx, pos, q**i, tools.normalize_v(light), get_depth=False, reflection=model)
+                image = re.render(obj_idx, pos, q**i, tools.normalize_v(light), get_depth=False, reflection=model,
+                                  textures=sm.asteroid.hires_target_model_file_textures)
                 image = ImageProc.adjust_gamma(image, 1.8)
                 imgs_j += (image,)
             imgs += (np.vstack(imgs_j),)

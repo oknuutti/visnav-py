@@ -58,6 +58,12 @@ def load_image_meta(src, sm):
     # https://pds.nasa.gov/ds-view/pds/viewProfile.jsp
     #                                   ?dsid=RO-C-NAVCAM-2-ESC3-MTP021-V1.0
 
+    try:
+        sm.load_state(src)
+        return
+    except:
+        pass
+
     with open(src, 'r') as f:
         config_data = f.read()
 

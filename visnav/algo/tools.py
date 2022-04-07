@@ -10,7 +10,8 @@ import scipy
 from astropy.coordinates import SkyCoord
 from scipy.interpolate import RectBivariateSpline
 from scipy.interpolate import NearestNDInterpolator
-# from scipy.spatial.ckdtree import cKDTree
+from scipy.spatial.ckdtree import cKDTree
+from scipy import sparse
 
 from visnav.settings import *
 
@@ -255,6 +256,8 @@ def equatorial_to_ecliptic(ra, dec):
 
 
 def q_to_angleaxis(q, compact=False):
+    if q.w < 0:
+        q = -q
     theta = math.acos(np.clip(q.w, -1, 1)) * 2.0
     v = normalize_v(np.array([q.x, q.y, q.z]))
     if compact:
@@ -592,6 +595,8 @@ def mv_normal(mean, cov=None, L=None, size=None):
     z = standard_normal(final_shape).reshape(mean.shape[0], -1)
 
     x = L.dot(z).T
+    if sparse.issparse(x):
+        x = x.toarray()
     x += mean
     x.shape = tuple(final_shape)
 
@@ -765,7 +770,7 @@ def apply_noise(model, support=(None, None), L=(None, None), len_sc=SHAPE_MODEL_
     inplace = noise_lv == 0 and model.texfile is None
 
     if noise_lv > 0:
-        noisy_points, avg_dev, Lv = points_with_noise(points=model.vertices, support=Sv, L=Lv,
+        noisy_points, avg_dev, Lv = points_with_noise(points=model.vertices, support=Sv, L_p=Lv,
                                                       noise_lv=noise_lv, len_sc=len_sc, only_z=only_z)
     else:
         noisy_points, avg_dev, Lv = model.vertices, 0, None
@@ -992,7 +997,62 @@ class NearestKernelNDInterpolator(NearestNDInterpolator):
         return yi
 
 
-def points_with_noise(points, support=None, L=None, noise_lv=SHAPE_MODEL_NOISE_LV['lo'],
+def sparse_matern_cov_chol(X, Y, weights, len_scs, nus, noise, tol=0.02):
+    from scipy.optimize import fsolve
+    # from sksparse.cholmod import cholesky   # pip install git+https://github.com/EmJay276/scikit-sparse
+
+    tree_x = cKDTree(X)
+    if Y is not None:
+        tree_y = cKDTree(Y)
+    else:
+        tree_y = tree_x
+
+    def kernel(D):
+        if not sparse.issparse(D):
+            D = sparse.csr_matrix(D)
+        elif not sparse.isspmatrix_csr(D):
+            D = D.tocsr()
+
+        K = sparse.csr_matrix(D.shape, dtype=np.float32)
+        for w, ls, nu in zip(weights, len_scs, nus):
+            if nu == 0.5:
+                _eD = -D/ls
+                np.exp(_eD.data, out=_eD.data)
+                K = K + w * _eD
+            elif nu == 1.5:
+                _K = D * (math.sqrt(3) / ls)
+                _eK = -_K
+                np.exp(_eK.data, out=_eK.data)
+                _K.data = w * (_eK.data + _K.data * _eK.data)
+                K = K + _K
+            elif nu == 2.5:
+                _K = D * (math.sqrt(5) / ls)
+                _eK = -_K
+                np.exp(_eK.data, out=_eK.data)
+                _K.data = w * (_eK.data + _K.data * _eK.data + _K.data ** 2 / 3.0 * _eK.data)
+                K = K + _K
+        return K
+
+    max_k = kernel(np.array(1e-8 * np.min(len_scs))).toarray()[0, 0]
+    max_d = fsolve(lambda d: kernel(np.array(d)).toarray()[0, 0] / max_k - tol, 2 * np.max(len_scs))[0]
+    D = tree_x.sparse_distance_matrix(tree_y, max_d, output_type='coo_matrix')
+    K = kernel(D.astype(np.float32))
+    if noise > 0:
+        K = K + noise * sparse.eye(D.shape[0], format='csr', dtype=np.float32)
+
+    ratio = len(K.data) / np.prod(K.shape)
+
+    # sparse cholesky decomp, from https://gist.github.com/omitakahiro/c49e5168d04438c5b20c921b928f1f5d
+    K = K.tocsc()
+    LU = sparse.linalg.splu(K, diag_pivot_thresh=0)
+    is_psd = (LU.U.diagonal() > 0).all()
+    assert is_psd, 'Covariance matrix not positive semi-definite'
+    L = LU.L.dot(sparse.diags(LU.U.diagonal() ** 0.5))
+    perm = LU.perm_r if 1 else np.argsort(LU.perm_r)
+    return L, perm
+
+
+def points_with_noise(points, support=None, L_p=None, noise_lv=SHAPE_MODEL_NOISE_LV['lo'],
                       len_sc=SHAPE_MODEL_NOISE_LEN_SC, max_rng=None, only_z=False):
     try:
         from sklearn.gaussian_process.kernels import Matern, WhiteKernel
@@ -1001,32 +1061,56 @@ def points_with_noise(points, support=None, L=None, noise_lv=SHAPE_MODEL_NOISE_L
         sys.exit()
 
     if support is None:
-        support = points  # [random.sample(list(range(len(points))), min(3000,len(points)))]
+        support0, support1 = points, None
+    elif isinstance(support, tuple):
+        support0, support1 = support
+    else:
+        support0, support1 = support, None
 
-    n = len(support)
+    n0, n1 = len(support0), None if support1 is None else len(support1)
     mean = np.mean(points, axis=0)
     max_rng = np.max(np.ptp(points, axis=0)) if max_rng is None else max_rng
 
-    y_cov = None
-    if L is None:
-        kernel = 0.6 * noise_lv * Matern(length_scale=len_sc * max_rng, nu=1.5) \
-                 + 0.4 * noise_lv * Matern(length_scale=0.1 * len_sc * max_rng, nu=1.5) \
-                 + WhiteKernel(noise_level=1e-5 * noise_lv * max_rng)  # white noise for positive definite cov mx only
-        y_cov = kernel(support - mean)
+    if L_p is None:
+        kernel = 0.95 * noise_lv * Matern(length_scale=len_sc * max_rng, nu=1.5) \
+                 + WhiteKernel(noise_level=1e-3 * noise_lv * max_rng)  # white noise for positive definite cov mx
+        K = kernel(support0 - mean)
+        L0 = np.linalg.cholesky(K)
+
+        if support1 is not None:
+            L1, perm1 = sparse_matern_cov_chol(support1 - mean, None, (0.05 * noise_lv,),
+                                               (0.1 * len_sc * max_rng,), (1.5,),
+                                               noise=0.0125 * noise_lv * max_rng)
+        else:
+            L1, perm1 = [None] * 2
+    else:
+        L0, L1, perm1 = L_p
 
     # sample gp
-    e0, L = mv_normal(np.zeros(n), cov=y_cov, L=L)
-    err = np.exp(e0.astype(points.dtype)).reshape((-1, 1))
+    e0, _ = mv_normal(np.zeros(n0), L=L0)
+    e0 = np.exp(e0.astype(points.dtype)).reshape((-1, 1))
 
-    if len(err) == len(points):
-        full_err = err
+    if n1:
+        e1, _ = mv_normal(np.zeros(n1), L=L1)
+        e1 = e1[perm1]
+        e1 = np.exp(e1.astype(points.dtype)).reshape((-1, 1))
+
+    if len(e0) == len(points):
+        full_err = e0
         if DEBUG:
             print('using orig gp sampled err')
     else:
         # interpolate
         sc = 0.05 * len_sc * max_rng
-        interp = NearestKernelNDInterpolator(support - mean, err, k_nearest=12, kernel='gaussian',
+        interp = NearestKernelNDInterpolator(support0 - mean, e0, k_nearest=12, kernel='gaussian',
                                              kernel_sc=sc, max_distance=sc * 6)
+
+        if n1:
+            med_err = interp(support1 - mean).astype(points.dtype) * e1
+            sc = 0.05 * np.sqrt(n0/n1) * len_sc * max_rng
+            interp = NearestKernelNDInterpolator(support1 - mean, med_err, k_nearest=12, kernel='gaussian',
+                                                 kernel_sc=sc, max_distance=sc * 6)
+
         full_err = interp(points - mean).astype(points.dtype)
 
         # maybe extrapolate
@@ -1087,7 +1171,7 @@ def points_with_noise(points, support=None, L=None, noise_lv=SHAPE_MODEL_NOISE_L
         plt.show()
         assert False, 'exiting'
 
-    return noisy_points, np.mean(devs), L
+    return noisy_points, np.mean(devs), (L0, L1, perm1)
 
 
 def foreground_idxs(array, max_val=None):
