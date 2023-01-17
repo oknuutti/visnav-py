@@ -45,7 +45,7 @@ INIT_QEFF_ADJ = (1.0, 1.0, 1.0)  # bgr                         # best: (1.0, 0.9
 FIXED_PSF_SDS = 0
 USE_ESTIMATED_QEC = 1     # use estimated qec instead of initial one
 STAR_OPT_WEIGHTING = 1
-STAR_USE_CACHED_MEAS = 1
+STAR_USE_CACHED_MEAS = 0
 OPTIMIZER_START_N = 0     # set to zero for skipping optimizing and just show result for the initial solution
 
 (FRAME_GAIN_NONE, FRAME_GAIN_SAME, FRAME_GAIN_STATIC, FRAME_GAIN_INDIVIDUAL) = range(4)
@@ -63,7 +63,10 @@ STAR_IGNORE_IDS = (
         26176,  # Hatysa A    # the sword, orion nebula and lesser stars too near
         26132,  # Hatysa B
         26134,  # Hatysa C
-    ) if 1 else tuple()
+
+#        23820,   # Cursa, dim
+#        36087,   # Gomeisa, dim
+) if 1 else tuple()
 
 OVERRIDE_STAR_DATA = {
     # Betelgeuse: CTOA observation on 2019-01-24, accessed through https://www.aavso.org database
@@ -382,7 +385,31 @@ def get_bgr_cam(thumbnail=False, estimated=False, final=False):
         )
     elif estimated:
         array = tuple
-        if final:
+        alternate = 1
+
+        if alternate and 0:
+            # excl moon
+            tmp = [array([0.04908449, 0.1849243 , 0.35357922, 0.24516834, 0.0716383 ,
+       0.08058783, 0.04597228, 0.06910245, 0.01958224, 0.01752994,
+       0.01195373, 0.01267941, 0.00608437, 0.01282583]), array([0.03400435, 0.0678688 , 0.08082685, 0.25083328, 0.31847254,
+       0.18330355, 0.08616521, 0.1208917 , 0.12550656, 0.05460556,
+       0.03339684, 0.03477881, 0.02983649, 0.03203345]), array([3.10371518e-02, 7.54443913e-02, 1.00329799e-06, 2.73246375e-02,
+       4.59122371e-02, 3.11428076e-01, 3.07648016e-01, 2.32571082e-01,
+       1.92099581e-01, 1.41716348e-01, 9.07460874e-02, 5.61437104e-02,
+       1.63754261e-02, 2.15199779e-02])]
+
+        elif alternate and 1:
+            # excl moon, alf ori
+            tmp = [array([0.04923912, 0.18078147, 0.3470197 , 0.22997942, 0.06934145,
+       0.070556  , 0.03207933, 0.07038448, 0.0281325 , 0.06326722,
+       0.02489389, 0.05461936, 0.01981879, 0.05157887]), array([0.03421731, 0.06833614, 0.0808632 , 0.25144669, 0.32406508,
+       0.18056562, 0.0864877 , 0.1200147 , 0.12519326, 0.03913119,
+       0.03271583, 0.03292166, 0.02930852, 0.03078969]), array([3.13443437e-02, 7.56778106e-02, 5.14786366e-07, 2.22804045e-02,
+       4.63944823e-02, 3.11203141e-01, 3.08123218e-01, 2.33043076e-01,
+       1.93323235e-01, 1.43307554e-01, 9.25313906e-02, 5.81937648e-02,
+       1.85318294e-02, 2.37174149e-02])]
+
+        elif final:
             # CURR RESULT
             tmp = [array([0.04597736, 0.18328294, 0.35886904, 0.20962509, 0.07183794,
        0.06324343, 0.06437495, 0.09206215, 0.07814311, 0.07806824,
@@ -622,58 +649,92 @@ class Optimizer:
             return (qeff_coefss, x[k:len(x)-off0], (x[-off0] if gn else 1), psf_coef)
 
         def cost_fun(x, measures, prior_x, return_details=False, plot=False):
-            c_qeff_coefs, f_gains, gain_adj, psf_coef = decode(x)
 
-            band = []
-            obj_ids = []
-            measured_du = []
-            expected_du = []
-            weights = []
-            for m in measures:
-                if FRAME_GAINS == FRAME_GAIN_SAME:
-                    pre_sat_gain = f_gains[0]
-                elif FRAME_GAINS == FRAME_GAIN_INDIVIDUAL:
-                    pre_sat_gain = f_gains[m.frame.id]
-                elif FRAME_GAINS == FRAME_GAIN_STATIC:
-                    if m.obj_id[0] == 'moon':
-                        pre_sat_gain = MOON_GAIN_ADJ
+            def _calc_dus_etc(c_qeff_coefs, f_gains, gain_adj, psf_coef):
+                band = []
+                obj_ids = []
+                measured_du = []
+                expected_du = []
+                weights = []
+                for m in measures:
+                    if FRAME_GAINS == FRAME_GAIN_SAME:
+                        pre_sat_gain = f_gains[0]
+                    elif FRAME_GAINS == FRAME_GAIN_INDIVIDUAL:
+                        pre_sat_gain = f_gains[m.frame.id]
+                    elif FRAME_GAINS == FRAME_GAIN_STATIC:
+                        if m.obj_id[0] == 'moon':
+                            pre_sat_gain = MOON_GAIN_ADJ
+                        else:
+                            pre_sat_gain = STAR_GAIN_ADJUSTMENT if m.frame.cam[0].emp_coef >= 1 else STAR_GAIN_ADJUSTMENT_TN
                     else:
-                        pre_sat_gain = STAR_GAIN_ADJUSTMENT if m.frame.cam[0].emp_coef >= 1 else STAR_GAIN_ADJUSTMENT_TN
-                else:
-                    pre_sat_gain = 1
+                        pre_sat_gain = 1
 
-                edu = m.expected_du(pre_sat_gain=pre_sat_gain, post_sat_gain=gain_adj,
-                                    qeff_coefs=c_qeff_coefs, psf_coef=psf_coef)
+                    edu = m.expected_du(pre_sat_gain=pre_sat_gain, post_sat_gain=gain_adj,
+                                        qeff_coefs=c_qeff_coefs, psf_coef=psf_coef)
 
-                if return_details or (m.obj_id[0], m.cam_i) not in IGNORE_MEASURES:
-                    expected_du.append(edu)
-                    measured_du.append(m.du_count)
-                    weights.append(m.weight)
-                    band.append(m.cam_i)
-                    obj_ids.append(m.obj_id)
+                    if return_details or (m.obj_id[0], m.cam_i) not in IGNORE_MEASURES:
+                        expected_du.append(edu)
+                        measured_du.append(m.du_count)
+                        weights.append(m.weight)
+                        band.append(m.cam_i)
+                        obj_ids.append(m.obj_id)
 
-            measured_du, expected_du, band = map(np.array, (measured_du, expected_du, band))
+                measured_du, expected_du, band = map(np.array, (measured_du, expected_du, band))
+                return measured_du, expected_du, band, weights, obj_ids
+
+            c_qeff_coefs0, f_gains0, gain_adj0, psf_coef0 = decode(prior_x)
+            if plot:
+                _, expected_du0, band0, _, obj_ids0 = _calc_dus_etc(c_qeff_coefs0, f_gains0, gain_adj0, psf_coef0)
+
+            c_qeff_coefs, f_gains, gain_adj, psf_coef = decode(x)
+            measured_du, expected_du, band, weights, obj_ids = _calc_dus_etc(c_qeff_coefs, f_gains, gain_adj, psf_coef)
 
             if plot:
+                assert obj_ids0 == obj_ids and np.all(band0 == band), 'not same, need to implement some matching scheme'
+
                 plt.rcParams.update({'font.size': 16})
                 fig, ax = plt.subplots(1, 1, figsize=[6.4, 4.8])
-                sb, = ax.plot(expected_du[band == 0]*1e-3, measured_du[band == 0]*1e-3, 'bx')
-                sg, = ax.plot(expected_du[band == 1]*1e-3, measured_du[band == 1]*1e-3, 'gx')
-                sr, = ax.plot(expected_du[band == 2]*1e-3, measured_du[band == 2]*1e-3, 'rx')
-                line = np.linspace(0, np.max(expected_du))
-                ax.plot(line*1e-3, line*1e-3, 'k--', linewidth=0.5)
-                ax.set_xlabel('Expected [1000 DNs]')
-                ax.set_ylabel('Measured [1000 DNs]')
                 names = Stars.get_catalog_id(np.unique(list(s[0] for s in obj_ids if s[0] != 'moon')), 'simbad')
                 names['moon'] = 'Moon'
                 labels = np.array([names[id[0]] for id in obj_ids])
-                tools.hover_annotate(fig, ax, sb, labels[band == 0])
-                tools.hover_annotate(fig, ax, sg, labels[band == 1])
-                tools.hover_annotate(fig, ax, sr, labels[band == 2])
+                rel_err0, rel_err = [], []
+
+                moon_I = labels == 'Moon'
+                if 0:
+                    alf_ori_I = labels == '* alf Ori'
+                    star_I = np.logical_not(np.logical_or(moon_I, alf_ori_I))
+                    markers = ((star_I, 'x'), (alf_ori_I, '*'), (moon_I, 'o'))
+                else:
+                    star_I = np.logical_not(moon_I)
+                    markers = ((star_I, 'x'), (moon_I, 'o'))
+
+                for I, marker in markers:
+                    ed0, ed, md, lb, bd = expected_du0[I], expected_du[I], measured_du[I], labels[I], band[I]
+                    sb, = ax.plot(ed[bd == 0]*1e-3, md[bd == 0]*1e-3, 'b' + marker, mfc='none')
+                    sg, = ax.plot(ed[bd == 1]*1e-3, md[bd == 1]*1e-3, 'g' + marker, mfc='none')
+                    sr, = ax.plot(ed[bd == 2]*1e-3, md[bd == 2]*1e-3, 'r' + marker, mfc='none')
+
+                    for c, (x0, y0), (x1, y1) in zip(bd, zip(ed0*1e-3, md*1e-3), zip(ed*1e-3, md*1e-3)):
+                        ax.plot([x0, x1], [y0, y1], ('b', 'g', 'r')[c], linewidth=0.5)
+                        rel_err0.append((x0 - y0) / y0)
+                        rel_err.append((x1 - y1) / y1)
+
+                    tools.hover_annotate(fig, ax, sb, lb[bd == 0])
+                    tools.hover_annotate(fig, ax, sg, lb[bd == 1])
+                    tools.hover_annotate(fig, ax, sr, lb[bd == 2])
+
+                line = np.linspace(0, np.max(expected_du))
+                ax.plot(line * 1e-3, line * 1e-3, 'k--', linewidth=0.5)
+                ax.set_xlabel('Predicted [1000 DNs]')
+                ax.set_ylabel('Measured [1000 DNs]')
+                from matplotlib.lines import Line2D
+                ax.legend([Line2D([0], [0], marker=m, color='gray', mfc='none', markersize=6, linestyle='none')
+                           for m in ('o', 'x')], ['Moon', 'Stars'], loc='lower right')
                 plt.tight_layout()
+                print('average error, init: %.3f%%, result: %.3f%%' % (100*np.mean(np.abs(rel_err0)),
+                                                                       100*np.mean(np.abs(rel_err))))
                 plt.show()
 
-            _, _, gain_adj0, _ = decode(prior_x)
 #            err = tuple(tools.pseudo_huber_loss(STAR_CALIB_HUBER_COEF, (measured_du - expected_du) * 2 / (expected_du + measured_du)) * np.array(weights))
             err = tuple(tools.pseudo_huber_loss(np.log10(expected_du) - np.log10(measured_du), STAR_CALIB_HUBER_COEF) * np.array(weights))
 
@@ -739,7 +800,7 @@ class Optimizer:
             res = x0b
 
         qeff_coefs, f_gains, gain_adj, psf_sd = decode(res)
-        err, measured, expected = cost_fun(res, measures, x0b, return_details=True, plot=True)
+        err, measured, expected = cost_fun(res, measures, prior_x if OPTIMIZER_START_N == 0 else x0b, return_details=True, plot=True)
         return qeff_coefs, f_gains, gain_adj, psf_sd, err, measured, expected
 
 

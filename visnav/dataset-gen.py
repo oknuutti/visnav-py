@@ -35,6 +35,7 @@ def parse_arguments():
                         help='path to cache dir (default: %s), ./[mission]/[id] is added to the path' % CACHE_DIR)
     parser.add_argument('--output', '-o', metavar='DIR', default=None,
                         help='path to output dir, default: %s/[mission]/final-[id]' % CACHE_DIR)
+    parser.add_argument('--log-missing', action='store_true', help='if log is missing, do without')
     parser.add_argument('--mission', '-m', metavar='M', default='rose', choices=missions,
                         help='mission: %s (default: rose)' % (' | '.join(missions)))
     parser.add_argument('--count', '-n', default='10', type=str, metavar='N',
@@ -144,7 +145,7 @@ def main():
     print('starting to generate images')
     tl = TestLoop(sm, file_prefix_mod=file_prefix_mod, est_real_ast_orient=False,
               state_generator=state_gen, uniform_distance_gen=False, operation_zone_only=True,
-              cache_path=cache_path,
+              cache_path=cache_path, only_populate_cache=True,
               sm_noise=0, sm_noise_len_sc=SHAPE_MODEL_NOISE_LEN_SC,
               navcam_cache_id=img_file_prefix, save_depth=True, save_coords=True,
               traj_len=traj_len, traj_prop_dt=60,
@@ -166,7 +167,11 @@ def main():
           )
 
     # check if can skip testloop iterations in case the execution died during previous execution
-    log_entries = read_logfiles(sm, log_prefix, args.max_rot_err, traj_len=traj_len)
+    if args.log_missing:
+        log_entries = make_log_entries(os.path.join(args.cache, sm.mission_id, args.id), traj_len=traj_len)
+    else:
+        log_entries = read_logfiles(sm, log_prefix, args.max_rot_err, traj_len=traj_len)
+
     if args.relative:
         entry_exists = [i for i, fs in log_entries if np.all(
             [os.path.exists(f) and f == tl.cache_file(i, postfix='%d.png' % j)
@@ -192,7 +197,11 @@ def main():
         start, end = map(int, args.count.split(':'))
     else:
         start, end = 0, int(args.count)
-    imgfiles = read_logfiles(sm, log_prefix, args.max_rot_err, traj_len=traj_len)
+
+    if args.log_missing:
+        imgfiles = make_log_entries(os.path.join(args.cache, sm.mission_id, args.id), traj_len=traj_len)
+    else:
+        imgfiles = read_logfiles(sm, log_prefix, args.max_rot_err, traj_len=traj_len)
 
     if args.relative:
         imgfiles = [(f, os.path.join(args.output, os.path.basename(f))) for i, fs in imgfiles if start <= i < end for f in fs]
@@ -287,6 +296,19 @@ def read_logfiles(sm, file_prefix, max_err, traj_len=1):
     images = [(i, imgs[i]) for i, e in roterrs.items() if not math.isnan(e) and (max_err <= 0 or e < max_err)]
     images = sorted(images, key=lambda x: x[0])
     return images
+
+
+def make_log_entries(path, traj_len):
+    entries = []
+    for file in os.listdir(path):
+        tmp = re.search(r'^(.*?)(\d+)_(\d+)\.(png|jpg)$', file)
+        if tmp:
+            base, i, j_, ext = tmp.groups()
+            if int(j_) == 0:
+                entries.append((int(i), [os.path.join(path, f'{base}{i}_{j}.{ext}') for j in range(traj_len)]))
+
+    entries = sorted(entries, key=lambda x: x[0])
+    return entries
 
 
 def true_relative_pose(sm, img_files):

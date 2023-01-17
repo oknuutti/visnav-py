@@ -11,7 +11,7 @@ import moderngl
 
 from visnav.missions.bennu import BennuSystemModel
 
-from objloader import Obj
+# from objloader import Obj
 
 from visnav.algo import tools
 from visnav.algo.image import ImageProc
@@ -217,13 +217,13 @@ class RenderEngine:
         if cache_file is None or not os.path.isfile(cache_file):
             if isinstance(object, str):
                 object = ShapeModel(fname=object)
-            elif isinstance(object, Obj):
-                object = ShapeModel(data={
-                    'faces': np.array(object.face, dtype=np.uint32)[:, ],
-                    'vertices': np.array(object.vert, dtype=np.float32),
-                    'normals': np.array(object.norm, dtype=np.float32),
-                    'texcoords': np.array(object.text, dtype=np.float32)[:, :2],
-                })
+            # elif isinstance(object, Obj):
+            #     object = ShapeModel(data={
+            #         'faces': np.array(object.face, dtype=np.uint32)[:, ],
+            #         'vertices': np.array(object.vert, dtype=np.float32),
+            #         'normals': np.array(object.norm, dtype=np.float32),
+            #         'texcoords': np.array(object.text, dtype=np.float32)[:, :2],
+            #     })
             object.load_texture()
             obj_bytes = None if wireframe else object.pack_all()
             s_obj_bytes = object.pack_simple()

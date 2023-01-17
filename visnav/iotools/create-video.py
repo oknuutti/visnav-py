@@ -16,7 +16,7 @@ if __name__ == '__main__':
         regex = sys.argv[2]
         target_file = sys.argv[3]
         dw, dh = [int(s) for s in sys.argv[4].split('x')]
-        framerate = int(sys.argv[5])
+        framerate = float(sys.argv[5])
         skip_mult = int(sys.argv[6]) if len(sys.argv) >= 7 else 1
         exposure = False  # 2.5
     except Exception as e:

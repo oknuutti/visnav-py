@@ -123,8 +123,10 @@ def use_lab_imgs(folder, get_bgr_cam):
                  + 'lab_meas_cache.pickle'
 
     if not USE_CACHED_MEAS or not os.path.exists(cache_file):
+        off_ccoef = {}
         mean_sum = {}
         var_sum = {}
+        n0_sum = {}
         n_sum = {}
         n1_sum = {}
         lines = {}
@@ -137,12 +139,16 @@ def use_lab_imgs(folder, get_bgr_cam):
 
                 key = (f.exposure, f.impulse_peak, f.impulse_size)
                 if key not in mean_sum:
+                    off_ccoef[key] = 0
                     mean_sum[key] = np.zeros(3)
                     var_sum[key] = np.zeros(3)
+                    n0_sum[key] = 0
                     n_sum[key] = 0
                     n1_sum[key] = 0
+                off_ccoef[key] += off_center_coef(m.center, f.cam[0])
                 mean_sum[key] += m.n * m.mean
                 var_sum[key] += (m.n-1) * m.std**2
+                n0_sum[key] += 1
                 n_sum[key] += m.n
                 n1_sum[key] += m.n-1
 
@@ -153,16 +159,17 @@ def use_lab_imgs(folder, get_bgr_cam):
                     lines[k2][f.exposure] = []
                 lines[k2][f.exposure].append(m.mean)
 
+        off_ccoef = {e: off_ccoef[e] / n0_sum[e] for e in off_ccoef.keys()}
         mean = {e: mean_sum[e] / n_sum[e] for e in mean_sum.keys()}
         px_std = {e: np.sqrt(var_sum[e] / n1_sum[e]) for e in var_sum.keys()}
         mean_std = {e: px_std[e] / math.sqrt(n_sum[e]) for e in px_std.keys()}
 
         if WRITE_CACHE:
             with open(cache_file, 'wb') as fh:
-                pickle.dump((mean, px_std, mean_std, lines), fh)
+                pickle.dump((mean, px_std, mean_std, lines, off_ccoef), fh)
     else:
         with open(cache_file, 'rb') as fh:
-            mean, px_std, mean_std, lines = pickle.load(fh)
+            mean, px_std, mean_std, lines, off_ccoef = pickle.load(fh)
 
     # snr_max = 20*log10(sqrt(sat_e)) dB
     # dynamic range = 20*log10(sat_e/readout_noise))
@@ -175,6 +182,41 @@ def use_lab_imgs(folder, get_bgr_cam):
         lab = '%dms, %.1fnm, %s' % (exp*1e3, lam*1e9, size_map[size])
         print('%s\t%.3f\t%.6f\t%.3f\t%.6f\t%.3f\t%.6f' % (lab, mean[key][2], mean_std[key][2], mean[key][1],
                                                           mean_std[key][1], mean[key][0], mean_std[key][0]))
+
+    occ, occ_n = {}, {}
+    for key, c in off_ccoef.items():
+        exp, lam, size = key
+        cls = size_map[size]
+        if cls not in occ:
+            occ[cls] = 0
+            occ_n[cls] = 0
+        occ[cls] += c
+        occ_n[cls] += 1
+
+    center_coef = occ['center'] / occ_n['center']
+    side_coef = occ['side'] / occ_n['side']
+    print("\nexpected side vs center: %.2f%%" % (100 * side_coef / center_coef,))
+    print("average side vs center:")
+
+    total_val, total_n = {}, {}
+    for key, val in mean.items():
+        exp, lam, size = key
+        cls = size_map[size]
+        if (exp, lam) not in total_val:
+            total_val[(exp, lam)] = {}
+            total_n[(exp, lam)] = {}
+        if cls not in total_val[(exp, lam)]:
+            total_val[(exp, lam)][cls] = 0
+            total_n[(exp, lam)][cls] = 0
+        total_val[(exp, lam)][cls] += val
+        total_n[(exp, lam)][cls] += 1
+    for key, tot in total_val.items():
+        exp, lam = key
+        ch = 1 if lam == 5.577e-7 else 2
+        lab = '%dms, %.1fnm, %s' % (exp * 1e3, lam * 1e9, {1: 'G', 2: 'R'}[ch])
+        mean_side_center_ratio = 100 * (total_val[(exp, lam)]['side'] / total_n[(exp, lam)]['side']) \
+                                     / (total_val[(exp, lam)]['center'] / total_n[(exp, lam)]['center'])
+        print("%s: %.2f%%" % (lab, mean_side_center_ratio[ch]))
 
     # plot all measurements
     fig, axs = plt.subplots(2, 2)
@@ -200,12 +242,24 @@ def use_lab_imgs(folder, get_bgr_cam):
 #    fig.show()
 
 
+def off_center_coef(center, cam):
+    cam_mx = cam.intrinsic_camera_mx()
+    pp, fl = cam_mx[0:2, 2], (cam_mx[0, 0] + cam_mx[1, 1]) / 2
+    off_angle = np.arctan(np.linalg.norm(center - pp) / fl)
+    if 1:
+        solid_angle = cam.pixel_solid_angle(*center)
+        return solid_angle * np.cos(off_angle)
+    else:
+        return np.cos(off_angle)**4
+
+
 class LabMeasure:
-    def __init__(self, frame, mean, std, n):
+    def __init__(self, frame, mean, std, n, center=None):
         self.frame = frame
         self.mean = mean
         self.std = std
         self.n = n
+        self.center = center
 
 
 class LabFrame(Frame):
@@ -250,11 +304,11 @@ class LabFrame(Frame):
         _, _, minloc, maxloc = cv2.minMaxLoc(corr)   # minval, maxval, minloc, maxloc
         loc = minloc if method in (cv2.TM_SQDIFF, cv2.TM_SQDIFF_NORMED) else maxloc
         loc_i = tuple(np.round(np.array(loc)).astype(np.int))
+        center = np.array(loc) + np.flip(fkernel.shape[:2]) / 2
 
         if SHOW_LAB_MEASURES:
             sc = 1024/self.image.shape[1]
             img = cv2.resize(self.image.astype(np.float), None, fx=sc, fy=sc) / np.max(self.image)
-            center = np.array(loc) + np.flip(fkernel.shape[:2]) / 2
             img = cv2.circle(img, tuple(np.round(center*sc).astype(np.int)),
                              round((kernel.shape[0]-self.impulse_spread)/2*sc), [0, 0, 1.0])
             cv2.imshow('te', img)
@@ -320,4 +374,4 @@ class LabFrame(Frame):
             plt.show()
             print('done')
 
-        return LabMeasure(self, mean, std, n)
+        return LabMeasure(self, mean, std, n, center)

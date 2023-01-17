@@ -25,7 +25,7 @@ from visnav.render.sun import Sun
 
 DEBUG_EXTRACTION = 0
 DEBUG_CHANNELS = 0
-DEBUG_MATCHING = 0  # show 1=tycho, 2=t_eff, 3=mag_v
+DEBUG_MATCHING = 1  # show 1=tycho, 2=t_eff, 3=mag_v
 MANUAL_ATTITUDE = 0
 SHOW_MEASURES = 0
 STAR_SPECTRA_PATH = r'C:\projects\s100imgs\spectra'
@@ -508,7 +508,7 @@ class StarFrame(Frame):
                 dec, ra, pa = map(math.degrees, tools.q_to_ypr(self.q))
                 print('ra: %.1f, dec: %.1f, pa: %.1f' % (ra, dec, pa))
 
-                sc, isc = 1, (1024 if 0 else 2800) / (self.image.shape[1] * 2)
+                sc, isc = 0.2, (1024, 1500, 2800)[1] / (self.image.shape[1] * 2)
                 img = np.sqrt(self.image)
                 img = ((img / np.max(img)) * 255).astype('uint8')
                 img = cv2.resize(img, None, fx=isc, fy=isc, interpolation=cv2.INTER_AREA)

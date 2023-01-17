@@ -40,7 +40,7 @@ def export(sm, dst_path, src_path=None, src_imgs=None, trg_shape=(224, 224), cro
     metadatafile = os.path.join(dst_path, 'dataset_all.txt')
     if not os.path.exists(metadatafile):
         with open(metadatafile, 'w') as f:
-            f.write('\n'.join(['%s, camera centric coordinate frame used' % title,
+            f.write('\n'.join(['%s, camera centric coordinate frame (+x cam axis, +z up) used' % title,
                                'Image ID, ImageFile, Target Pose [X Y Z W P Q R], Sun Vector [X Y Z]', '', '']))
 
     files = list(os.listdir(src_path)) if src_imgs is None else src_imgs

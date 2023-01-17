@@ -125,6 +125,7 @@ class TestLoop:
         # init later if needed
         self._synth_navcam = None
         self._hires_obj_idx = None
+        self.obj_idx = None
 
         # instead of sampling ast, s/c orient and light direction from gaussians with given sd,
         # sample uniformly: y ~ [-2*sd, 2*sd], x = sqrt(y)
@@ -239,7 +240,10 @@ class TestLoop:
                     self._state_generator(sm)
 
                 # add noise to current state, wipe sc pos
-                initial = self.add_noise(sm)
+                if self.traj_len == 1:
+                    initial = self.add_noise(sm)
+                else:
+                    initial = self._initial_state(sm)
 
                 # save state to lbl file
                 if self._rotation_noise:
@@ -265,13 +269,13 @@ class TestLoop:
                 # input("Press Enter to continue...")
                 self._maybe_exit()
 
-            if isinstance(imgfile, str):
-                img = cv2.imread(imgfile, cv2.IMREAD_UNCHANGED)
-                if img.dtype == np.uint16:
-                    img = (img / 256).astype(np.uint8)
-                img = cv2.resize(img, (sm.view_width, sm.view_height), interpolation=cv2.INTER_AREA)
-                outfile = os.path.join(self.cache_path, os.path.basename(imgfile))
-                cv2.imwrite(outfile, img, [cv2.IMWRITE_PNG_COMPRESSION, 9])
+            # if isinstance(imgfile, str):
+            #     img = cv2.imread(imgfile, cv2.IMREAD_UNCHANGED)
+            #     if img.dtype == np.uint16:
+            #         img = (img / 256).astype(np.uint8)
+            #     img = cv2.resize(img, (sm.view_width, sm.view_height), interpolation=cv2.INTER_AREA)
+            #     outfile = os.path.join(self.cache_path, os.path.basename(imgfile))
+            #     cv2.imwrite(outfile, img, [cv2.IMWRITE_PNG_COMPRESSION, 9])
 
             if self.only_populate_cache:
                 continue
@@ -313,22 +317,29 @@ class TestLoop:
         ## add measurement noise to
         # - direction of light by rotating the whole system around the sun
         if self._noise_phase_angle > 0 or self._noise_light_dir > 0:
-            if self._ext_noise_dist:
-                noise_ph = self._ext_rand(2 * rad(self._noise_phase_angle))
-                noise_na = self._ext_rand(2 * rad(self._noise_light_dir))
-            else:
-                noise_ph = np.random.normal(0, rad(self._noise_phase_angle))
-                noise_na = np.random.normal(0, rad(self._noise_light_dir))
+            ph, noise_ph, noise_na = sm.phase_angle(), 0, 0
+            for i in range(100):
+                if self._ext_noise_dist:
+                    noise_ph = self._ext_rand(2 * rad(self._noise_phase_angle))
+                    noise_na = self._ext_rand(2 * rad(self._noise_light_dir))
+                else:
+                    noise_ph = np.random.normal(0, rad(self._noise_phase_angle))
+                    noise_na = np.random.normal(0, rad(self._noise_light_dir))
+
+                if 0 < ph + noise_ph < np.pi - rad(sm.min_elong):
+                    # generate new phase angles until resulting angle is in the accepted range
+                    break
+            assert 0 < ph + noise_ph < np.pi - rad(sm.min_elong), 'some strange problem'
 
             cam_axis = tools.q_times_v(sm.spacecraft_q, np.array([1, 0, 0]))
             light_v = tools.normalize_v(sm.asteroid.position(sm.time.value))
             axis_ph = np.cross(cam_axis, light_v)
             ph_q = tools.angleaxis_to_q(np.array([noise_ph, *axis_ph]))
-            sm.rotate_system(ph_q)
+            sm.rotate_light(ph_q)
 
             axis_na = tools.q_times_v(sm.spacecraft_q, np.array([1, 0, 0]))
             na_q = tools.angleaxis_to_q(np.array([noise_na, *axis_na]))
-            sm.rotate_system(na_q)
+            sm.rotate_light(na_q)
 
         # - datetime (seconds)
         if rotation_noise:

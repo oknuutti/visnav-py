@@ -391,7 +391,7 @@ class SystemModel(ABC):
         return q_tot
 
     def rotate_spacecraft(self, q):
-        new_q = self.spacecraft_q * q
+        new_q = q * self.spacecraft_q
         self.x_rot.value, self.y_rot.value, self.z_rot.value = \
             list(map(math.degrees, tools.q_to_ypr(new_q)))
 
@@ -401,8 +401,11 @@ class SystemModel(ABC):
         new_q = q * self.asteroid.rotation_q(self.time.value)
         self.asteroid_q = new_q
 
-    def rotate_system(self, q):
+    def rotate_light(self, q):
         self.asteroid.real_position = tools.q_times_v(q, self.asteroid.position(self.time.value))
+
+    def rotate_system(self, q):
+        self.rotate_light(q)
         self.rotate_asteroid(q)
         self.rotate_spacecraft(q)
 
@@ -489,6 +492,10 @@ class SystemModel(ABC):
             print('elong: %.3f | dir: %.3f' % (
                 math.degrees(elong), math.degrees(direc)))
         return elong, direc
+
+    def phase_angle(self, real=False):
+        elong, direc = self.solar_elongation(real)
+        return np.pi - elong
 
     def rel_rot_err(self):
         return tools.angle_between_q(
@@ -805,11 +812,12 @@ class Camera:
                  lambda_min=None, lambda_eff=None, lambda_max=None,
                  dark_noise_mu=None, dark_noise_sd=None, readout_noise_sd=None,
                  point_spread_fn=None, scattering_coef=None,
-                 exclusion_angle_x=90, exclusion_angle_y=90):
+                 exclusion_angle_x=90, exclusion_angle_y=90, cam_mx=None):
         self.width = width      # in pixels
         self.height = height    # in pixels
         self.x_fov = x_fov      # in deg
         self.y_fov = y_fov      # in deg
+        self.cam_mx = cam_mx    # override with this cam_mx
 
         self.focal_length = None
         self.sensor_width = None
@@ -869,7 +877,11 @@ class Camera:
                 self.f_stop = self.focal_length / aperture
                 self.aperture = aperture
 
-    def pixel_solid_angle(self, x, y):
+    def pixel_solid_angle_mazonka(self, x, y):
+        # EDIT: For some reason this gives noisy results, probably due to some numerical issue.
+        #       Current pixel_solid_angle-function (after this one) gives better result. Also, turns out px solid angle
+        #       is relative to cos(theta)**3.
+        #
         # Using pinhole camera model and
         # Mazonka, Oleg (2012). "Solid Angle of Conical Surfaces, Polyhedral Cones, and Intersecting Spherical Caps",
         # https://arxiv.org/abs/1205.1396
@@ -919,6 +931,30 @@ class Camera:
             Omega = - np.angle(np.prod(tmp))
 
         return Omega
+
+    def pixel_solid_angle(self, x, y):
+        # This is not noisy as Mazonka impl above, also, turns out px solid angle is relative to cos(theta)**3
+
+        x0 = self.width / 2
+        y0 = self.height / 2
+        pw = self.sensor_width / self.width
+        ph = self.sensor_height / self.height
+
+        # distance of image plane from projection point
+        sz = self.focal_length  # or equivalently: self.sensor_width / 2 / math.tan(math.radians(self.x_fov / 2))
+
+        sx0, sx1, sx2 = pw * (x - x0 - 0.5), pw * (x - x0), pw * (x - x0 + 0.5)
+        sy0, sy1, sy2 = ph * (y - y0 - 0.5), ph * (y - y0), ph * (y - y0 + 0.5)
+
+        ax = tools.angle_between_v(np.array([sx0, sy1, sz]), np.array([sx2, sy1, sz]))
+        ay = tools.angle_between_v(np.array([sx1, sy0, sz]), np.array([sx1, sy2, sz]))
+        return ax * ay
+
+    def cos4(self, x, y):
+        cam_mx = self.intrinsic_camera_mx()
+        pp, fl = cam_mx[0:2, 2], (cam_mx[0, 0] + cam_mx[1, 1]) / 2
+        off_angle = np.arctan(np.linalg.norm(np.array([x, y]) - pp.flatten()) / fl)
+        return math.cos(off_angle) ** 4
 
     @property
     def aperture_area(self):
@@ -1136,10 +1172,16 @@ class Camera:
         return np.clip(gain * self.gain * np.floor(electrons), 0, 1)
 
     def intrinsic_camera_mx(self, legacy=True):
-        return Camera._intrinsic_camera_mx(self.width, self.height, self.x_fov, self.y_fov, legacy=legacy)
+        if self.cam_mx is not None:
+            return self.cam_mx
+        else:
+            return Camera._intrinsic_camera_mx(self.width, self.height, self.x_fov, self.y_fov, legacy=legacy)
 
     def inv_intrinsic_camera_mx(self, legacy=True):
-        return Camera._inv_intrinsic_camera_mx(self.width, self.height, self.x_fov, self.y_fov, legacy=legacy)
+        if self.cam_mx is not None:
+            return np.linalg.inv(self.cam_mx)
+        else:
+            return Camera._inv_intrinsic_camera_mx(self.width, self.height, self.x_fov, self.y_fov, legacy=legacy)
 
     @staticmethod
     def _intrinsic_camera_mx(width, height, x_fov, y_fov, legacy=True):
@@ -1275,6 +1317,7 @@ class Asteroid(ABC):
         self.reflmod_params = None
 
         self.real_position = None       # in km, transient, loaded from image metadata at iotools.lblloader
+        self.def_real_position = None
 
         self.max_radius = None          # in meters, maximum extent of object from asteroid frame coordinate origin
         self.mean_radius = None         # in meters
@@ -1318,11 +1361,13 @@ class Asteroid(ABC):
         self.def_rotation_pm = self.rotation_pm          # in rads
         self.def_axis_latitude = self.axis_latitude      # in rads
         self.def_axis_longitude = self.axis_longitude    # in rads
+        self.def_real_position = self.real_position
 
     def reset_to_defaults(self):
         self.rotation_pm = self.def_rotation_pm          # in rads
         self.axis_latitude = self.def_axis_latitude      # in rads
         self.axis_longitude = self.def_axis_longitude    # in rads
+        self.real_position = self.def_real_position
 
     @property
     def rotation_period(self):
