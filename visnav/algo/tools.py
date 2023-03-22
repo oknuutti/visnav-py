@@ -1,11 +1,11 @@
 import math
 import time
+import sys
 
 import numpy as np
 import numba as nb
 import quaternion  # adds to numpy  # noqa # pylint: disable=unused-import
-import sys
-
+import cv2
 import scipy
 from astropy.coordinates import SkyCoord
 from scipy.interpolate import RectBivariateSpline
@@ -116,6 +116,14 @@ def cross3d(left, right):
     y = ((left[2] * right[0]) - (left[0] * right[2]))
     z = ((left[0] * right[1]) - (left[1] * right[0]))
     return np.array((x, y, z))
+
+
+def normalize_mx(mx, axis=1):
+    norm = np.linalg.norm(mx, axis=axis)
+    with np.errstate(invalid='ignore'):
+        mx /= norm[:, None]
+        mx = np.nan_to_num(mx)
+    return mx
 
 
 def normalize_v(v):
@@ -601,6 +609,61 @@ def mv_normal(mean, cov=None, L=None, size=None):
     x.shape = tuple(final_shape)
 
     return x, L
+
+
+def unit_aflow(W, H):
+    return np.stack(np.meshgrid(np.arange(W, dtype=np.float32), np.arange(H, dtype=np.float32)), axis=2)
+
+
+def save_float_img(path, data, as_png=True):
+    data = np.atleast_3d(data)
+    assert len(data.shape) == 3 and data.shape[2] in (1, 3, 4), "data must be 1, 3 or 4 channel image"
+
+    if as_png:
+        isnan, isinf = np.isnan(data), np.isinf(data)
+        data[isinf] = np.nan
+
+        mins = np.nanmin(data, axis=(0, 1))
+        maxs = np.nanmax(data, axis=(0, 1))
+        scs = list(map(lambda v: (2 ** 16 - 3) / (v[1] - v[0]), zip(mins, maxs)))
+        mins, scs = mins.reshape((1, 1, -1)), np.array(scs).reshape((1, 1, -1))
+        sc_data = np.clip((data.astype(np.float32) - mins) * scs, 0, 2 ** 16 - 3).astype(np.uint16)
+        sc_data[isnan] = 2 ** 16 - 2
+        sc_data[isinf] = 2 ** 16 - 1
+
+        meta = mins.astype(np.float32).tobytes() + scs.astype(np.float32).tobytes()
+        ok, img = cv2.imencode('.png', sc_data, (cv2.IMWRITE_PNG_COMPRESSION, 9))
+
+        if not ok:
+            return ok
+
+        with open(path, 'wb') as fh:
+            fh.write(meta)
+            fh.write(img)
+
+    else:
+        ok = cv2.imwrite(path + '.exr', data, (cv2.IMWRITE_EXR_TYPE, cv2.IMWRITE_EXR_TYPE_FLOAT))
+
+    return ok
+
+
+def load_float_img(path, channels):
+    is_png = path[-4:] != '.exr'
+    if is_png:
+        with open(path, 'rb') as fh:
+            bytes = fh.read()
+        meta_len = 4 * 2 * channels
+        meta = np.frombuffer(bytes[:meta_len], dtype=np.float32)
+        mins = np.array(meta[:channels]).reshape((1, 1, -1))
+        scs = np.array(meta[channels:]).reshape((1, 1, -1))
+        sc_data = cv2.imdecode(np.frombuffer(bytes[meta_len:], dtype=np.uint8), cv2.IMREAD_UNCHANGED)
+        x = sc_data.astype(np.float32) / scs + mins
+        x[sc_data == 2 ** 16 - 2] = np.nan
+        x[sc_data == 2 ** 16 - 1] = np.inf
+    else:
+        x = cv2.imread(path, cv2.IMREAD_UNCHANGED)
+
+    return x
 
 
 def point_cloud_vs_model_err(points: np.ndarray, model) -> np.ndarray:

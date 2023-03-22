@@ -82,6 +82,5 @@ dependencies:
   - zlib=1.2.11
   - pip:
     - moderngl==5.5.0
-    - moderngl.ext.obj==1.0.0
     - multipledispatch==0.6.0
 prefix: C:\ProgramData\Anaconda3\envs\visnav

@@ -8,6 +8,12 @@ Dependencies are listed at `visnav.env`, which is a conda env file. At least on 
 * `conda env create -f=environment.yaml`
 * `activate visnav`
 
+Or, if you want to try with up-to-date dependencies, instead of `environment.yaml`, you could try:
+```
+conda create -n visnav -c conda-forge pip numpy numba scipy matplotlib astropy opencv quaternion requests scikit-learn \
+snakeviz moderngl tqdm
+```
+
 Download data files from my [Google Drive folder](https://drive.google.com/drive/folders/0ByfhOdRO_959X05jTWczWGxLUkk?usp=sharing)
 into `data/` folder
 

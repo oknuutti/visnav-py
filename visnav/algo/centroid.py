@@ -100,7 +100,7 @@ class CentroidAlgo(AlgorithmBase):
                 self.system_model.real_spacecraft_pos, sc_v))
         
         if any(map(math.isnan, sc_v)):
-            raise PositioningException('Position resulted in a NAN: %s'(sc_v,))
+            raise PositioningException('Position resulted in a NAN: %s' % (sc_v,))
         
         self.system_model.spacecraft_pos = sc_v
         

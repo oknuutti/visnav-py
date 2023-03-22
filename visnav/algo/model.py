@@ -7,6 +7,7 @@ from math import degrees as deg, radians as rad
 
 import numpy as np
 import quaternion  # adds to numpy  # noqa # pylint: disable=unused-import
+import cv2
 from astropy.time import Time
 from astropy import constants as const
 from astropy import units
@@ -1198,6 +1199,31 @@ class Camera:
     def _inv_intrinsic_camera_mx(w, h, xfov, yfov, legacy=True):
         return np.linalg.inv(Camera._intrinsic_camera_mx(w, h, xfov, yfov, legacy=legacy))
 
+    def to_unit_sphere(self, ixy, undistort=True, opengl=False):
+        return self.backproject(ixy, undistort=undistort, opengl=opengl)
+
+    def backproject(self, ixy, dist=None, z_off=None, undistort=True, opengl=False):
+        """ xi and yi are unaltered image coordinates, z_off is along the camera axis  """
+        assert dist is None or z_off is None, "Use either dist or z_off. z_off is different from dist " \
+                                              "in that it gives only the camera axis aligned component of the " \
+                                              "vector going through a given pixel until intersecting the object."
+
+        if undistort and self.dist_coefs is not None and np.sum(np.abs(self.dist_coefs)) > 0:
+            ixy = self.undistort(ixy).squeeze()
+
+        P = np.hstack((ixy + 0.5, np.ones((len(ixy), 1))))
+        bP = self.inv_intrinsic_camera_mx(legacy=not opengl).dot(P.T).T     # z-coordinates of points are all 1
+
+        if z_off is not None:
+            bP *= z_off.reshape((-1, 1))             # z-coordinates are at z_off
+        else:
+            bP = tools.normalize_mx(bP)   # put points on the unit sphere
+
+        if dist is not None:
+            bP *= dist.reshape((-1, 1))              # extending point from unit sphere to be at distance `dist`
+
+        return bP
+
     def calc_xy(self, xi, yi, z_off):
         """ xi and yi are unaltered image coordinates, z_off is usually negative  """
 
@@ -1289,6 +1315,16 @@ class Camera:
         if cam_mx is not None:
             img_P = img_P.dot(cam_mx[:2, :].T)
         return img_P
+
+    def undistort(self, P, legacy=False):
+        return self._undistort(P, self.intrinsic_camera_mx(legacy), self.dist_coefs)
+
+    @staticmethod
+    def _undistort(P, cam_mx, dist_coefs):
+        if len(P) > 0:
+            pts = cv2.undistortPoints(P.reshape((-1, 1, 2)), cam_mx, np.array(dist_coefs), None, cam_mx)
+            return pts
+        return P
 
 
 class Asteroid(ABC):

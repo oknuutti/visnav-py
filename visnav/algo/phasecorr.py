@@ -33,7 +33,7 @@ class PhaseCorrelationAlgo(AlgorithmBase):
     
     def optfun(self, *args):
         if any(map(math.isnan, args)):
-            raise PositioningException('Position resulted in a NAN: %s'(sc_v,))
+            raise PositioningException('Position resulted in a NAN: %s' % (sc_v,))
         
         # disable update events fired when parameters are changed
         #self.system_model.param_change_events(False)

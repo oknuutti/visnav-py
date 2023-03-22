@@ -26,7 +26,7 @@ from visnav.render.render import RenderEngine
 from visnav.iotools import objloader, lblloader
 import visnav.algo.tools as tools
 from visnav.algo.tools import (ypr_to_q, q_to_ypr, q_times_v, q_to_unitbase, normalize_v,
-                   wrap_rads, solar_elongation, angle_between_ypr)
+                               wrap_rads, solar_elongation, angle_between_ypr, save_float_img)
 from visnav.algo.tools import PositioningException
 from visnav.render.stars import Stars
 from visnav.render.sun import Sun
@@ -51,7 +51,7 @@ class TestLoop:
                  operation_zone_only=False, state_generator=None, cache_path=None,
                  max_sc_lateral_disp=1.0,
                  sm_noise=0, sm_noise_len_sc=SHAPE_MODEL_NOISE_LEN_SC,
-                 navcam_cache_id='', save_depth=False, save_coords=False,
+                 navcam_cache_id='', save_distance=False, save_depth=False, save_coords=False,
                  traj_len=1, traj_prop_dt=60, only_populate_cache=ONLY_POPULATE_CACHE,
                  real_sm_noise=0, real_sm_noise_len_sc=SHAPE_MODEL_NOISE_LEN_SC,
                  real_tx_noise=0, real_tx_noise_len_sc=SHAPE_MODEL_NOISE_LEN_SC,
@@ -100,6 +100,7 @@ class TestLoop:
         self.hapke_shoe_w = hapke_shoe_w
         self.hapke_cboe = hapke_cboe
         self.hapke_cboe_w = hapke_cboe_w
+        self.save_distance = save_distance
         self.save_depth = save_depth
         self.save_coords = save_coords
 
@@ -664,15 +665,18 @@ class TestLoop:
             cache_files.append(fname + '.png')
             cv2.imwrite(cache_files[j], img, [cv2.IMWRITE_PNG_COMPRESSION, 9])
 
-            if self.save_depth:
-                cv2.imwrite(fname+'.d.exr', depth.astype(np.float32),
-                            (cv2.IMWRITE_EXR_TYPE, cv2.IMWRITE_EXR_TYPE_FLOAT))
+            if self.save_distance:
+                # saves distance instead of depth
+                ixy = tools.unit_aflow(sm.cam.width, sm.cam.height).reshape((-1, 2))
+                xyz = sm.cam.backproject(ixy, z_off=depth.flatten().astype(np.float32))
+                dist = np.linalg.norm(xyz, axis=1).reshape((sm.cam.height, sm.cam.width))
+                save_float_img(fname + '.d', dist)
+            elif self.save_depth:
+                save_float_img(fname + '.d', depth.astype(np.float32))
 
             if self.save_coords:
-                cv2.imwrite(fname+'.xyz.exr', coords.astype(np.float32),
-                            (cv2.IMWRITE_EXR_TYPE, cv2.IMWRITE_EXR_TYPE_FLOAT))
-                cv2.imwrite(fname + '.s.exr', (depth * px_s).astype(np.float32),
-                            (cv2.IMWRITE_EXR_TYPE, cv2.IMWRITE_EXR_TYPE_FLOAT))
+                save_float_img(fname + '.xyz', coords.astype(np.float32))
+                save_float_img(fname + '.s', (depth * px_s).astype(np.float32))
 
             if not single:
                 sm.save_state(self.cache_file(i, skip_cache_id=True, postfix=str(j)))

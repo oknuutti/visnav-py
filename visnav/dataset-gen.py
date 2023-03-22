@@ -147,7 +147,7 @@ def main():
               state_generator=state_gen, uniform_distance_gen=False, operation_zone_only=True,
               cache_path=cache_path, only_populate_cache=True,
               sm_noise=0, sm_noise_len_sc=SHAPE_MODEL_NOISE_LEN_SC,
-              navcam_cache_id=img_file_prefix, save_depth=True, save_coords=True,
+              navcam_cache_id=img_file_prefix, save_distance=True, save_coords=True,
               traj_len=traj_len, traj_prop_dt=60,
               real_sm_noise=args.sm_noise, real_sm_noise_len_sc=args.sm_noise_len_sc,
               real_tx_noise=args.tx_noise, real_tx_noise_len_sc=args.tx_noise_len_sc,
